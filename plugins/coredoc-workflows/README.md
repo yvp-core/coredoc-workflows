@@ -14,7 +14,10 @@ Chrome-compatible browser.
 
 - `coredoc-workflows` — deterministic router with a small stage DAG
 - `coredoc-investigate` — evidence-first root-cause analysis
-- `coredoc-tdd` — ordinary red/green/refactor with the repository test runner
+- `coredoc-implement` — adaptive implementation with risk-matched proof for
+  behavior, refactors, deletions, config, generated output, and documentation
+- `coredoc-tdd` — explicit-only strict red/green/refactor with the repository
+  test runner
 - `coredoc-plan-review` — architecture and implementation-plan review
 - `coredoc-review` — read-only pre-landing code review
 - `coredoc-claude` — explicit Claude plan/diff review and resumable consultation from a non-Claude host
@@ -41,10 +44,13 @@ user.
 
 ## Routing dimensions
 
-The router classifies intent, risk, and scale. Normal changes retain the compact
-TDD route. A large change routes through a repository-local Markdown
-specification, plan review, an explicit user-approval pause, TDD, and final code
-review. Within the same host session, the routed run stays open during the pause
+The router classifies intent, risk, and scale. Normal changes use the compact
+adaptive implementation route. The implementation stage selects test-first,
+existing-suite, impact/build, or content-specific proof from the observable
+risk; deletions and cleanup do not receive synthetic absence tests by default.
+A large change routes through a repository-local Markdown specification, plan
+review, an explicit user-approval pause, implementation, and final code review.
+Within the same host session, the routed run stays open during the pause
 and resumes with the same run ID after approval; it is not marked successful
 before every routed skill has been observed. If the session ends while paused,
 `SessionEnd` records the run as `abandoned`. A new session routes again, reuses
@@ -109,10 +115,11 @@ while stating that model pinning was unavailable.
 
 ## Host compatibility
 
-The routing, specification, TDD, review, QA, and other bundled skills are usable
-from both Claude Code and Codex after installing the plugin and starting a new
-session. Codex plugin installation is supported in Codex CLI and the Codex
-desktop surface; the Codex IDE extension does not currently expose plugins.
+The routing, specification, implementation, TDD, review, QA, and other bundled
+skills are usable from both Claude Code and Codex after installing the plugin
+and starting a new session. Codex plugin installation is supported in Codex CLI
+and the Codex desktop surface; the Codex IDE extension does not currently expose
+plugins.
 Claude Code currently provides the automatic completion gate through bounded
 post-use observations in the bundled hooks. Both hosts can record stage
 intervals through explicit router boundary commands; this does not depend on

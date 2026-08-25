@@ -12,6 +12,7 @@
     "workflow",
     "routing",
     "code-graph",
+    "implementation",
     "tdd",
     "review",
     "qa",
@@ -21,7 +22,7 @@
   "interface": {
     "displayName": "Coredoc Workflows",
     "shortDescription": "Self-contained engineering workflows for Codex.",
-    "longDescription": "Routes work through investigation, planning, TDD, review, spec, browser QA, benchmark, security, learning, and retrospective methods; offers explicit host-specific Claude and Codex peer review with resumable consultation; and grounds decisions with read-only Coredoc context.",
+    "longDescription": "Routes work through investigation, planning, adaptive implementation, optional strict TDD, review, spec, browser QA, benchmark, security, learning, and retrospective methods; offers explicit host-specific Claude and Codex peer review with resumable consultation; and grounds decisions with read-only Coredoc context.",
     "developerName": "Coredoc team",
     "category": "Developer Tools",
     "capabilities": [

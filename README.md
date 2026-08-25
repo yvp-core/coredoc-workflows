@@ -36,7 +36,7 @@ path.
 
 | Capability | Requirement |
 | --- | --- |
-| Core workflow, review, spec, TDD, and repository QA | macOS 13 or later on Apple silicon |
+| Core workflow, adaptive implementation, review, spec, explicit TDD, and repository QA | macOS 13 or later on Apple silicon |
 | Browser QA | An installed Chrome-compatible browser |
 | Claude/Codex peer review | The explicitly selected provider CLI |
 | Coredoc graph context | An available Coredoc MCP server |

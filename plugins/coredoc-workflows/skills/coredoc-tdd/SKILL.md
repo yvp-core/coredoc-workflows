@@ -1,11 +1,16 @@
 ---
 name: coredoc-tdd
-description: Implement a feature or bug fix with ordinary repository tests using a strict red-green-refactor loop. Use for authorized code changes when no more specialized workflow owns the implementation.
+description: Implement a feature or bug fix with ordinary repository tests using a strict red-green-refactor loop. Use only when the user explicitly asks for TDD or strict test-first work; ordinary routed changes use coredoc-implement.
 ---
 
 # Test-driven implementation
 
 Apply repository rules and stay inside the user's authorization boundary.
+
+This is the strict test-first method. For deletions, behavior-preserving
+refactors, documentation, configuration, generated output, or other changes
+whose best proof is not a new failing test, use `coredoc-implement` unless the
+user explicitly requires TDD.
 
 1. Read the requested behavior and the real runtime path.
 2. If a routed specification stage preceded this one, read the repository-local

@@ -8,8 +8,8 @@ description: Test a web application in a real browser, diagnose discovered defec
 Apply the method below together with
 `<plugin-root>/resources/qa-issue-taxonomy.md`. Use `coredoc-desktop` for the
 real Electron surface, or an available host browser controller with
-`coredoc-browse` as the self-contained web fallback. Use `coredoc-tdd` for each
-authorized fix.
+`coredoc-browse` as the self-contained web fallback. Use `coredoc-implement`
+for each authorized fix.
 
 When the run covers visual or interaction quality rather than only correctness,
 also apply `<plugin-root>/resources/methodology/design-review.md`. Read the
@@ -828,7 +828,8 @@ If the repo has a `TODOS.md`:
 
 ## Additional rules
 
-- Fix only issues the user authorized and use the normal `coredoc-tdd` loop.
+- Fix only issues the user authorized and use the adaptive `coredoc-implement`
+  proof mode appropriate to each defect.
 - Do not commit, stash, revert, publish, or modify CI automatically.
 - Do not require a clean working tree.
 - Stop when evidence is insufficient or scope would materially expand.

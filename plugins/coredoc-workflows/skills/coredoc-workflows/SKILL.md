@@ -1,6 +1,6 @@
 ---
 name: coredoc-workflows
-description: Route engineering work through the smallest useful self-contained Coredoc workflow for investigation, planning, TDD, review, specification, browser QA, benchmarking, security review, learning, or retrospectives. Use when asked to route, orchestrate, or choose a workflow for a task.
+description: Route engineering work through the smallest useful self-contained Coredoc workflow for investigation, planning, adaptive implementation, review, specification, browser QA, benchmarking, security review, learning, or retrospectives. Use when asked to route, orchestrate, or choose a workflow for a task.
 ---
 
 # Coredoc workflow router
@@ -117,9 +117,9 @@ skill as an implicit dependency.
    the next attempt after the answer.
 10. When a stage has gate: `user-approval`, first present the specification and
     design verdict and close the design stage before pausing for explicit approval.
-    Do not start the gated stage without it; start the gated TDD stage only after
-    approval. Do not run `coredoc-workflows finish-run` while paused; keep the
-    run open.
+    Do not start the gated stage without it; start the gated implementation
+    stage only after approval. Do not run `coredoc-workflows finish-run` while
+    paused; keep the run open.
     Within the same host session, resume the same `runId` after approval without
     routing again. If the session ends while paused, `SessionEnd` records the run
     as `abandoned`, marks only an actually open stage as abandoned, and closes
