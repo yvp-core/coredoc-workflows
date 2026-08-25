@@ -39,9 +39,9 @@ const CAPABILITIES = {
     provider: "coredoc-workflows",
     skill: "coredoc-plan-review",
   },
-  tdd: {
+  implement: {
     provider: "coredoc-workflows",
-    skill: "coredoc-tdd",
+    skill: "coredoc-implement",
   },
   review: {
     provider: "coredoc-workflows",
@@ -185,12 +185,15 @@ export function routeTask({
     if (effectiveScale === "large") {
       stages.push(stage("spec", bugLike ? ["investigate"] : []));
       stages.push(stage("design", ["spec"]));
-      stages.push({ ...stage("tdd", ["design"]), gate: "user-approval" });
+      stages.push({
+        ...stage("implement", ["design"]),
+        gate: "user-approval",
+      });
     } else {
-      stages.push(stage("tdd", bugLike ? ["investigate"] : []));
+      stages.push(stage("implement", bugLike ? ["investigate"] : []));
     }
     if (effectiveScale === "large" || risk === "high") {
-      stages.push(stage("review", ["tdd"]));
+      stages.push(stage("review", ["implement"]));
     }
   } else {
     stages.push(stage(intent));
@@ -311,9 +314,14 @@ export function inferTaskSignals(task) {
   const bugLike = has(
     /\b(bug|broken|error|regression|fails?|failure|fix)\b|баг|помил|зламан|не працю|виправ|полагод/,
   );
-  const asksForChange = has(
-    /\b(implement|build|add|change|create|refactor|port|fix|rewrite|overhaul)\b|зроб|створ|дод|змін|рефактор|перенос|виправ|перепиш/,
+  const statusLike = has(
+    /\b(give me an update|status update|progress update)\b|дай (?:статус|апдейт)|що вже зроблено/,
   );
+  const asksForChange =
+    !statusLike &&
+    has(
+      /\b(implement|build|add|change|create|refactor|port|fix|rewrite|overhaul|remove|delete|drop|rename|update|replace|migrate|deprecate|disable|enable)\b|\bdocument\s+(?:the|this|our|current|existing|how)\b|зроб|створ|дод|змін|рефактор|перенос|виправ|перепиш|видал|приб(?:ер|ира)|онов|переймен|замін|мігру|задокумент|вимкн|увімкн/,
+    );
 
   let intent = "direct";
   if (

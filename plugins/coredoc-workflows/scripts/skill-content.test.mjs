@@ -468,16 +468,20 @@ test("plugin agents right-size models and keep review output dispatch-defined", 
   assert.match(reviewer, /dispatch prompt defines the output format/i);
 });
 
-test("router and TDD skills preserve the large-change approval lifecycle", async () => {
-  const [router, tdd, dispatch] = await Promise.all([
+test("router and implementation skills preserve the large-change approval lifecycle", async () => {
+  const [router, implementation, tdd, dispatch] = await Promise.all([
     skill("coredoc-workflows"),
+    skill("coredoc-implement"),
     skill("coredoc-tdd"),
     readFile(join(METHODOLOGY_ROOT, "subagent-dispatch.md"), "utf8"),
   ]);
 
   assert.match(router, /--scale large/);
   assert.match(router, /gate: `user-approval`/);
-  assert.match(router, /Do not run `coredoc-workflows finish-run` while paused/);
+  assert.match(
+    router,
+    /Do not run `coredoc-workflows finish-run` while\s+paused/,
+  );
   assert.match(router, /runStateStatus/);
   assert.match(router, /fails closed/);
   assert.match(router, /same host session/i);
@@ -492,10 +496,31 @@ test("router and TDD skills preserve the large-change approval lifecycle", async
   assert.match(router, /feedbackOwed/);
   assert.match(router, /submit_session_feedback/);
   assert.match(router, /never by a skill name/);
-  assert.match(tdd, /acceptance criteria/i);
-  assert.match(tdd, /Over-scope gate/);
-  assert.match(tdd, /existing implementation/i);
-  assert.match(tdd, /subagent-dispatch\.md/);
+  assert.match(implementation, /acceptance criteria/i);
+  assert.match(
+    implementation,
+    /Routed:.*repository evidence already available.*Do not repeat\s+completed discovery/is,
+  );
+  assert.match(implementation, /context was compacted/i);
+  assert.match(
+    implementation,
+    /Direct:.*inspect only the\s+runtime path, existing validation, and nearest consumers/is,
+  );
+  assert.match(
+    implementation,
+    /stop and raise the mismatch instead of\s+silently implementing or skipping it/is,
+  );
+  assert.match(implementation, /over-scope gate/i);
+  assert.match(implementation, /Deletion or deprecation/i);
+  assert.match(implementation, /absence test only when absence is itself/i);
+  assert.match(implementation, /Documentation or content/i);
+  assert.match(
+    implementation,
+    /Never add a test merely to assert that deleted\s+private code stays deleted/i,
+  );
+  assert.match(implementation, /subagent-dispatch\.md/);
+  assert.match(tdd, /strict test-first method/i);
+  assert.match(tdd, /use `coredoc-implement` unless/i);
   assert.match(dispatch, /fan-out cap/i);
   assert.match(dispatch, /At most 5 concurrent non-review subagents/i);
   assert.match(dispatch, /At most 4 read-only scouts/i);
@@ -538,7 +563,7 @@ test("router owns exact task attribution and explicit stage capture boundaries",
   );
   assert.match(
     router,
-    /close the design stage.*before pausing.*start the gated TDD stage only after\s+approval/is,
+    /close the design stage.*before pausing.*start the gated implementation\s+stage only after approval/is,
   );
   assert.match(
     router,

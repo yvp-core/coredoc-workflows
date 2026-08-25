@@ -125,7 +125,7 @@ test("explicit stage boundaries emit an exact private-data-free v2 sequence", as
         {
           action: "start",
           sessionId: SESSION_ID,
-          stageId: "tdd",
+          stageId: "implement",
           at: "2026-08-16T10:00:00.500Z",
         },
         {
@@ -144,7 +144,7 @@ test("explicit stage boundaries emit an exact private-data-free v2 sequence", as
     {
       hook_event_name: "PostToolUse",
       tool_name: "Skill",
-      tool_input: { skill: "coredoc-tdd", args: "ARGS_SENTINEL" },
+      tool_input: { skill: "coredoc-implement", args: "ARGS_SENTINEL" },
       tool_response: { content: "RESULT_SENTINEL" },
     },
     { hook_event_name: "PostToolUse", tool_name: "Edit" },
@@ -177,7 +177,7 @@ test("explicit stage boundaries emit an exact private-data-free v2 sequence", as
         {
           action: "finish",
           sessionId: SESSION_ID,
-          stageId: "tdd",
+          stageId: "implement",
           outcome: "success",
           at: "2026-08-16T10:00:09.000Z",
         },
@@ -227,19 +227,21 @@ test("explicit stage boundaries emit an exact private-data-free v2 sequence", as
     sent.map(({ schemaVersion }) => schemaVersion),
     [2, 2, 1, 1, 2, 2],
   );
-  assert.deepEqual(sent[0].data.stages, [{ stageId: "tdd", after: [] }]);
+  assert.deepEqual(sent[0].data.stages, [
+    { stageId: "implement", after: [] },
+  ]);
   assert.deepEqual(
     sent.map(({ sessionId, runId }) => ({ sessionId, runId })),
     Array.from({ length: 6 }, () => ({ sessionId: SESSION_ID, runId: RUN_ID })),
   );
   assert.deepEqual(sent[1].data, {
     occurrenceId: OCCURRENCE_ID,
-    stageId: "tdd",
+    stageId: "implement",
     attempt: 1,
   });
   assert.deepEqual(sent[4].data, {
     occurrenceId: OCCURRENCE_ID,
-    stageId: "tdd",
+    stageId: "implement",
     attempt: 1,
     outcome: "success",
   });

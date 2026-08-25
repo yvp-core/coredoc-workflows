@@ -128,8 +128,8 @@ test("records the routed workflow through the v2 declared-DAG capture contract",
         stages: [
           { stageId: "spec", after: [] },
           { stageId: "design", after: ["spec"] },
-          { stageId: "tdd", after: ["design"] },
-          { stageId: "review", after: ["tdd"] },
+          { stageId: "implement", after: ["design"] },
+          { stageId: "review", after: ["implement"] },
         ],
       },
     },
@@ -469,22 +469,22 @@ test("CLI stores the exact routed DAG and every completion requirement", () => {
   assert.deepEqual(JSON.parse(output).stages.map(({ skill }) => skill), [
     "coredoc-spec",
     "coredoc-plan-review",
-    "coredoc-tdd",
+    "coredoc-implement",
     "coredoc-review",
   ]);
   assert.equal(JSON.parse(output).runStateStatus, "started");
   assert.deepEqual(readWorkflowRun(sessionId, { env }).requiredSkills, [
     "coredoc-spec",
     "coredoc-plan-review",
-    "coredoc-tdd",
+    "coredoc-implement",
     "coredoc-review",
   ]);
   assert.equal(readWorkflowRun(sessionId, { env }).captureSchemaVersion, 2);
   assert.deepEqual(readWorkflowRun(sessionId, { env }).declaredStages, [
     { stageId: "spec", after: [] },
     { stageId: "design", after: ["spec"] },
-    { stageId: "tdd", after: ["design"] },
-    { stageId: "review", after: ["tdd"] },
+    { stageId: "implement", after: ["design"] },
+    { stageId: "review", after: ["implement"] },
   ]);
 
   const reroute = spawnSync(
@@ -886,7 +886,7 @@ test("routes a simple request directly without context ceremony", () => {
   });
 });
 
-test("routes a large change through specification, approval, TDD, and review", () => {
+test("routes a large change through specification, approval, implementation, and review", () => {
   const route = routeTask({ intent: "change", scale: "large" });
 
   assert.equal(route.workflowId, "change:large:normal");
@@ -902,12 +902,12 @@ test("routes a large change through specification, approval, TDD, and review", (
       { id: "spec", skill: "coredoc-spec", after: [] },
       { id: "design", skill: "coredoc-plan-review", after: ["spec"] },
       {
-        id: "tdd",
-        skill: "coredoc-tdd",
+        id: "implement",
+        skill: "coredoc-implement",
         after: ["design"],
         gate: "user-approval",
       },
-      { id: "review", skill: "coredoc-review", after: ["tdd"] },
+      { id: "review", skill: "coredoc-review", after: ["implement"] },
     ],
   );
 });
@@ -917,7 +917,7 @@ test("keeps large change dependencies stable across risk and investigation", () 
   assert.equal(high.workflowId, "change:large:high");
   assert.deepEqual(
     high.stages.map(({ id }) => id),
-    ["spec", "design", "tdd", "review"],
+    ["spec", "design", "implement", "review"],
   );
 
   const bug = routeTask({ intent: "change", scale: "large", bugLike: true });
@@ -928,8 +928,8 @@ test("keeps large change dependencies stable across risk and investigation", () 
       { id: "investigate", after: [] },
       { id: "spec", after: ["investigate"] },
       { id: "design", after: ["spec"] },
-      { id: "tdd", after: ["design"] },
-      { id: "review", after: ["tdd"] },
+      { id: "implement", after: ["design"] },
+      { id: "review", after: ["implement"] },
     ],
   );
 });
@@ -952,7 +952,7 @@ test("keeps scale inert for routes without large-scale behavior", () => {
   );
 });
 
-test("routes a bug fix through investigation and ordinary TDD", () => {
+test("routes a bug fix through investigation and adaptive implementation", () => {
   const route = routeTask({
     intent: "change",
     bugLike: true,
@@ -963,7 +963,11 @@ test("routes a bug fix through investigation and ordinary TDD", () => {
     route.stages.map(({ id, skill, after }) => ({ id, skill, after })),
     [
       { id: "investigate", skill: "coredoc-investigate", after: [] },
-      { id: "tdd", skill: "coredoc-tdd", after: ["investigate"] },
+      {
+        id: "implement",
+        skill: "coredoc-implement",
+        after: ["investigate"],
+      },
     ],
   );
   assert.equal(
@@ -978,11 +982,11 @@ test("adds the bundled review skill only for a high-risk change", () => {
 
   assert.deepEqual(
     normal.stages.map(({ id }) => id),
-    ["tdd"],
+    ["implement"],
   );
   assert.deepEqual(
     high.stages.map(({ id }) => id),
-    ["tdd", "review"],
+    ["implement", "review"],
   );
 });
 
@@ -1071,6 +1075,33 @@ test("infers Ukrainian workflows", () => {
   assert.equal(fix.dataSensitive, true);
   assert.equal(fix.runtimeSensitive, true);
   assert.equal(fix.scale, "normal");
+});
+
+test("infers deletion, documentation, configuration, and refactor requests as changes", () => {
+  for (const task of [
+    "remove the obsolete parser path",
+    "delete old feature flag logic",
+    "update the README installation instructions",
+    "document the current authentication flow",
+    "replace the build config",
+    "rename the internal adapter",
+    "видали стару логіку парсера",
+    "прибери застарілий feature flag",
+    "онови документацію встановлення",
+    "перейменуй внутрішній адаптер",
+  ]) {
+    const signals = inferTaskSignals(task);
+    assert.equal(signals.intent, "change", task);
+    assert.equal(signals.bugLike, false, task);
+    assert.equal(signals.scale, "normal", task);
+  }
+
+  assert.equal(
+    inferTaskSignals("explain how the document parser works").intent,
+    "direct",
+  );
+  assert.equal(inferTaskSignals("give me an update on the parser").intent, "direct");
+  assert.equal(inferTaskSignals("дай статус оновлення парсера").intent, "direct");
 });
 
 test("infers large changes only for substantive change requests", () => {
