@@ -1,0 +1,75 @@
+{
+  "description": "Local workflow observation and bounded delivery capture",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/coredoc-workflows\" session-env"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/coredoc-workflows\" ensure-managed-relay"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/coredoc-workflows\" retry-pending"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Skill|mcp__(?:[A-Za-z0-9]+[-_])*[Cc][Oo][Rr][Ee][Dd][Oo][Cc](?:[-_][A-Za-z0-9]+)*__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/coredoc-workflows\" workflow-observer"
+          }
+        ]
+      }
+    ],
+    "UserPromptExpansion": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/coredoc-workflows\" workflow-observer"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|Skill|mcp__(?:[A-Za-z0-9]+[-_])*[Cc][Oo][Rr][Ee][Dd][Oo][Cc](?:[-_][A-Za-z0-9]+)*__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/coredoc-workflows\" workflow-observer"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/coredoc-workflows\" workflow-observer"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/coredoc-workflows\" session-end"
+          }
+        ]
+      }
+    ]
+  }
+}

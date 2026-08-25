@@ -1,0 +1,27 @@
+{
+  "provenance": {
+    "host": "codex",
+    "version": "0.146.0",
+    "model": "gpt-5.6-sol",
+    "capture": "real-cli-negative-observation"
+  },
+  "configuredProjectHooks": [
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse:Bash",
+    "PostToolUse:Bash",
+    "Stop"
+  ],
+  "observed": {
+    "modelTurns": 1,
+    "shellCalls": 1,
+    "hookPayloads": 0,
+    "nativeOtlpRequests": 6
+  },
+  "conclusion": {
+    "directCapabilityObservation": "not-observed",
+    "hookToConversationCorrelation": "unavailable",
+    "capabilityCoverage": "unavailable",
+    "packagedCodexHooks": "not-wired"
+  }
+}

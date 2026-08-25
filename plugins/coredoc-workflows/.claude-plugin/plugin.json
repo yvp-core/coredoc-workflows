@@ -1,0 +1,17 @@
+{
+  "name": "coredoc-workflows",
+  "version": "0.11.0",
+  "description": "Self-contained Claude Code engineering workflows with read-only Coredoc context, explicit Claude/Codex peer adapters, compact learning and retrospectives, and bundled macOS ARM browser QA.",
+  "author": {
+    "name": "Coredoc team"
+  },
+  "homepage": "https://github.com/yvp-core/coredoc-workflows#readme",
+  "repository": "https://github.com/yvp-core/coredoc-workflows",
+  "license": "Apache-2.0",
+  "keywords": [
+    "workflow",
+    "review",
+    "tdd",
+    "qa"
+  ]
+}

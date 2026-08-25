@@ -1,0 +1,5 @@
+telemetry = false
+env = false
+
+[install]
+auto = "disable"

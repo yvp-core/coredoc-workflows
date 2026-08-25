@@ -1,0 +1,31 @@
+{
+  "comment": "Integrity pin for the compiled browser server shipped with this plugin. The binary is large and opaque, so its hash is checked in the test suite rather than trusted. See THIRD_PARTY_NOTICES.md and BUN-LICENSE.md for provenance and licenses.",
+  "platform": "darwin-arm64",
+  "binary": "darwin-arm64/browse-server",
+  "sha256": "3b6a3ad59845fb3651fb0843c6933f742a2fa3e05d62883d05805d2fc75e60fd",
+  "sizeBytes": 91097250,
+  "buildCommand": "bun build --compile browse/src/server.ts --outfile browse-server",
+  "reproducibleBuild": false,
+  "reproducibilityNote": "The original source closure, dependency lock, and build environment were not archived with this binary. Rebuilds must be treated as new artifacts and independently verified.",
+  "toolchain": {
+    "runtime": "Bun 1.1.13",
+    "revision": "bd6a6051203ff577240615ff4e242270035a36b7",
+    "platform": "darwin-arm64"
+  },
+  "codeSignature": {
+    "identifier": "bun",
+    "teamIdentifier": "7FRXF46ZSN",
+    "runtimeVersion": "14.4.0"
+  },
+  "browser": "system Chrome-compatible installation",
+  "derivedFrom": {
+    "project": "gstack",
+    "version": "1.60.1.0",
+    "revision": "a3259400a366593e0c909dd9ac3e59752efd2488"
+  },
+  "runtimeLicense": {
+    "path": "BUN-LICENSE.md",
+    "source": "https://github.com/oven-sh/bun/blob/bd6a6051203ff577240615ff4e242270035a36b7/LICENSE",
+    "sha256": "ae4080db73f50c5c20a11af8a2dff379004c4e1fb170a166277bf0db4870e299"
+  }
+}

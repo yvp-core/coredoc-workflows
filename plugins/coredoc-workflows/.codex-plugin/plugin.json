@@ -1,0 +1,43 @@
+{
+  "name": "coredoc-workflows",
+  "version": "0.11.0",
+  "description": "Self-contained engineering workflows with read-only Coredoc context, explicit Claude/Codex peer adapters, compact learning and retrospectives, and bundled macOS ARM browser QA.",
+  "author": {
+    "name": "Coredoc team"
+  },
+  "homepage": "https://github.com/yvp-core/coredoc-workflows#readme",
+  "repository": "https://github.com/yvp-core/coredoc-workflows",
+  "license": "Apache-2.0",
+  "keywords": [
+    "workflow",
+    "routing",
+    "code-graph",
+    "tdd",
+    "review",
+    "qa",
+    "retro"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Coredoc Workflows",
+    "shortDescription": "Self-contained engineering workflows for Codex.",
+    "longDescription": "Routes work through investigation, planning, TDD, review, spec, browser QA, benchmark, security, learning, and retrospective methods; offers explicit host-specific Claude and Codex peer review with resumable consultation; and grounds decisions with read-only Coredoc context.",
+    "developerName": "Coredoc team",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Deterministic workflow routing",
+      "Self-contained review and specification",
+      "Claude and Codex peer adapters",
+      "macOS ARM browser QA",
+      "Reusable Electron QA",
+      "Coredoc authenticated desktop QA",
+      "Read-only Coredoc context policy",
+      "Compact learning and retrospectives"
+    ],
+    "defaultPrompt": [
+      "Route this task through the smallest useful workflow.",
+      "Review this change against the repository rules.",
+      "Turn this idea into an executable specification."
+    ]
+  }
+}

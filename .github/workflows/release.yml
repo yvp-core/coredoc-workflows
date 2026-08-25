@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    name: Validate and publish
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22.x
+      - name: Verify tag and release metadata
+        run: npm run verify:release -- "${GITHUB_REF_NAME}"
+      - name: Run Node reference tests
+        run: npm test
+      - name: Run bundled-runtime tests
+        run: npm run test:bun
+      - name: Verify generated skills
+        run: npm run check:skills
+      - name: Scan public text for high-confidence secrets
+        run: npm run scan:secrets
+      - name: Verify clean generated tree
+        run: git diff --exit-code
+      - name: Assemble complete plugin archive
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          archive="coredoc-workflows-${version}-darwin-arm64.zip"
+          mkdir -p dist
+          /usr/bin/ditto -c -k --keepParent --norsrc --noextattr --noqtn --noacl \
+            plugins/coredoc-workflows "dist/${archive}"
+          (cd dist && shasum -a 256 "${archive}" > SHA256SUMS)
+      - name: Verify release archive
+        run: |
+          archive="dist/coredoc-workflows-${GITHUB_REF_NAME#v}-darwin-arm64.zip"
+          unzip -tqq "$archive"
+          if unzip -Z1 "$archive" | grep -E '(^__MACOSX|/\._)'; then
+            echo "release archive contains macOS metadata sidecars" >&2
+            exit 1
+          fi
+      - name: Attest plugin archive
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: dist/coredoc-workflows-*-darwin-arm64.zip
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: |
+            dist/coredoc-workflows-*-darwin-arm64.zip
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
+          generate_release_notes: true

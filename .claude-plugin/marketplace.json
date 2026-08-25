@@ -1,0 +1,24 @@
+{
+  "name": "coredoc-workflows",
+  "owner": {
+    "name": "Coredoc team",
+    "url": "https://coredoc.ai"
+  },
+  "metadata": {
+    "description": "Open-source engineering workflows for Claude Code and Codex."
+  },
+  "plugins": [
+    {
+      "name": "coredoc-workflows",
+      "source": "./plugins/coredoc-workflows",
+      "description": "Self-contained engineering workflows with optional Coredoc context.",
+      "category": "development-tools",
+      "tags": [
+        "engineering",
+        "review",
+        "tdd",
+        "qa"
+      ]
+    }
+  ]
+}

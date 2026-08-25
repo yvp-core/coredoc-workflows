@@ -1,0 +1,15 @@
+{
+  "name": "@coredoc/workflows-marketplace",
+  "version": "0.11.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.mjs && npm --prefix plugins/coredoc-workflows run test:node",
+    "test:repository": "node --test test/*.test.mjs",
+    "test:bun": "plugins/coredoc-workflows/bin/coredoc-workflows test",
+    "build:skills": "plugins/coredoc-workflows/bin/coredoc-workflows build-skills",
+    "check:skills": "plugins/coredoc-workflows/bin/coredoc-workflows build-skills --check",
+    "scan:secrets": "node scripts/scan-public-source.mjs",
+    "verify:release": "node scripts/verify-release.mjs"
+  }
+}

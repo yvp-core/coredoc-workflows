@@ -1,0 +1,20 @@
+{
+  "name": "coredoc-workflows",
+  "interface": {
+    "displayName": "Coredoc Workflows"
+  },
+  "plugins": [
+    {
+      "name": "coredoc-workflows",
+      "source": {
+        "source": "local",
+        "path": "./plugins/coredoc-workflows"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

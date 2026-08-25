@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node-reference:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - 22.x
+          - 24.x
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Run reference test suite
+        run: npm test
+      - name: Verify generated skills with Node
+        run: node plugins/coredoc-workflows/scripts/build-skills.mjs --check
+      - name: Verify release metadata
+        run: npm run verify:release
+      - name: Scan public text for high-confidence secrets
+        run: npm run scan:secrets
+      - name: Check patch whitespace
+        run: git diff --check
+
+  bundled-runtime:
+    name: Bundled Bun on macOS arm64
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Verify bundled runtime
+        run: plugins/coredoc-workflows/bin/coredoc-workflows version
+      - name: Run plugin tests with bundled runtime
+        run: plugins/coredoc-workflows/bin/coredoc-workflows test
+      - name: Verify generated skills with bundled runtime
+        run: plugins/coredoc-workflows/bin/coredoc-workflows build-skills --check
+      - name: Run repository acceptance tests with bundled runtime
+        run: >-
+          plugins/coredoc-workflows/runtime/bun/darwin-arm64/bun
+          --no-env-file
+          --no-install
+          --config=plugins/coredoc-workflows/runtime/bun/bunfig.toml
+          test
+          test/repository.test.mjs
+      - name: Ensure validation did not modify tracked files
+        run: git diff --exit-code

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Electron QA"
+  short_description: "Control opted-in Electron apps safely"
+  default_prompt: "Use $electron-qa to inspect and test an opted-in Electron development app."

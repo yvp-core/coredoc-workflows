@@ -1,0 +1,178 @@
+---
+name: coredoc-review
+description: Review a branch, diff, or pull request against its specification and repository standards, including security, data safety, testing, performance, and scope. Use for code review or pre-landing review.
+---
+
+# Code review adapter
+
+Apply the method below, and only the specialist references relevant to the diff.
+
+If you run the suite and it comes back red, apply
+`<plugin-root>/resources/methodology/test-failure-triage.md` before reporting:
+separate in-branch failures from pre-existing ones and say which is which. A
+review that reports a pre-existing failure as this branch's fault sends the
+author after the wrong change.
+
+Review is read-only unless the user explicitly asks to address findings. Do not
+auto-fix, commit, fetch, push, reply to review comments, or mutate a pull request
+without authorization. Prefer local diff evidence; use network integrations only
+when requested and available.
+
+Step 6 is the one place that asks whether to fix anything, and it runs after the
+findings are reported. Nothing in the repository is edited before it, and only
+what the user selects there is edited after it.
+
+Use Coredoc graph tools read-only to establish callers, dependents, and impact
+for the changed symbols when they are available. Treat graph coverage as a lower
+bound and verify critical gaps against source.
+
+{{PREAMBLE}}
+
+{{REVIEW_POLICY}}
+
+{{BASE_BRANCH_DETECT}}
+
+{{FINDING_CONTRACT}}
+
+# Pre-Landing PR Review
+
+You are running the `/review` workflow. Analyze the current branch's diff against the base branch for structural issues that tests don't catch.
+
+---
+
+## Step 1: Check branch
+
+1. Run `git branch --show-current` to get the current branch.
+2. If on the base branch, output: **"Nothing to review — you're on the base branch or have no changes against it."** and stop.
+3. Use the locally detected `DIFF_BASE` and `git diff "$DIFF_BASE" --stat`. If no diff exists, report that and stop.
+
+---
+
+{{CROSS_REVIEW_DEDUP}}
+
+---
+
+{{SCOPE_DRIFT}}
+
+{{PLAN_COMPLETION_AUDIT_REVIEW}}
+
+## Step 2: Read the checklist
+
+Read `<plugin-root>/resources/review-checklist.md` and apply only the sections relevant to the diff.
+
+**If the file cannot be read, STOP and report the error.** Do not proceed without the checklist.
+
+---
+
+## Step 3: Get the diff
+
+Use the local `DIFF_BASE` resolved above:
+
+```bash
+git diff "$DIFF_BASE"
+```
+
+This includes committed and uncommitted branch work. State that the comparison
+uses local refs; fetch only when the user asks for fresh remote state.
+
+## Step 4: Critical pass (core review)
+
+Apply only the relevant candidate categories from the current checklist. A
+checklist match is not a severity: promote it only after it passes
+the finding contract's evidence and reachability gates, then apply the resolved
+review policy for blocking and missing release context.
+
+**Enum & Value Completeness requires reading code OUTSIDE the diff.** When the diff introduces a new enum value, status, tier, or type constant, use Grep to find all files that reference sibling values, then Read those files to check if the new value is handled. This is the one category where within-diff review is insufficient.
+
+**Search-before-recommending:** For an unfamiliar or version-sensitive fix,
+verify the framework's current built-in and API signature in primary documentation.
+If that cannot be checked, mark the recommendation unverified; do not widen the
+review into an alternatives survey.
+
+Use the finding contract's output fields. Respect the suppressions — do NOT flag
+items listed in the "DO NOT flag" section.
+
+{{CONFIDENCE_CALIBRATION}}
+
+---
+
+{{REVIEW_ARMY}}
+
+---
+
+{{CROSS_MODEL_PASS}}
+
+{{ADVERSARIAL_STEP}}
+
+## Step 5: Findings and handoff
+
+Review is read-only. For every finding:
+
+- give severity, confidence, `path:line`, concrete evidence, impact, and the
+  smallest recommended fix;
+- verify claims about safety, existing handling, and test coverage against source;
+- deduplicate by root cause;
+- distinguish blockers, nonblocking findings, and hypotheses;
+- note related TODO or documentation drift only when it changes the landing risk.
+
+Order findings by severity. Put every `NEEDS_CONTEXT` item in the main findings
+with exactly one concrete question whose answer resolves its disposition. If no
+finding is blocking under the resolved review policy, say that the change has no
+demonstrated release blockers and name any residual validation gap. Do not edit
+files, post replies, or persist a review log at this point; Step 6 is where that
+authorization is collected, and it comes after the adversarial and cross-model
+passes so the offer covers the merged finding set.
+
+## Step 6: Fix offer
+
+The report is the deliverable; this step decides what happens next. Run it after
+the adversarial synthesis and any cross-model pass, over the final deduplicated
+finding set.
+
+**Actionable set.** Offer fixes only for findings that are actionable under the
+resolved review policy, survived the evidence, reachability, confidence, and
+pre-emit gates, and have a concrete bounded fix. A `NEEDS_CONTEXT` item gets its
+one resolving question, not a fix offer, until answered. Never offer a
+`HYPOTHESIS`, appendix-suppressed item, or work whose next action is
+investigation. If the actionable set is empty, say so in one line and stop; do
+not manufacture an offer.
+
+**Asking.** Order the actionable set by severity. Present it with
+`AskUserQuestion` in batches of at most three findings, one call per batch,
+`multiSelect: true` — the user ticks the ones to fix. That is one decision per
+call, so it stays inside the host interaction contract above. Each option label
+carries the severity, `path:line`, and a short problem statement; each description
+carries the smallest recommended fix. State the batch position (`batch 2 of 4`) so
+the user knows how many rounds remain, and recommend a selection in the question
+text rather than pre-ticking anything.
+
+Above twelve actionable findings, ask whether to address them now or keep the report
+read-only, then batch within the chosen scope. Below that, batch directly.
+
+**Authorization.** A ticked finding is the explicit request to address it, and it
+authorizes exactly that fix. An unticked finding is declined: leave it alone and
+do not re-offer it later in the same review. Skipping a batch declines all of it.
+If `AskUserQuestion` is unavailable, use the prose fallback from the host
+interaction contract — same order, same batches — and stop for a typed reply.
+
+**Applying.** Fix only what was ticked, smallest change first, one finding at a
+time. Do not bundle adjacent cleanup, reformatting, or a second finding's fix into
+an approved edit. Run the repository's own tests for the touched area afterwards
+and report the result. Do not commit.
+
+Report one line per selected finding, and name the failures rather than burying
+them:
+
+```
+[FIXED]   parser.mjs:155 — tool arguments validated against the declared schema
+[FIXED]   session-state.mjs:490 — ownerless lock treated as stale
+[FAILED]  provider-runner.mjs:1189 — signal handler regressed two tests; reverted, finding stands
+[SKIPPED] provider-runner.mjs:1004 — declined
+```
+
+## Important Rules
+
+- **Read the FULL diff before commenting.** Do not flag issues already addressed in the diff.
+- **Read-only by default.** Report findings; address them only after explicit authorization.
+- **Be terse.** One line problem, one line fix. No preamble.
+- **Only flag real problems.** Skip anything that's fine.

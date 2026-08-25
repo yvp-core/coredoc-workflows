@@ -1,0 +1,6 @@
+interface:
+  display_name: "Coredoc Claude"
+  short_description: "Review or consult with a pinned Claude model"
+  default_prompt: "Use $coredoc-claude to ask Claude for an independent review of this plan."
+policy:
+  allow_implicit_invocation: false

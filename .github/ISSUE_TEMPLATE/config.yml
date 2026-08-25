@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/yvp-core/coredoc-workflows/security/advisories/new
+    about: Report security issues privately
+  - name: Usage question
+    url: https://github.com/yvp-core/coredoc-workflows/discussions
+    about: Ask for help or discuss an idea

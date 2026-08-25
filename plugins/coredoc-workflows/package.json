@@ -1,0 +1,33 @@
+{
+  "name": "@coredoc/workflows-plugin",
+  "version": "0.11.0",
+  "private": true,
+  "description": "Self-contained engineering workflows for Codex and Claude Code.",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/yvp-core/coredoc-workflows#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yvp-core/coredoc-workflows.git",
+    "directory": "plugins/coredoc-workflows"
+  },
+  "bugs": {
+    "url": "https://github.com/yvp-core/coredoc-workflows/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
+  "scripts": {
+    "test": "npm run test:node",
+    "test:node": "node --test scripts/*.test.mjs scripts/hosts/*.test.mjs runtime/browse/*.test.mjs runtime/capture/*.test.mjs runtime/desktop/*.test.mjs",
+    "test:bun": "./bin/coredoc-workflows test",
+    "build:skills": "./bin/coredoc-workflows build-skills",
+    "check:skills": "./bin/coredoc-workflows build-skills --check",
+    "doctor:browse": "./bin/coredoc-workflows browse doctor",
+    "managed-relay:check": "./bin/coredoc-workflows managed-relay check",
+    "managed-relay:ensure": "./bin/coredoc-workflows managed-relay ensure",
+    "managed-relay:serve": "./bin/coredoc-workflows managed-relay serve",
+    "capture-health:report": "./bin/coredoc-workflows capture-health",
+    "native-otel:sanitize": "./bin/coredoc-workflows native-otel-sanitize"
+  }
+}
