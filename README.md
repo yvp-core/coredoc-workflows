@@ -12,19 +12,20 @@ continue with repository-native search and explicitly report reduced coverage.
 
 ## Install
 
-Install the tagged `v0.11.0` release so the marketplace snapshot is immutable.
+Add the marketplace without pinning a Git ref so marketplace upgrades can pick
+up new plugin versions from the default branch.
 
 ### Codex
 
 ```bash
-codex plugin marketplace add yvp-core/coredoc-workflows --ref v0.11.0
+codex plugin marketplace add yvp-core/coredoc-workflows
 codex plugin add coredoc-workflows@coredoc-workflows
 ```
 
 ### Claude Code
 
 ```bash
-claude plugin marketplace add yvp-core/coredoc-workflows@v0.11.0
+claude plugin marketplace add yvp-core/coredoc-workflows
 claude plugin install coredoc-workflows@coredoc-workflows
 ```
 
