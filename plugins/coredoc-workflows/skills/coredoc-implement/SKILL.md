@@ -26,6 +26,17 @@ is not always a new test.
    contradicts repository evidence, stop and raise the mismatch instead of
    silently implementing or skipping it. Use the specification's non-goals as
    the scope boundary.
+
+   If this session has a Coredoc intent capability — the `get_intent_context` MCP
+   tool or the `coredoc intent context` CLI — resolve the plugin root as two
+   directories above this file and read
+   `<plugin-root>/resources/methodology/intent-context.md` before editing. Reuse
+   the intent IDs the routed specification or plan already names and fetch only
+   their missing payload; treat the limitations and non-goals it returns as scope
+   boundaries, and cite the IDs a change satisfies in the report. When no intent
+   capability is present, proceed from repository evidence alone and do not mention
+   intent context in the output.
+
 2. Before editing, state one concise proof plan and choose the smallest matching
    mode:
 
