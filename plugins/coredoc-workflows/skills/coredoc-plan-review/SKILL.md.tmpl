@@ -5,319 +5,153 @@ description: Review an implementation plan for architecture, data flow, edge cas
 
 # Engineering plan review adapter
 
-Apply the method below subject to repository rules and the user's authorization
-boundary.
-
-When the plan adds or changes a surface developers consume — a CLI, an SDK, an
-API, a plugin, a config format — also apply
-`<plugin-root>/resources/methodology/dx-framework.md` in the Architecture
-section. Adoption friction designed in at plan time is far cheaper to remove
-there than after the surface has users.
-
-Ground architectural claims with read-only Coredoc graph facts when available.
-Do not edit code while reviewing a plan or create workflow-history artifacts.
+Review only the requested plan/spec/path and remain read-only. Repository rules
+and the user's authorization boundary win. Ground claims in source and read-only
+Coredoc graph evidence when available; graph coverage is a lower bound.
 
 {{PREAMBLE}}
 
-{{REVIEW_POLICY}}
+## Review policy
 
-# Plan Review Mode
+Before classifying findings, read and apply
+`<plugin-root>/resources/methodology/review-policy.md`. Repository policy or a
+task-scoped maintainer decision overrides its generic fallback.
 
-Review this plan before code changes. Explain tradeoffs and ask for input only
-for findings that block under the resolved review policy, `NEEDS_CONTEXT`
-questions, or user-owned decisions; do not turn nonblocking advice into
-implementation scope.
+## Finding contract
 
-## Scope gate
+Read `<plugin-root>/resources/methodology/finding-contract.md` before emitting a
+finding. One root cause is one finding; distinguish proven defects,
+`NEEDS_CONTEXT`, and hypotheses. Nonblocking advice never becomes implementation
+scope without user opt-in.
 
-If the review target is explicit in the user's request, use it. Otherwise ask
-whether to review the branch diff, a plan/design document, or a path, and wait
-for the answer before inspecting unrelated scope.
+## Review flow
 
-{{FINDING_CONTRACT}}
+```mermaid
+flowchart TD
+  G[Ground plan in current code] --> S[Challenge scope]
+  S -->|material overbuild| Q[Ask one blocking decision]
+  S -->|right-sized| R[Review applicable risks]
+  Q --> R
+  R --> V[Map acceptance to validation]
+  V --> U[Update plan and decisions]
+  U --> H[Completion gate]
+```
 
-## Priority hierarchy
-If the user asks you to compress or the system triggers context compaction: Step 0 > validation map > blocking decisions and `NEEDS_CONTEXT` questions > Everything else. Never skip Step 0. Do not preemptively warn about context limits -- the system handles compaction automatically.
+If the target is not explicit, ask whether to review a branch diff, document, or
+path and wait. Otherwise do not ask a scope-selection question.
 
-## My engineering preferences (use these to guide your recommendations):
-* Apply the repository's Rule of Three; flag repetition when it creates a concrete maintenance risk.
-* Tests must be meaningful and proportionate to the changed behavior.
-* I want code that's "engineered enough" — not under-engineered (fragile, hacky) and not over-engineered (premature abstraction, unnecessary complexity).
-* Handle reachable edge cases at current trust boundaries; do not build for hypothetical states or future consumers.
-* Bias toward explicit over clever.
-* Right-sized diff: favor the smallest diff that cleanly expresses the change ... but don't compress a necessary rewrite into a minimal patch. If the existing foundation is broken, say "scrap it and do this instead."
+### 1. Ground and challenge scope
 
-## Review lenses
+Read the newest relevant local spec/plan and the smallest source set needed to
+verify its premises. Record:
 
-These are decision lenses, not extra requirements:
+- **What already exists:** mechanisms the plan reuses or needlessly duplicates.
+- **Minimum viable change:** the smallest diff that delivers the stated outcome.
+- **NOT in scope:** considered machinery deferred with one-line rationale.
+- **Release context:** supported paths/users, deployment/data shape, realistic
+  load, deprecations, and accepted risk that affect disposition.
 
-1. **Blast radius** — evaluate realistic impact on stated users and systems.
-2. **Boring by default** — prefer an existing runtime or repository mechanism.
-3. **Release-context fit** — match rollout and rollback to the declared deployment
-   and data-retention model.
-4. **Essential complexity** — reject machinery with no current observer or consumer.
-5. **Load-bearing refactor only** — restructure first only when the current shape
-   prevents the smallest safe change.
+Challenge a plan only for a concrete mismatch: a subsystem without a current
+consumer, coordination that self-healing makes unnecessary, speculative states,
+or projected machinery far beyond the accepted outcome. File count alone is a
+smell, not a verdict. If reducing scope changes the user-owned outcome, ask one
+material decision with 2–3 options and stop; otherwise recommend the reduction
+and continue.
 
-## Documentation and diagrams:
-* Use one small diagram only when it materially clarifies a non-trivial flow, state transition, or dependency that prose cannot.
-* Update an existing nearby diagram only when the changed behavior makes it inaccurate; do not add or edit diagrams outside scope.
+When unfamiliar custom machinery is proposed, apply
+`<plugin-root>/resources/methodology/search-before-building.md`; skip external
+search when unavailable. If the plan exposes a CLI/SDK/API/plugin/config surface,
+also apply `<plugin-root>/resources/methodology/dx-framework.md`.
 
----
+## Anti-shortcut clause
 
----
+Apply `<plugin-root>/resources/methodology/anti-shortcut.md`.
 
-## BEFORE YOU START:
+Inspect the real runtime path before accepting or rejecting a plan premise.
+Never infer correctness from a filename, test name, diagram, or intended layer.
+Honor accepted scope; reopen it only when later evidence adds a subsystem,
+shared contract, or material consumer set.
 
-### Design document check
+### 2. Review applicable risks
 
-Search the repository's documented issue/spec locations and the user-provided
-path. Read the newest relevant document only when it exists; do not consult or
-create a separate global design-history store.
+Mark an inapplicable lens with one reason; do not manufacture findings.
 
-### Step 0: Scope Challenge
+| Lens | Questions that matter |
+| --- | --- |
+| Architecture | Are boundaries, ownership, data flow, public contracts, distribution, and rollout coherent with current consumers? Is a reachable integration failure contained and visible? |
+| Code quality | Is the plan explicit and maintainable without premature abstraction, synchronized-edit risk, or speculative edge handling? |
+| Tests | Do accepted scenarios and invariants have observers at the smallest meaningful layer? Could an acceptance check pass while behavior is broken? |
+| Performance | Is a claimed hot path supported by realistic load, a bound, benchmark, or trace? Are resource lifetimes explicit? |
+| Security/data | Are current trust boundaries, authorization, retention, migration, and rollback handled without inventing unsupported threats? |
 
-> Reminder: the **Scope gate** at the top of this skill is a hard STOP. Do not run Step 0 until the user has answered it, and run it against the target they chose.
-
-Before reviewing anything, answer these questions:
-1. **What existing code already partially or fully solves each sub-problem?** Can we capture outputs from existing flows rather than building parallel ones?
-2. **What is the minimum set of changes that achieves the stated goal?** Flag any work that could be deferred without blocking the core objective. Be ruthless about scope creep.
-3. **Complexity check:** If the plan touches more than 8 files or introduces more than 2 new classes/services, treat that as a smell and challenge whether the same goal can be achieved with fewer moving parts.
-4. **Search check:** When the plan adds custom machinery or relies on an unfamiliar
-   framework API, check:
-   - Does the runtime/framework have a built-in? Search: "{framework} {pattern} built-in"
-   - Is the chosen approach current best practice? Search: "{pattern} best practice {current year}"
-   - Are there known footguns? Search: "{framework} {pattern} pitfalls"
-
-   If WebSearch is unavailable, skip this check and note: "Search unavailable — proceeding with in-distribution knowledge only."
-
-   If a current built-in meets the accepted requirement, flag the custom solution
-   as a scope-reduction opportunity. Do not survey unrelated alternatives.
-5. **TODOS cross-reference:** Read `TODOS.md` if it exists. A deferred item joins this plan only when the accepted requirement cannot work without it; otherwise keep it deferred.
-
-6. **Completeness check:** Cover the requested behavior, relevant error paths, and acceptance criteria without speculative expansion.
-
-7. **Distribution check:** If the plan introduces a new artifact type (CLI binary, library package, container image, mobile app), does it include the build/publish pipeline? Code without distribution is code nobody can use. Check:
-   - Is there a CI/CD workflow for building and publishing the artifact?
-   - Are target platforms defined (linux/darwin/windows, amd64/arm64)?
-   - How will users download or install it (GitHub Releases, package manager, container registry)?
-   If the plan defers distribution, flag it explicitly in the "NOT in scope" section — don't let it silently drop.
-
-If the complexity check triggers (8+ files or 2+ new classes/services), STOP before any review-section work. Call AskUserQuestion: name what's overbuilt, propose a minimal version that achieves the core goal, ask whether to reduce or proceed as-is. The AskUserQuestion call is a tool_use, not prose — call the tool directly.
-
-**STOP.** Do NOT proceed to Section 1 (Architecture review), edit the plan file with a proposed scope reduction, or call ExitPlanMode until the user responds. Naming the 80% solution in chat prose and continuing — or loading the AskUserQuestion schema via ToolSearch and then never invoking it — is the failure mode this gate exists to prevent.
-
-If the complexity check does not trigger, present your Step 0 findings and proceed directly to Section 1.
-
-Review only applicable sections, one at a time (Architecture → Code Quality → Tests → Performance). Report every proven finding, prioritize findings that block or require a decision under the resolved review policy, and do not manufacture observations to fill a quota.
-
-Honor an accepted scope decision. Re-open the scope challenge only when later review
-would add a subsystem, more than two classes/services, or materially expand the
-reviewed file/component inventory; do not let review findings silently grow the plan.
-
-## Review Sections (after scope is agreed)
-
-Apply a section only when its risk exists in the plan. State `Not applicable` with
-one reason; do not manufacture findings to satisfy the template.
-
-{{ANTI_SHORTCUT_CLAUSE}}
-
-### 1. Architecture review
-Evaluate:
-* Overall system design and component boundaries.
-* Dependency graph and coupling concerns.
-* Data flow patterns and potential bottlenecks.
-* Scaling characteristics and single points of failure.
-* Security architecture (auth, data access, API boundaries).
-* Whether one key flow needs a diagram to resolve a material ambiguity.
-* For each release-critical integration boundary, describe one reachable failure scenario and whether existing handling contains it.
-* **Distribution architecture:** If this introduces a new artifact (binary, package, container), how does it get built, published, and updated? Is the CI/CD pipeline part of the plan or deferred?
-* **Passes-while-broken check.** For each acceptance criterion, verify its stated
-  observation could fail when the accepted behavior is broken. Report only a
-  criterion that is self-satisfying or leaves its accepted property unobserved;
-  do not invent alternate failure scenarios after the criterion is proven.
-
-For each finding that blocks under the resolved review policy, each
-`NEEDS_CONTEXT` item, or unresolved decision that changes behavior, scope, or
-architecture, call AskUserQuestion individually. A `NEEDS_CONTEXT` item asks one
-concrete question whose answer resolves its disposition. Summarize other
-nonblocking findings without adding them to the plan. Follow the Decision brief
-format below.
-
-**STOP** only for that material unresolved decision. Do not stop or expand the plan
-for nonblocking observations.
-
-{{CONFIDENCE_CALIBRATION}}
-
-### 2. Code quality review
-Evaluate:
-* Code organization and module structure.
-* Rule-of-Three violations that create a current synchronized-edit or divergence risk.
-* Error handling and edge cases reachable through current callers or trust boundaries.
-* Areas that are over-engineered or under-engineered relative to my preferences.
-* Existing diagrams in touched code whose meaning the planned change actually alters.
-
-For each finding that blocks under the resolved review policy, each
-`NEEDS_CONTEXT` item, or unresolved decision that changes behavior, scope, or
-architecture, call AskUserQuestion individually. Summarize other nonblocking
-findings without adding them to the plan.
-
-**STOP** only for that material unresolved decision. Do not stop or expand the plan
-for nonblocking observations.
+For a candidate finding, read
+`<plugin-root>/resources/methodology/confidence-calibration.md` and verify evidence,
+reachability, observer, impact, violated requirement, and existing handling before
+emitting it. Ask only for a blocking disposition, a single release fact needed
+for `NEEDS_CONTEXT`, or a user-owned behavior/architecture decision. Use
+`<plugin-root>/resources/methodology/decision-brief.md` for that question and
+`estimate-buckets.md` only when comparing effort materially changes the choice.
 
 ### 3. Test review
 
-{{TEST_COVERAGE_AUDIT_PLAN}}
+Apply `<plugin-root>/resources/methodology/test-coverage-plan.md`.
 
-For LLM/prompt changes: check the "Prompt/LLM changes" file patterns listed in CLAUDE.md. If this plan touches ANY of those patterns, state which eval suites must be run, which cases should be added, and what baselines to compare against. Then use AskUserQuestion to confirm the eval scope with the user.
+- **Test Framework Detection:** use the repository's real runner and conventions.
+- **Trace accepted runtime paths:** map each accepted scenario/invariant to its
+  current observer and realistic failure path.
+- **Choose the smallest meaningful layer:** existing test, focused regression,
+  type/build/schema check, runtime proof, or explicit manual validation.
+- Do not prescribe one new test per edit or acceptance criterion. Deletion,
+  refactor, config, docs, and generated output use evidence appropriate to their
+  observable risk.
 
-For each finding that blocks under the resolved review policy, each
-`NEEDS_CONTEXT` item, or unresolved decision that changes behavior, scope, or
-architecture, call AskUserQuestion individually. Summarize other nonblocking
-findings without adding them to the plan.
+For prompt/LLM work, require the repository's relevant eval suite and a named
+before/after baseline. Ask about eval scope only when repository evidence cannot
+resolve it.
 
-**STOP** only for that material unresolved decision. Do not stop or expand the plan
-for nonblocking observations.
+Output a compact validation map:
 
-### 4. Performance review
-Evaluate:
-* Measured N+1 queries and database access patterns on realistic inputs.
-* Demonstrable memory or resource-lifecycle concerns.
-* Slow or high-complexity code paths supported by a benchmark, bound, or hot-path trace.
+| Outcome / risk | Observer | Decisive check | Gap |
+| --- | --- | --- | --- |
 
-For each finding that blocks under the resolved review policy, each
-`NEEDS_CONTEXT` item, or unresolved decision that changes behavior, scope, or
-architecture, call AskUserQuestion individually. Summarize other nonblocking
-findings without adding them to the plan.
+For each release-critical boundary, include one reachable failure, existing
+handling, test/validation evidence, and user-visible result.
 
-**STOP** only for that material unresolved decision. Do not stop or expand the plan
-for nonblocking observations.
+### 4. Make the plan executable
 
-## How to ask questions
-Follow the Decision brief format section below. Additional rules for plan reviews:
-* **One material decision = one AskUserQuestion call.** Nonblocking observations are not decisions unless the user opts in.
-* Describe the problem concretely, with file and line references.
-* Present 2-3 options, including "do nothing" where that's reasonable.
-* For each option, specify in one line: effort as a bucket pair (`human ~bucket / agent ~bucket`, scale below), release risk, and lifetime maintenance burden. Cheap generation never justifies broader permanent machinery.
+Update the reviewed artifact only when authorized. Preserve intent IDs and map
+every step to an accepted outcome; remove steps with no current consumer or
+observer. Use a single small Mermaid diagram only for a non-trivial dependency,
+state, or interaction flow, and do not duplicate it in prose.
 
-{{ESTIMATE_BUCKETS}}
+## Implementation Tasks
 
-* **Map the reasoning to my engineering preferences above.** One sentence connecting your recommendation to a specific preference (DRY, explicit > clever, minimal diff, etc.).
-* Label with issue NUMBER + option LETTER (e.g., "3A", "3B").
-* **Coverage vs kind:** completeness scores measure accepted-requirement coverage only. Hypothetical edge cases and future consumers never raise a score.
-* **Zero findings:** if a section has zero findings, state that and proceed. Never manufacture a decision to complete a section.
+When tasks need restructuring, apply
+`<plugin-root>/resources/methodology/implementation-tasks.md`. Each task names its
+boundary, dependencies, accepted outcome, decisive validation, and explicit
+non-goals. Do not invent file paths before evidence supports them.
 
-## Required outputs
+Analyze parallel worktrees only when requested or when at least two large,
+disjoint workstreams exist. Otherwise state: `Sequential implementation, no
+parallelization opportunity.` For parallel lanes, show module ownership and
+dependencies in one table or Mermaid graph and flag shared-module conflicts.
 
-### "NOT in scope" section
-Every plan review MUST produce a "NOT in scope" section listing work that was considered and explicitly deferred, with a one-line rationale for each item.
+Record accepted decisions in the spec's ADR/decision section; unresolved
+decisions retain an owner and one concrete question. Propose TODO updates only
+for accepted nonblocking follow-ups, and ask before writing them.
 
-### "What already exists" section
-List existing code/flows that already partially solve sub-problems in this plan, and whether the plan reuses them or unnecessarily rebuilds them.
+## Plan review completion gate
 
-### TODOS.md updates
-After all review sections, batch only accepted nonblocking follow-ups once. Do not turn
-unverified ideas into TODOs or offer to build deferred work in this PR.
+Before handoff, read and apply
+`<plugin-root>/resources/methodology/plan-review-gate.md`. Confirm:
 
-For each TODO, describe:
-* **What:** One-line description of the work.
-* **Why:** The concrete problem it solves or value it unlocks.
-* **Pros:** What you gain by doing this work.
-* **Cons:** Cost, complexity, or risks of doing it.
-* **Context:** Enough detail that someone picking this up in 3 months understands the motivation, the current state, and where to start.
-* **Depends on / blocked by:** Any prerequisites or ordering constraints.
+1. premises were checked against current code and release context;
+2. scope/non-goals and existing reusable mechanisms are explicit;
+3. every accepted outcome maps to implementation and validation;
+4. reachable failure modes, rollout, rollback, and public consumers are covered;
+5. findings follow policy and no nonblocking observation silently expanded scope;
+6. unresolved user decisions are visible rather than defaulted.
 
-Then present options: **A)** Add accepted follow-ups to `TODOS.md` **B)** Leave them only in the review.
-
-Do NOT just append vague bullet points. A TODO without context is worse than no TODO — it creates false confidence that the idea was captured while actually losing the reasoning.
-
-### Diagrams
-Use a diagram only for a material non-trivial relationship, and name an inline code
-diagram only when the code already relies on one to explain an invariant.
-
-### Failure modes
-For each release-critical boundary in the validation map, list one reachable failure and whether:
-1. A test covers that failure
-2. Error handling exists for it
-3. The user would see a clear error or a silent failure
-
-It is P1 only when the finding contract proves reachability, impact, and a violated
-accepted requirement. Otherwise it is a validation gap, `HYPOTHESIS` when a
-factual claim remains unverified, or `NEEDS_CONTEXT` when the source-proven
-behavior is missing only a release-policy decision.
-
-### Worktree parallelization strategy
-
-Analyze worktree parallelization only when the user asks or the accepted plan has
-at least two large, genuinely independent workstreams.
-
-**Skip if:** all steps touch the same primary module, or the plan has fewer than 2 independent workstreams. In that case, write: "Sequential implementation, no parallelization opportunity."
-
-**Otherwise, produce:**
-
-1. **Dependency table** — for each implementation step/workstream:
-
-| Step | Modules touched | Depends on |
-|------|----------------|------------|
-| (step name) | (directories/modules, NOT specific files) | (other steps, or —) |
-
-Work at the module/directory level, not file level. Plans describe intent ("add API endpoints"), not specific files. Module-level ("controllers/, models/") is reliable; file-level is guesswork.
-
-2. **Parallel lanes** — group steps into lanes:
-   - Steps with no shared modules and no dependency go in separate lanes (parallel)
-   - Steps sharing a module directory go in the same lane (sequential)
-   - Steps depending on other steps go in later lanes
-
-Format: `Lane A: step1 → step2 (sequential, shared models/)` / `Lane B: step3 (independent)`
-
-3. **Execution order** — which lanes launch in parallel, which wait. Example: "Launch A + B in parallel worktrees. Merge both. Then C."
-
-4. **Conflict flags** — if two parallel lanes touch the same module directory, flag it: "Lanes X and Y both touch module/ — potential merge conflict. Consider sequential execution or careful coordination."
-
-{{TASKS_SECTION_EMIT:eng-review}}
-
-### Completion summary
-At the end of the review, fill in and display this summary so the user can see all findings at a glance:
-- Step 0: Scope Challenge — ___ (scope accepted as-is / scope reduced per recommendation)
-- Architecture Review: blocking findings ___; nonblocking observations ___
-- Code Quality Review: blocking findings ___; nonblocking observations ___
-- Test Review: validation map produced, ___ required gaps identified
-- Performance Review: blocking findings ___; nonblocking observations ___
-- NOT in scope: written
-- What already exists: written
-- TODOS.md updates: ___ items proposed to user
-- Failure modes: release-blocking gaps ___
-- Parallelization: ___ lanes, ___ parallel / ___ sequential
-
-## Retrospective learning
-Check prior review commits and decisions for convergence. Re-open a resolved area
-only when changed code or new evidence invalidates the prior disposition.
-
-## Formatting rules
-* NUMBER issues (1, 2, 3...) and LETTERS for options (A, B, C...).
-* Label with NUMBER + LETTER (e.g., "3A", "3B").
-* One sentence max per option. Pick in under 5 seconds.
-* Pause only for a material unresolved decision; otherwise continue through the
-  applicable sections.
-
-## Completion handoff
-
-Return the reviewed plan, accepted decisions, validation commands, explicit
-non-goals, and unresolved questions. Do not write a workflow log or chain into
-another skill automatically.
-
-## Unresolved decisions
-If the user does not respond to an AskUserQuestion or interrupts to move on, note
-which decisions remain unresolved. Never silently default to an option.
-
-{{DECISION_BRIEF}}
-
-{{SEARCH_BEFORE_BUILDING}}
-
-## Section self-check (before you finish)
-
-Confirm every applicable section was grounded in code and release context, every
-skipped section has one applicability reason, and nonblocking observations did
-not expand the implementation without explicit user choice.
-
-{{EXIT_PLAN_MODE_GATE}}
+Return the reviewed plan, verdict, accepted decisions, validation map, non-goals,
+and unresolved questions. Do not create a workflow log, edit code, or chain into
+implementation automatically.

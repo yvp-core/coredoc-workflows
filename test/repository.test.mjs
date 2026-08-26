@@ -39,7 +39,7 @@ test("keeps package and plugin release metadata aligned", async () => {
   const codex = await json(join(pluginRoot, ".codex-plugin", "plugin.json"));
   const claude = await json(join(pluginRoot, ".claude-plugin", "plugin.json"));
 
-  assert.equal(pkg.version, "0.11.0");
+  assert.equal(pkg.version, "0.11.1");
   assert.equal(codex.version, pkg.version);
   assert.equal(claude.version, pkg.version);
   assert.equal(pkg.license, "Apache-2.0");
@@ -93,8 +93,8 @@ test("documents the runtime trust boundary without claiming source reproducibili
 });
 
 test("release tags must match the aligned committed version", async () => {
-  assert.equal(await verifyRelease("v0.11.0"), "0.11.0");
-  await assert.rejects(verifyRelease("v0.11.1"), /tag does not match/);
+  assert.equal(await verifyRelease("v0.11.1"), "0.11.1");
+  await assert.rejects(verifyRelease("v0.11.0"), /tag does not match/);
 });
 
 test("documents both opt-in capture paths without implying installation enables them", async () => {

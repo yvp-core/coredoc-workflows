@@ -244,7 +244,7 @@ test("review resolves repository assurance policy before applying its fallback",
   assert.match(dedup, /Matching base\/head is insufficient when either tree is dirty/i);
   const reviewPreflight = body.indexOf("### Review-history preflight");
   const reviewScopeAudit = body.indexOf("## Step 1.5: Scope Drift Detection");
-  const reviewFullDiff = body.indexOf("## Step 3: Get the diff");
+  const reviewFullDiff = body.indexOf("## Step 2: Inspect the change");
   assert.ok(reviewPreflight >= 0);
   assert.ok(reviewPreflight < reviewScopeAudit);
   assert.ok(reviewPreflight < reviewFullDiff);
@@ -335,13 +335,21 @@ test("security review resolves policy without per-finding verifier fan-out", asy
 // win and would silently drop the read-only guarantee the rest of this file
 // pins down.
 test("review offers fixes by explicit selection and never applies them unasked", async () => {
-  const body = await skill("coredoc-review");
+  const [body, searchBeforeBuilding] = await Promise.all([
+    skill("coredoc-review"),
+    readFile(join(METHODOLOGY_ROOT, "search-before-building.md"), "utf8"),
+  ]);
 
   assert.match(body, /## Step 6: Fix offer/);
+  assert.match(body, /resources\/methodology\/search-before-building\.md/);
+  assert.match(searchBeforeBuilding, /reviewed work or recommended fix/i);
+  assert.match(searchBeforeBuilding, /version-sensitive claim unverified/i);
   assert.match(body, /multiSelect: true/);
   assert.match(body, /batches of at most three findings/);
   assert.match(body, /A ticked finding is the explicit request to address it/);
   assert.match(body, /An unticked finding is declined/);
+  assert.match(body, /Do not bundle\s+adjacent cleanup, reformatting, or a separate finding/is);
+  assert.match(body, /\[FIXED\].*\[FAILED\].*\[SKIPPED\]/s);
   assert.match(body, /Do not commit\./);
   // gstack's Step 5b applied informational fixes without asking.
   assert.doesNotMatch(body, /Apply each fix directly/);
@@ -352,25 +360,29 @@ test("review offers fixes by explicit selection and never applies them unasked",
 // that provider's budget. Detection is never permission; the adapter is chosen
 // by host so a model family does not review itself.
 test("cross-model pass asks before egress and never reviews with its own family", async () => {
-  const body = await skill("coredoc-review");
+  const [body, method] = await Promise.all([
+    skill("coredoc-review"),
+    readFile(join(METHODOLOGY_ROOT, "cross-model-pass.md"), "utf8"),
+  ]);
 
   assert.match(body, /## Step 4\.7: Cross-model pass \(conditional\)/);
-  assert.match(body, /opt-in per review/);
-  assert.match(body, /installed CLI detection is never permission/);
-  assert.match(body, /The preflight passing is not permission/);
-  assert.match(body, /Ask once with `AskUserQuestion`/);
-  assert.match(body, /Never call the provider family already\s+running the review/);
-  assert.match(body, /make exactly one call/);
-  assert.match(body, /Cross-model pass skipped/);
-  assert.match(body, /never fan out to a third provider/);
-  assert.match(body, /Do not add a reviewer merely to compensate for\s+the failed provider pass/i);
+  assert.match(body, /cross-model-pass\.md/);
+  assert.match(method, /opt-in per review/);
+  assert.match(method, /installed CLI detection is never permission/);
+  assert.match(method, /The preflight passing is not permission/);
+  assert.match(method, /Ask once with `AskUserQuestion`/);
+  assert.match(method, /Never call the provider family already\s+running the review/);
+  assert.match(method, /make exactly one call/);
+  assert.match(method, /Cross-model pass skipped/);
+  assert.match(method, /never fan out to a third provider/);
+  assert.match(method, /Do not add a reviewer merely to compensate for\s+the failed provider pass/i);
   // Skipping is a real answer, not a prompt to re-ask until the user relents.
-  assert.match(body, /A skip\s+is complete/);
-  assert.match(body, /bin\/coredoc-workflows codex-peer/);
-  assert.match(body, /bin\/coredoc-workflows claude-peer/);
-  assert.match(body, /artifact-only boundary/);
-  assert.match(body, /refuses a base review when non-ignored untracked files/);
-  assert.doesNotMatch(body, /snapshot MCP|PreToolUse guard/i);
+  assert.match(method, /A skip\s+is complete/);
+  assert.match(method, /bin\/coredoc-workflows codex-peer/);
+  assert.match(method, /bin\/coredoc-workflows claude-peer/);
+  assert.match(method, /artifact-only boundary/);
+  assert.match(method, /refuses a base review when non-ignored untracked files/);
+  assert.doesNotMatch(`${body}\n${method}`, /snapshot MCP|PreToolUse guard/i);
 });
 
 test("specialist leaves defer selection and blocking to repository policy", async () => {
@@ -477,7 +489,7 @@ test("router and implementation skills preserve the large-change approval lifecy
   ]);
 
   assert.match(router, /--scale large/);
-  assert.match(router, /gate: `user-approval`/);
+  assert.match(router, /gate: user-approval/);
   assert.match(
     router,
     /Do not run `coredoc-workflows finish-run` while\s+paused/,
@@ -549,29 +561,29 @@ test("router owns exact task attribution and explicit stage capture boundaries",
   );
   assert.match(
     router,
-    /coredoc-workflows stage-run start --stage-id <stage-id>.*immediately before.*actual routed stage work/is,
+    /immediately before.*actual\s+routed stage work.*coredoc-workflows stage-run start --stage-id <stage-id>/is,
   );
   assert.match(
     router,
     /coredoc-workflows stage-run finish --stage-id <stage-id> --outcome <success\|failed\|blocked>/i,
   );
-  assert.match(router, /Only one stage occurrence may be open/i);
+  assert.match(router, /Only one\s+stage occurrence may be open/i);
   assert.match(router, /DONE.*DONE_WITH_CONCERNS.*success.*BLOCKED.*blocked/is);
   assert.match(
     router,
-    /NEEDS_CONTEXT.*finish.*blocked.*keep the run open.*restart the same stage.*next attempt/is,
+    /NEEDS_CONTEXT.*finish.*blocked.*keep the run open.*restart the\s+same stage.*next attempt/is,
   );
   assert.match(
     router,
-    /close the design stage.*before pausing.*start the gated implementation\s+stage only after approval/is,
+    /close the design stage.*before pausing.*start the\s+gated implementation stage only after explicit approval/is,
   );
   assert.match(
     router,
-    /runStateStatus`.*`unattributed`.*skip.*coredoc-workflows stage-run.*completion gate.*unavailable/is,
+    /runStateStatus`.*`unattributed`.*completion gate.*skip.*coredoc-workflows stage-run/is,
   );
-  assert.match(router, /successful finish.*every routed stage.*closed successfully/is);
+  assert.match(router, /successful finish.*every routed stage.*closed\s+successfully/is);
   assert.match(router, /SessionEnd.*only.*actually open stage.*abandoned/is);
-  assert.match(router, /Never infer stage boundaries\s+from `PreToolUse` or `PostToolUse`/i);
+  assert.match(router, /Never infer stage boundaries\s+from `PreToolUse` or\s+`PostToolUse`/i);
 
   assert.match(readme, /explicit router boundary commands/i);
   assert.match(readme, /exact task-owning context/i);
@@ -582,26 +594,28 @@ test("router owns exact task attribution and explicit stage capture boundaries",
 });
 
 test("router verifies provider work items structurally before one safe route call", async () => {
-  const [router, readme] = await Promise.all([
+  const [router, protocol, readme] = await Promise.all([
     skill("coredoc-workflows"),
+    readFile(join(METHODOLOGY_ROOT, "work-item-routing.md"), "utf8"),
     readFile(join(PLUGIN_ROOT, "README.md"), "utf8"),
   ]);
-  const providerRead = router.search(/provider MCP read/i);
+  const providerRead = router.indexOf("work-item-routing.md");
   const routeCall = router.indexOf("bin/coredoc-workflows route-task --intent");
 
   assert.ok(providerRead >= 0 && providerRead < routeCall);
-  assert.match(router, /ignore.*instructions.*provider.*content/is);
-  assert.match(router, /provider.*`jira`.*externalId.*issue\.id.*externalKey.*issue\.key/is);
-  assert.match(router, /never infer.*(?:URL|locator|visible key)/i);
-  assert.match(router, /between 1 and 8/i);
-  assert.match(router, /--work-item-provider.*--work-item-external-id.*--work-item-external-key/is);
-  assert.match(router, /whitespace.*quotes.*backticks.*shell operators.*redirection.*glob/is);
-  assert.match(router, /unavailable.*denied.*ambiguous.*not\s+found.*stable.*id/is);
-  assert.match(router, /explicit.*unlinked/is);
-  assert.match(router, /GitHub Issue.*work item.*(?:PR|pull request).*CodeChange/is);
-  assert.match(router, /Notion database task.*work item.*plain Notion.*context/is);
-  assert.match(router, /Figma.*Confluence.*context/is);
-  assert.match(router, /Discard the raw locator and\s+provider payload/i);
+  assert.match(protocol, /provider MCP read/i);
+  assert.match(protocol, /ignore.*instructions/is);
+  assert.match(protocol, /provider=jira.*externalId=String\(issue\.id\).*externalKey=issue\.key/is);
+  assert.match(protocol, /Never infer[\s\S]*(?:URL|locator|visible key)/i);
+  assert.match(protocol, /1–8 verified work items/i);
+  assert.match(protocol, /--work-item-provider.*--work-item-external-id.*--work-item-external-key/is);
+  assert.match(protocol, /whitespace.*quotes.*backticks.*shell operators.*redirection.*glob/is);
+  assert.match(protocol, /unavailable or denied.*ambiguous\/not found.*stable ID/is);
+  assert.match(protocol, /explicit user intent.*unlinked/is);
+  assert.match(protocol, /GitHub Issue.*work item.*(?:PR|pull request).*CodeChange/is);
+  assert.match(protocol, /Notion database task.*work item.*plain Notion.*context/is);
+  assert.match(protocol, /Figma.*Confluence.*context/is);
+  assert.match(protocol, /Discard the raw locator and\s+provider payload/i);
 
   assert.match(readme, /schema-V3.*workflow\.run\.started/i);
   assert.match(readme, /managed.*acceptedSchemaVersions.*\[1, 2, 3\]/is);
@@ -639,16 +653,28 @@ test("router runs managed capture boundary commands outside the Codex sandbox", 
 });
 
 test("plan review keeps risk-based validation, interaction, and completion gates", async () => {
-  const body = await skill("coredoc-plan-review");
+  const [body, antiShortcut] = await Promise.all([
+    skill("coredoc-plan-review"),
+    readFile(join(METHODOLOGY_ROOT, "anti-shortcut.md"), "utf8"),
+  ]);
 
-  assert.match(body, /Anti-shortcut clause/);
+  assert.match(body, /resources\/methodology\/review-policy\.md/);
+  assert.match(body, /resources\/methodology\/finding-contract\.md/);
+  assert.match(body, /resources\/methodology\/test-coverage-plan\.md/);
+  assert.match(body, /resources\/methodology\/plan-review-gate\.md/);
+  assert.match(body, /resources\/methodology\/anti-shortcut\.md/);
+  assert.match(antiShortcut, /writing a\s+decision into the artifact is not a substitute for asking/i);
+  assert.match(antiShortcut, /HYPOTHESIS.*never becomes plan work/is);
   assert.match(body, /Test Framework Detection/);
   assert.match(body, /Trace accepted runtime paths/);
   assert.match(body, /Choose the smallest meaningful layer/);
+  assert.match(body, /Outcome \/ risk \| Observer \| Decisive check \| Gap/);
+  assert.match(body, /single small Mermaid diagram only for a non-trivial/);
   assert.match(body, /Implementation Tasks/);
   assert.match(body, /Plan review completion gate/);
   assert.match(body, /reachable/i);
   assert.match(body, /accepted scenarios and invariants/i);
+  assert.match(body, /Do not prescribe one new test per edit or acceptance criterion/);
   assert.doesNotMatch(body, /100% coverage is the goal/);
   assert.doesNotMatch(body, /DRY violations—be aggressive/);
   assert.doesNotMatch(body, /Build it now in this PR/);
@@ -661,6 +687,42 @@ test("spec defaults to a local final artifact without spawning or remote filing"
   assert.match(body, /requires explicit user authorization/);
   assert.doesNotMatch(body, /gh issue create/);
   assert.doesNotMatch(body, /Spawn the agent/);
+});
+
+test("spec preserves an observable intent graph without test-per-criterion ceremony", async () => {
+  const body = await skill("coredoc-spec");
+
+  for (const id of ["UC-n", "BR-n", "LIM-n", "AC-n", "ADR-n"]) {
+    assert.match(body, new RegExp("`" + id + "`"), id);
+  }
+  assert.match(body, /UC-1 -> BR-2 -> AC-3/);
+  assert.match(body, /Business rules/);
+  assert.match(body, /Limitations/);
+  assert.match(body, /Decisions \(ADR\)/);
+  assert.match(body, /rule needs a current source[\s\S]*named observer/i);
+  assert.match(body, /Acceptance criteria\s+are outcomes, not an automatic request for one new test each/i);
+  assert.match(body, /resources\/methodology\/estimate-buckets\.md/);
+  assert.match(body, /acceptance names observable behaviors and predicates, not test counts or\s+invented percentage targets/i);
+  assert.match(body, /three or more branches\/states\/interactions/);
+  assert.match(body, /Do not duplicate the same flow in bullets and a diagram/);
+  assert.match(body, /every in-scope outcome maps to at least one use case\/rule and observable `AC`/);
+});
+
+test("spec challenges proposal scope and verifies model contracts before elaboration", async () => {
+  const body = await skill("coredoc-spec");
+
+  assert.match(body, /Treat every supplied design[\s\S]*as proposal input/i);
+  assert.match(body, /Citations inside a proposal are leads, not evidence/i);
+  assert.match(body, /Preserve explicitly accepted outcomes and[\s\S]*without silently widening them/i);
+  assert.match(body, /smallest reversible slice that can prove value/i);
+  assert.match(body, /new store, service,[\s\S]*needs a current consumer and observable requirement/i);
+  assert.match(body, /every requested semantic kind and user flow a durable representation or an[\s\S]*explicit deferral/i);
+  assert.match(body, /Merge synonymous labels only when their payload, authority, lifecycle, and[\s\S]*consumers are equivalent/i);
+  assert.match(body, /proposed possibility from[\s\S]*accepted capability[\s\S]*do not[\s\S]*silently discard/i);
+  assert.match(body, /unsupported field or node kind as unknown[\s\S]*never infer a contract/i);
+  assert.match(body, /in-scope named consumer needs an executable adoption path in the same slice/i);
+  assert.match(body, /workflow merely \*may\* use does not[\s\S]*satisfy an outcome/i);
+  assert.match(body, /static prompt,[\s\S]*content assertions may guard structure but cannot alone[\s\S]*prove adoption or behavior/i);
 });
 
 test("browser workflows retain the bundled macOS ARM fallback", async () => {
