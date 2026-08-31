@@ -2,7 +2,7 @@
 // issue 05).
 //
 // These assert that the shared methodology exists, says the load-bearing things,
-// and that exactly the four consumer adapters point at it on a conditional. They
+// and that exactly the five lifecycle adapters point at it on a conditional. They
 // do NOT prove adoption: a skill can carry perfect text and the model can still
 // ignore it. Observed-run evidence (AC-10, AC-12) is issue 06's blind eval, not
 // this file.
@@ -25,6 +25,7 @@ const RESOURCE_REF = "<plugin-root>/resources/methodology/intent-context.md";
 
 /** The only skills allowed to mention intent context. */
 const ADAPTERS = [
+  "coredoc-spec",
   "coredoc-plan-review",
   "coredoc-implement",
   "coredoc-review",
@@ -93,6 +94,40 @@ test("intent-context methodology states the exact-ID-first protocol", async () =
   // The artifact must carry the IDs, cited like file:line evidence.
   assert.match(body, /cite/i);
   assert.match(body, /file:line/);
+});
+
+test("representative handoffs carry and refresh the observed intent revision", async () => {
+  const body = await readFile(METHODOLOGY_PATH, "utf8");
+
+  assert.match(body, /observedIntentRevision/);
+  assert.match(body, /intentRevision/);
+  assert.match(body, phrase("refresh the exact routed IDs"));
+  assert.match(body, /no_relevant_change/);
+  assert.match(body, /authority|payload/);
+  assert.match(body, /missing/i);
+  assert.match(body, /do not[^.]*broad\s+(lookup|discovery)/i);
+});
+
+test("methodology defines every SDLC stage contract without merging evidence planes", async () => {
+  const body = await readFile(METHODOLOGY_PATH, "utf8");
+
+  for (const stage of [
+    "PRD",
+    "Specification",
+    "Plan",
+    "Implementation",
+    "Validation",
+    "Review",
+    "Merge",
+    "Investigation",
+  ]) {
+    assert.match(body, new RegExp(`\\| ${stage} \\|`, "i"), stage);
+  }
+  assert.match(body, /passed[^\n]*failed[^\n]*inconclusive[^\n]*not_assessed/i);
+  assert.match(body, phrase("never substitute for execution"));
+  assert.match(body, phrase("code graph only"));
+  assert.match(body, phrase("intent revision stays unchanged"));
+  assert.match(body, /unknown, never unaffected/i);
 });
 
 // A meaning-inverted rewrite ("matched against a stale snapshot is unaffected")
@@ -165,10 +200,11 @@ test("methodology separates a missing capability from an empty overlay", async (
 
 test("each consumer adapter carries a conditional intent hook", async () => {
   const expectations = {
+    "coredoc-spec": /candidate ideas|unresolved questions/i,
     "coredoc-plan-review": /accepted intent/i,
-    "coredoc-implement": /limitations|non-goals/i,
+    "coredoc-implement": /runtime conformance/i,
     "coredoc-review": phrase("stale anchors"),
-    "coredoc-investigate": /hypothes/i,
+    "coredoc-investigate": /observed runtime evidence/i,
   };
 
   for (const name of ADAPTERS) {
@@ -224,5 +260,5 @@ test("intent context stays out of the router and every other skill", async () =>
       leaked.push(name);
     }
   }
-  assert.deepEqual(leaked, [], "only the four adapters may reference intent context");
+  assert.deepEqual(leaked, [], "only the five lifecycle adapters may reference intent context");
 });

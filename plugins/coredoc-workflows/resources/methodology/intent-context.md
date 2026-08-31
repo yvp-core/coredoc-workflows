@@ -30,6 +30,10 @@ line per item (id, title, kind, domain, authority) — and takes `domain`, `kind
 and `format: "ids"` instead of the context selectors. Mixing the two argument
 sets is refused, not silently ignored.
 
+Every successful ready response carries `intentRevision`, the canonical revision
+of the whole validated overlay observed by that call. It is a freshness signal,
+not a lock and not evidence that any anchor or behavior conforms.
+
 **Intent ids are kind-prefixed slugs** — `br-refund-window`,
 `cap-widget-ordering` — where the prefix names the kind (`cap`, `uc`, `flow`,
 `br`, `lim`, `dec`). Numeric ids like `BR-3` are a pre-v2 shape and resolve to
@@ -52,6 +56,7 @@ coredoc intent context --project <projectId> --query "retention window"
 coredoc intent context --project <projectId> --query "retention window" --domain payments
 coredoc intent context --project <projectId> --node-id <stableNodeId>
 coredoc intent context --project <projectId> --query "export limits" --include-candidates --limit 5
+coredoc intent impact --project <projectId> --base <base-ref> --head <head-ref>
 coredoc intent status --project <projectId>
 ```
 
@@ -67,21 +72,36 @@ repeat; `-c <path>` points at a config outside the workspace root.
 ### Fetch protocol — exact-ID-first
 
 1. **Reuse what was routed.** If the handoff, specification, plan, or task text
-   already names intent IDs, they are the working set. Do not re-derive it.
-2. **Fetch only absent payload.** Request exactly the IDs whose statement or
-   payload you do not already have (`--id` / `intentIds`). Never reload the whole
-   overlay, and never repeat broad discovery for IDs you were handed. Following
-   an id a PREVIOUS response returned (a relation endpoint, a returned item) by
-   exact id is fine — that is still exact-ID navigation. Fetching an id that
-   neither the handoff nor an earlier response named is not.
-3. **No IDs routed? Orient with the index first.** `mode: "list"` — CLI
+   already names intent IDs, they are the working set. Do not re-derive it. A
+   handoff produced with intent context carries both fields together:
+   `intentIds: string[]` and `observedIntentRevision: string`.
+2. **Refresh a revisioned handoff by exact ID.** When
+   `observedIntentRevision` is present, refresh the exact routed IDs once
+   (`--id` / `intentIds`) and read the returned `intentRevision`. The revision
+   is advisory: never pin the old overlay or block merely because it changed.
+   If the revisions differ, compare the fresh exact-ID projection with the
+   routed claims or retained prior projection. Surface missing IDs and changed
+   authority, payload, or relations. If that routed projection is
+   byte-equivalent, record `no_relevant_change` and continue. Do not run broad
+   lookup or discovery in either case, do not fuzzy-replace a missing ID, and do
+   not turn an anchor result into the comparison. If the previous projection is
+   unavailable or either response is truncated, say the routed set was refreshed
+   but do not claim `no_relevant_change`.
+3. **Otherwise fetch only absent payload.** Without an observed revision,
+   request exactly the IDs whose statement or payload you do not already have.
+   Never reload the whole overlay, and never repeat broad discovery for IDs you
+   were handed. Following an id a PREVIOUS response returned (a relation
+   endpoint, a returned item) by exact id is fine — that is still exact-ID
+   navigation. Fetching an id that neither the handoff nor an earlier response
+   named is not.
+4. **No IDs routed? Orient with the index first.** `mode: "list"` — CLI
    `coredoc intent list --project <projectId>`, optionally `--domain` — returns
    the declared domain registry and one payload-free line per item. It is the
    ORIENTATION call and it does NOT spend the broad-lookup budget below, so it
    is the right first move whenever nothing was routed to you: list, optionally
    narrowed to the domain you are working in, then fetch the few ids that matter
    by exact id.
-4. **One broad lookup, and only one.** Run at most one broad lookup per stage —
+5. **One broad lookup, and only one.** Run at most one broad lookup per stage —
    any context-mode call that is not an exact-ID fetch: a `query`, code
    `nodeIds`, or a bare `domain` filter — at the default limit, then work with
    what came back and with exact-id follow-ups of what it returned. ONE means
@@ -101,7 +121,7 @@ repeat; `-c <path>` points at a config outside the workspace root.
    you — including rules whose wording shares no words with the diff, which a
    text query will miss every time. It is still your single broad lookup, not a
    second one.
-5. **Never read `.coredoc/intent.json` directly.** The tool and `coredoc intent
+6. **Never read `.coredoc/intent.json` directly.** The tool and `coredoc intent
    context` are the ONLY read surfaces: the raw file carries no anchor status
    and no snapshot freshness, so a direct read hands you authority claims with
    the evidence dimensions stripped — and it blows the bounded-context budget
@@ -111,7 +131,7 @@ repeat; `-c <path>` points at a config outside the workspace root.
    out `.git/`. Opening it "just to look while investigating" is the same
    violation as citing it. If the tool and the CLI are both unavailable, intent
    context is unavailable; say so and move on.
-6. Ask for candidates only when you deliberately want unreviewed proposals
+7. Ask for candidates only when you deliberately want unreviewed proposals
    (`--include-candidates` / `includeCandidates`), and label them as such
    wherever they appear.
 
@@ -143,13 +163,38 @@ current overlay that was searched and returned nothing. When the graph is
 unavailable, the intent may still be readable; the code dimension is `unknown`,
 not empty.
 
+### Stage contracts
+
+Use the same working set across the delivery lifecycle. A stage may add exact IDs
+returned by an intent response, but it must not silently replace routed IDs or
+turn a candidate, anchor, graph path, test, or runtime observation into accepted
+product intent.
+
+| Stage | Intent and graph use | Required artifact or handoff | Degraded path |
+| --- | --- | --- | --- |
+| PRD | With no routed IDs, orient with the index and spend at most one bounded lookup. Separate accepted constraints from candidate ideas; graph evidence describes current touchpoints only. | Cite applicable exact IDs, `observedIntentRevision`, accepted decisions/non-goals, and unresolved questions. | Name `not_configured`, `invalid`, or unavailable capability and continue from owner/repository evidence. |
+| Specification | Refresh routed exact IDs. Trace each material outcome and acceptance criterion to accepted intent; use graph/source evidence to verify current contracts and consumers. | Executable acceptance criteria plus `intentIds`, `observedIntentRevision`, and unresolved missing/changed context. | A missing ID or source becomes an unresolved decision, never an invented requirement. |
+| Plan | Reuse the exact working set. Use graph impact to scope symbols and critical manual consumers; use broad discovery only when the set is absent or explicitly incomplete. | Ordered steps trace acceptance criteria and intent IDs and name impact, validation, rollback, freshness, and coverage gaps. | Replace unavailable graph impact with manual repository analysis and say coverage is unknown. |
+| Implementation | Fetch only missing exact payload. Inspect impacted symbols/callers and keep code-derived observations as questions, not intent changes. | Scoped diff and tests plus the unchanged exact-ID handoff and any new product questions. | Continue under the accepted spec and repository rules when optional intent/graph context is unavailable. |
+| Validation | Use executed test/runtime/browser evidence per acceptance criterion. Anchors guide inspection but never substitute for execution. | Per-criterion `passed`, `failed`, `inconclusive`, or `not_assessed`, with evidence and runtime/snapshot freshness kept separate. | An unavailable environment marks only affected criteria; it never fabricates a pass. |
+| Review | Refresh exact IDs, then classify diff impact as direct anchor, enclosing scope, graph reachable, no known link, or unknown. Inspect accepted violations separately from candidates and stale anchors. | Findings cite accepted IDs and executed/source evidence; the verdict names mapping coverage and freshness. | Without graph evidence, review the diff/spec manually and report impact as unknown, never unaffected. |
+| Merge | Rebuild or publish the code graph only. Recompute anchor status after the rebuild; do not mutate intent unless the reviewed change explicitly edits it. | New graph snapshot and optional anchor-maintenance report. The intent revision stays unchanged for a code-only merge. | Existing CI policy handles graph rebuild failure; durable intent remains readable and unchanged. |
+| Investigation | Use exact intent for expected outcomes, graph evidence for static mechanisms, and runtime evidence for observed behavior. | Separate expected, implemented/static, observed/runtime, and unknown conclusions. | Name the missing plane while keeping the other planes usable. |
+
+Every artifact that used intent carries `intentIds` and
+`observedIntentRevision`; the next stage follows the exact-ID refresh protocol
+above. Validation and merge do not establish or change authority. If a stage has
+no intent capability, it emits no synthetic empty handoff and continues normally.
+
 ### Cite it like evidence
 
 Cite applicable intent IDs in the artifact you produce — plan, specification,
 review finding, diagnosis — the way you cite `file:line` evidence, next to the
 claim they support. An ID with no traceable claim, or a claim asserting product
-intent with no ID, is not grounded. Carry the IDs you used into the handoff so
-the next stage reuses them instead of searching again.
+intent with no ID, is not grounded. Carry the exact IDs you used and the
+response's `intentRevision` into the handoff as `intentIds` and
+`observedIntentRevision`, so the next stage refreshes that working set instead
+of searching again.
 
 Write an anchor as an implementation touchpoint, never as behavior: "`br-…` is
 anchored to `roundCurrency`" is what the surface supports; "`br-…` is satisfied,

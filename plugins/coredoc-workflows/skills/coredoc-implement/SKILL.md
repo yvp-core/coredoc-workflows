@@ -33,9 +33,12 @@ is not always a new test.
    `<plugin-root>/resources/methodology/intent-context.md` before editing. Reuse
    the intent IDs the routed specification or plan already names and fetch only
    their missing payload; treat the limitations and non-goals it returns as scope
-   boundaries, and cite the IDs a change satisfies in the report. When no intent
-   capability is present, proceed from repository evidence alone and do not mention
-   intent context in the output.
+   boundaries, and cite the IDs a change satisfies in the report. Follow the
+   implementation and validation stage contracts: carry the exact working set and
+   observed revision forward unchanged, report executed evidence per acceptance
+   criterion, and keep runtime conformance separate from anchor status and graph
+   freshness. When no intent capability is present, proceed from repository
+   evidence alone and do not mention intent context in the output.
 
 2. Before editing, state one concise proof plan and choose the smallest matching
    mode:
