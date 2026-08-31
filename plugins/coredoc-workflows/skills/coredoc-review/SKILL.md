@@ -170,6 +170,21 @@ machinery or a version-sensitive API, apply
 `<plugin-root>/resources/methodology/search-before-building.md` before
 recommending the mechanism.
 
+**Product intent, only when the capability exists.** If this session has a
+Coredoc intent capability — the `get_intent_context` MCP tool or the
+`coredoc intent context` CLI — read
+`<plugin-root>/resources/methodology/intent-context.md` before verifying
+candidates and follow its fetch protocol. Then keep three results apart:
+accepted intent the change violates is a finding that cites the intent ID;
+stale anchors, changed or missing, are unverified touchpoints and not
+violations; behavior with no intent coverage is unknown, not compliant.
+Candidate intent is never a blocking finding. Follow the review and merge stage
+contracts: carry the exact working set and observed revision, keep diff-impact
+coverage/freshness in the verdict, and never describe merge as mutating intent;
+a code-only merge rebuilds the code graph and may change anchor status only.
+When no intent capability is present, proceed from repository evidence alone and
+do not mention intent context in the output.
+
 ## Confidence calibration
 
 Read `<plugin-root>/resources/methodology/confidence-calibration.md` for any

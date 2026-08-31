@@ -136,6 +136,17 @@ smell, not a verdict. If reducing scope changes the user-owned outcome, ask one
 material decision with 2–3 options and stop; otherwise recommend the reduction
 and continue.
 
+If this session has a Coredoc intent capability — the `get_intent_context` MCP
+tool or the `coredoc intent context` CLI — read
+`<plugin-root>/resources/methodology/intent-context.md` and follow its fetch
+protocol here. Ground the plan's product claims in accepted intent, treat the
+limitations and non-goals it returns as scope boundaries, and cite the
+applicable intent IDs next to the claims they support. Follow the plan stage
+contract: preserve the routed exact-ID working set and observed revision, map
+steps and validation to those IDs, and report graph impact coverage/freshness or
+the manual-analysis fallback. When no intent capability is present, proceed from
+repository evidence alone and do not mention intent context in the output.
+
 When unfamiliar custom machinery is proposed, apply
 `<plugin-root>/resources/methodology/search-before-building.md`; skip external
 search when unavailable. If the plan exposes a CLI/SDK/API/plugin/config surface,

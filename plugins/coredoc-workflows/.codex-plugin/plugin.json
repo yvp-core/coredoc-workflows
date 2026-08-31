@@ -1,6 +1,6 @@
 {
   "name": "coredoc-workflows",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "description": "Self-contained engineering workflows with read-only Coredoc context, explicit Claude/Codex peer adapters, compact learning and retrospectives, and bundled macOS ARM browser QA.",
   "author": {
     "name": "Coredoc team"
