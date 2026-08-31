@@ -755,6 +755,19 @@ test("stops routing a persisted Codex session claim after its TTL", async (t) =>
     })
   ).json();
   assert.ok(health.attribution.pendingCount > 0);
+  assert.equal(health.attribution.rejectedCount, 0);
+
+  clock = "2026-08-26T10:00:31.000Z";
+  const expiredHealth = await (
+    await fetch(`${endpoint}/health`, {
+      headers: {
+        "X-Coredoc-Relay-Ingress": ingress,
+        "X-Coredoc-Relay-Binding-Id": configured.bindingId,
+      },
+    })
+  ).json();
+  assert.equal(expiredHealth.attribution.pendingCount, 0);
+  assert.ok(expiredHealth.attribution.rejectedCount > 0);
 });
 
 test("rejects cloud authorization containing header whitespace", () => {

@@ -1133,7 +1133,14 @@ export function createManagedRelay({
     const { binding, state } = resolved;
 
     if (request.method === "GET") {
-      rejectExpiredBuffers(Date.now());
+      const checkedAt = now();
+      if (!isTimestamp(checkedAt)) {
+        json(response, failureStatus("CLOCK_UNAVAILABLE"), {
+          error: "CLOCK_UNAVAILABLE",
+        });
+        return;
+      }
+      rejectExpiredBuffers(Date.parse(checkedAt));
       json(response, 200, healthSnapshot(binding, state, codexHealth(binding)));
       return;
     }
