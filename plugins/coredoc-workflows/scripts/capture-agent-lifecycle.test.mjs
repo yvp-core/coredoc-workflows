@@ -12,6 +12,7 @@ import {
   readFileSync,
   readdirSync,
   readlinkSync,
+  renameSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -92,6 +93,7 @@ function lifecycleHarness({
   probeListener = async () => false,
   probeHealth = async () => undefined,
   importSmoke = async () => undefined,
+  renameRuntime = renameSync,
   runCommand = async () => undefined,
 } = {}) {
   const homeDir = mkdtempSync(join(tmpdir(), "coredoc-agent-home-"));
@@ -114,6 +116,7 @@ function lifecycleHarness({
     },
     probeListener,
     probeHealth,
+    renameRuntime,
     randomToken: () => "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
     wait: async () => undefined,
   };
@@ -239,6 +242,50 @@ test("setup-runtime atomically installs one immutable runtime and plugin-owned L
   assert.doesNotMatch(plist, /health_token_|Bearer/);
   assert.doesNotMatch(JSON.stringify(result), /health_token_|Users|capture-agent/);
   assert.equal(harness.calls.some(([, args]) => args[0] === "bootstrap"), true);
+});
+
+test("runtime staging keeps its root writable until the macOS-safe rename completes", async () => {
+  let observedSourceMode = null;
+  const harness = lifecycleHarness({
+    renameRuntime: (source, destination) => {
+      observedSourceMode = statSync(source).mode & 0o777;
+      if ((observedSourceMode & 0o200) === 0) {
+        const error = new Error(
+          "macOS rejects renaming a write-disabled directory",
+        );
+        error.code = "EACCES";
+        throw error;
+      }
+      renameSync(source, destination);
+    },
+  });
+
+  const result = await harness.lifecycle.setupRuntime();
+  const installed = join(
+    harness.paths.runtimeVersionsDirectory,
+    result.current.directoryName,
+  );
+  assert.equal(observedSourceMode, 0o700);
+  assert.equal(statSync(installed).mode & 0o777, 0o555);
+});
+
+test("setup finalizes an exact writable runtime root left by a staging crash", async () => {
+  const harness = lifecycleHarness();
+  const first = await harness.lifecycle.setupRuntime();
+  const installed = join(
+    harness.paths.runtimeVersionsDirectory,
+    first.current.directoryName,
+  );
+
+  chmodSync(installed, 0o700);
+  unlinkSync(harness.paths.currentPath);
+  unlinkSync(harness.paths.statePath);
+  unlinkSync(harness.paths.launchAgentPath);
+
+  const recovered = await harness.lifecycle.setupRuntime();
+  assert.equal(recovered.status, "ready");
+  assert.equal(recovered.current.directoryName, first.current.directoryName);
+  assert.equal(statSync(installed).mode & 0o777, 0o555);
 });
 
 test("upgrade health failure restores the previous runtime, state, plist, and process", async () => {
@@ -761,7 +808,7 @@ test("uninstall preflight preserves the actual loaded state across disable", asy
       if (args[0] === "print" && !loaded) {
         const error = new Error("not loaded");
         error.code = 113;
-        error.stderr = `Could not find service "${CAPTURE_AGENT_LABEL}" in domain for user gui: 501`;
+        error.stderr = `Could not find service "${CAPTURE_AGENT_LABEL}" in domain for user gui: ${FIXTURE_UID}`;
         throw error;
       }
     },
@@ -790,7 +837,7 @@ test("start-installed-runtime never activates a newer plugin bundle", async () =
       if (args[0] === "print" && !loaded) {
         const error = new Error("not loaded");
         error.code = 113;
-        error.stderr = `Could not find service "${CAPTURE_AGENT_LABEL}" in domain for user gui: 501`;
+        error.stderr = `Could not find service "${CAPTURE_AGENT_LABEL}" in domain for user gui: ${FIXTURE_UID}`;
         throw error;
       }
     },
@@ -1011,7 +1058,7 @@ test("uninstall tolerates bootout failure only when launchd proves the service i
       if (args[0] === "print") {
         const error = new Error("PRIVATE not loaded");
         error.code = 113;
-        error.stderr = `Bad request.\nCould not find service "${CAPTURE_AGENT_LABEL}" in domain for user gui: 501\n`;
+        error.stderr = `Bad request.\nCould not find service "${CAPTURE_AGENT_LABEL}" in domain for user gui: ${FIXTURE_UID}\n`;
         throw error;
       }
     },

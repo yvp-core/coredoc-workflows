@@ -465,7 +465,11 @@ function immutableDirectoryEntries(root) {
   return entries;
 }
 
-function verifyInstalledRuntime(directory, record) {
+function verifyInstalledRuntime(
+  directory,
+  record,
+  { allowWritableRoot = false } = {},
+) {
   if (!existsSync(directory)) fail("UNSAFE_STATE");
   const entries = immutableDirectoryEntries(directory);
   const expectedFiles = new Set(record.files.map(({ path }) => path));
@@ -482,11 +486,16 @@ function verifyInstalledRuntime(directory, record) {
   for (const entry of entries) {
     if (entry.directory) {
       if (!expectedDirectories.has(entry.relativePath)) fail("UNSAFE_STATE");
+      if ((statSync(entry.path).mode & 0o777) !== 0o555) fail("UNSAFE_STATE");
     } else if (!expectedFiles.has(entry.relativePath)) {
       fail("UNSAFE_STATE");
     }
   }
-  if ((statSync(directory).mode & 0o777) !== 0o555) fail("UNSAFE_STATE");
+  const rootMode = statSync(directory).mode & 0o777;
+  if (rootMode !== 0o555 && !(allowWritableRoot && rootMode === 0o700)) {
+    fail("UNSAFE_STATE");
+  }
+  return rootMode;
 }
 
 function makeRuntimeRecord(bundle) {
@@ -499,13 +508,25 @@ function makeRuntimeRecord(bundle) {
   });
 }
 
-function chmodDirectoriesImmutable(root) {
-  const directories = [root];
+function chmodChildDirectoriesImmutable(root) {
+  const directories = [];
   for (const entry of immutableDirectoryEntries(root)) {
     if (entry.directory) directories.push(entry.path);
   }
   directories.sort((left, right) => right.length - left.length);
   for (const directory of directories) chmodSync(directory, 0o555);
+}
+
+function removeStagedRuntime(directory) {
+  if (!existsSync(directory)) return;
+  for (const entry of immutableDirectoryEntries(directory).sort(
+    (left, right) => right.path.length - left.path.length,
+  )) {
+    if (entry.directory) chmodSync(entry.path, 0o700);
+    else chmodSync(entry.path, 0o600);
+  }
+  chmodSync(directory, 0o700);
+  rmSync(directory, { recursive: true, force: true });
 }
 
 async function defaultImportSmoke(entryPath, { nodePath }) {
@@ -533,6 +554,7 @@ async function stageRuntime({
   paths,
   nodePath,
   importSmoke,
+  renameRuntime,
 }) {
   const record = makeRuntimeRecord(bundle);
   ensureDirectory(paths.agentRoot);
@@ -540,13 +562,20 @@ async function stageRuntime({
   ensureDirectory(paths.runtimeVersionsDirectory);
   const destination = join(paths.runtimeVersionsDirectory, record.directoryName);
   if (existsSync(destination)) {
-    verifyInstalledRuntime(destination, record);
+    const rootMode = verifyInstalledRuntime(destination, record, {
+      allowWritableRoot: true,
+    });
+    if (rootMode === 0o700) {
+      chmodSync(destination, 0o555);
+      verifyInstalledRuntime(destination, record);
+    }
     return { record, directory: destination, created: false };
   }
   const temporary = join(
     paths.runtimeVersionsDirectory,
     `.stage-${process.pid}-${randomBytes(6).toString("hex")}`,
   );
+  let cleanupPath = temporary;
   try {
     mkdirSync(temporary, { mode: 0o700 });
     for (const file of bundle.manifest.files) {
@@ -557,22 +586,15 @@ async function stageRuntime({
       chmodSync(target, 0o444);
     }
     await importSmoke(join(temporary, bundle.manifest.entry), { nodePath });
-    chmodDirectoriesImmutable(temporary);
-    renameSync(temporary, destination);
+    chmodChildDirectoriesImmutable(temporary);
+    renameRuntime(temporary, destination);
+    cleanupPath = destination;
+    chmodSync(destination, 0o555);
     verifyInstalledRuntime(destination, record);
     return { record, directory: destination, created: true };
   } catch (error) {
     try {
-      for (const entry of existsSync(temporary)
-        ? immutableDirectoryEntries(temporary).sort(
-            (left, right) => right.path.length - left.path.length,
-          )
-        : []) {
-        if (entry.directory) chmodSync(entry.path, 0o700);
-        else chmodSync(entry.path, 0o600);
-      }
-      if (existsSync(temporary)) chmodSync(temporary, 0o700);
-      rmSync(temporary, { recursive: true, force: true });
+      removeStagedRuntime(cleanupPath);
     } catch {
       // The original bounded lifecycle failure remains authoritative.
     }
@@ -1430,6 +1452,7 @@ export function createCaptureAgentLifecycle({
   probeListener = defaultProbeListener,
   probeHealth = defaultProbeHealth,
   importSmoke = defaultImportSmoke,
+  renameRuntime = renameSync,
   acquireFileLock = acquireCaptureAgentFileLock,
   randomToken = () => randomBytes(32).toString("base64url"),
   wait = (milliseconds) =>
@@ -1480,6 +1503,7 @@ export function createCaptureAgentLifecycle({
         paths,
         nodePath: resolvedNode,
         importSmoke,
+        renameRuntime,
       });
       const oldStateRaw =
         oldState === null ? undefined : readFileSync(paths.statePath, "utf8");
