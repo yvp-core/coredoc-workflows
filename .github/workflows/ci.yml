@@ -50,9 +50,13 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.x
       - name: Verify bundled runtime
         run: plugins/coredoc-workflows/bin/coredoc-workflows version
-      - name: Run plugin tests with bundled runtime
+      - name: Run plugin tests with bundled and Node runtimes
         run: plugins/coredoc-workflows/bin/coredoc-workflows test
       - name: Verify generated skills with bundled runtime
         run: plugins/coredoc-workflows/bin/coredoc-workflows build-skills --check

@@ -32,10 +32,16 @@ import {
   taskEnsureResponse,
 } from "../runtime/artifacts/contract.mjs";
 import {
+  managedCaptureBindingStorageHash,
   relayBindingNonceFromCaptureHeaders,
   sha256BindingNonce,
 } from "./managed-otel-relay.mjs";
-import { stateRoot } from "./project-key.mjs";
+import {
+  RepositoryUnavailableError,
+  requireRepositoryCandidate,
+  resolveRepositoryIdentity,
+  stateRoot,
+} from "./project-key.mjs";
 
 const CONFIG_RELATIVE_PATH = join(
   ".coredoc",
@@ -51,6 +57,9 @@ const MAX_QUARANTINE_ENTRIES = 16;
 const MAX_DIRECTORY_SCAN_ENTRIES = 512;
 const MANAGED_ENDPOINT = "http://127.0.0.1:43181/capture/v1/events";
 const BINDING_HASH_RE = /^[0-9a-f]{64}$/;
+const BINDING_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MANAGED_INGRESS_RE = /^[A-Za-z0-9_-]{32,256}$/;
 const DIGEST_RE = /^[0-9a-f]{64}$/;
 const STATE_NAME = "state.json";
 const OUTBOX_NAME_RE =
@@ -66,6 +75,7 @@ const GLOB_KIND = new Map([
 const HEALTH_ERROR_CODES = new Set([
   "AUTH_REJECTED",
   "OUTBOX_OVERFLOW",
+  "REPOSITORY_UNAVAILABLE",
   "TRANSPORT_UNAVAILABLE",
   "CONFIG_CONFLICT",
 ]);
@@ -891,21 +901,121 @@ async function responseJson(response) {
   }
 }
 
+function artifactRelayHeaders({ bindingNonce, bindingHeaders }) {
+  if (bindingHeaders !== undefined) {
+    const headers = exactObject(
+      bindingHeaders,
+      new Set(["X-Coredoc-Relay-Ingress", "X-Coredoc-Relay-Binding-Id"]),
+    );
+    if (
+      bindingNonce !== undefined ||
+      typeof headers["X-Coredoc-Relay-Ingress"] !== "string" ||
+      !MANAGED_INGRESS_RE.test(headers["X-Coredoc-Relay-Ingress"]) ||
+      typeof headers["X-Coredoc-Relay-Binding-Id"] !== "string" ||
+      !BINDING_ID_RE.test(headers["X-Coredoc-Relay-Binding-Id"])
+    ) {
+      fail();
+    }
+    return { ...headers };
+  }
+  if (
+    typeof bindingNonce !== "string" ||
+    bindingNonce.length < 1 ||
+    bindingNonce.length > 512 ||
+    /[\s\0]/.test(bindingNonce)
+  ) {
+    fail();
+  }
+  return { "X-Coredoc-Relay-Binding": bindingNonce };
+}
+
+function configuredCodexBinding(value, expectedBindingId) {
+  if (
+    typeof value !== "string" ||
+    typeof expectedBindingId !== "string" ||
+    !BINDING_ID_RE.test(expectedBindingId)
+  ) {
+    fail();
+  }
+  const entries = value.split(",");
+  if (entries.length !== 2) fail();
+  const parsed = {};
+  for (const entry of entries) {
+    const separator = entry.indexOf("=");
+    if (separator < 1) fail();
+    const name = entry.slice(0, separator).trim().toLowerCase();
+    const headerName =
+      name === "x-coredoc-relay-ingress"
+        ? "X-Coredoc-Relay-Ingress"
+        : name === "x-coredoc-relay-binding-id"
+          ? "X-Coredoc-Relay-Binding-Id"
+          : null;
+    if (headerName === null || Object.hasOwn(parsed, headerName)) fail();
+    parsed[headerName] = entry.slice(separator + 1).trim();
+  }
+  const bindingId = expectedBindingId.toLowerCase();
+  if (parsed["X-Coredoc-Relay-Binding-Id"]?.toLowerCase() !== bindingId) {
+    fail();
+  }
+  const bindingHeaders = artifactRelayHeaders({ bindingHeaders: parsed });
+  return {
+    bindingHash: managedCaptureBindingStorageHash({
+      bindingId,
+      host: "codex",
+    }),
+    relayBinding: { bindingHeaders },
+  };
+}
+
+function configuredRelayBinding(env) {
+  if (env.COREDOC_CAPTURE_BINDING_ID !== undefined) {
+    if (!BINDING_ID_RE.test(env.COREDOC_CAPTURE_BINDING_ID)) fail();
+    try {
+      const bindingNonce = relayBindingNonceFromCaptureHeaders(
+        env.COREDOC_CAPTURE_HEADERS,
+      );
+      return {
+        bindingHash: managedCaptureBindingStorageHash({
+          bindingId: env.COREDOC_CAPTURE_BINDING_ID,
+          bindingNonceHash: sha256BindingNonce(bindingNonce),
+          host: "claude-code",
+          workspaceMode: env.COREDOC_CAPTURE_WORKSPACE_MODE === "1",
+        }),
+        relayBinding: { bindingNonce },
+      };
+    } catch {
+      // Codex uses the explicit ingress + binding-id header pair below.
+    }
+    return configuredCodexBinding(
+      env.COREDOC_CAPTURE_HEADERS,
+      env.COREDOC_CAPTURE_BINDING_ID,
+    );
+  }
+  const bindingNonce = relayBindingNonceFromCaptureHeaders(
+    env.COREDOC_CAPTURE_HEADERS,
+  );
+  return {
+    bindingHash: managedCaptureBindingStorageHash({
+      bindingNonceHash: sha256BindingNonce(bindingNonce),
+      host: "claude-code",
+    }),
+    relayBinding: { bindingNonce },
+  };
+}
+
 export async function flushArtifactCheckpoints({
   store,
   endpoint,
   bindingNonce,
+  bindingHeaders,
   fetchImpl = fetch,
   timeoutMs = 4_500,
   now = Date.now,
 } = {}) {
   if (!store || typeof store.pending !== "function") fail();
   const base = localDeliveryBase(endpoint);
+  const relayHeaders = artifactRelayHeaders({ bindingNonce, bindingHeaders });
   if (
-    typeof bindingNonce !== "string" ||
-    bindingNonce.length < 1 ||
-    bindingNonce.length > 512 ||
-    /[\s\0]/.test(bindingNonce) ||
     !Number.isInteger(timeoutMs) ||
     timeoutMs < 1 ||
     timeoutMs > 30_000
@@ -941,7 +1051,7 @@ export async function flushArtifactCheckpoints({
         redirect: "error",
         headers: {
           "content-type": "application/json",
-          "X-Coredoc-Relay-Binding": bindingNonce,
+          ...relayHeaders,
         },
       };
       const taskResponse = await fetchImpl(
@@ -1006,17 +1116,31 @@ export async function flushArtifactCheckpoints({
 
 function configuredContext(env, cwd) {
   if (env.COREDOC_CAPTURE_ENDPOINT !== MANAGED_ENDPOINT) return null;
-  if (!env.COREDOC_WORKFLOWS_REPO_KEY) return null;
   if (!existsSync(join(resolve(cwd), CONFIG_RELATIVE_PATH))) return null;
-  const bindingNonce = relayBindingNonceFromCaptureHeaders(
-    env.COREDOC_CAPTURE_HEADERS,
-  );
-  const bindingHash = sha256BindingNonce(bindingNonce);
+  let repositoryKey;
+  if (env.COREDOC_CAPTURE_WORKSPACE_MODE === "1") {
+    try {
+      // This normalized origin is only a lookup candidate. The loopback relay
+      // remains responsible for resolving it before cloud delivery.
+      repositoryKey = canonicalRepositoryKey(
+        requireRepositoryCandidate(resolveRepositoryIdentity(cwd)),
+      );
+    } catch (error) {
+      if (error instanceof RepositoryUnavailableError) {
+        fail("REPOSITORY_UNAVAILABLE");
+      }
+      throw error;
+    }
+  } else {
+    if (!env.COREDOC_WORKFLOWS_REPO_KEY) return null;
+    repositoryKey = canonicalRepositoryKey(env.COREDOC_WORKFLOWS_REPO_KEY);
+  }
+  const { bindingHash, relayBinding } = configuredRelayBinding(env);
   const relayRoot = join(resolve(stateRoot(env)), "capture-relay");
   return {
     endpoint: MANAGED_ENDPOINT,
-    bindingNonce,
-    repositoryKey: canonicalRepositoryKey(env.COREDOC_WORKFLOWS_REPO_KEY),
+    relayBinding,
+    repositoryKey,
     store: createArtifactCheckpointStore({
       directory: artifactCheckpointDirectory(relayRoot, bindingHash),
     }),
@@ -1053,7 +1177,7 @@ export async function runConfiguredArtifactCheckpoint({
     const delivered = await flushArtifactCheckpoints({
       store: context.store,
       endpoint: context.endpoint,
-      bindingNonce: context.bindingNonce,
+      ...context.relayBinding,
       fetchImpl,
       timeoutMs,
     });
@@ -1101,7 +1225,7 @@ export async function retryReconcileConfiguredArtifacts({
     const retried = await flushArtifactCheckpoints({
       store: context.store,
       endpoint: context.endpoint,
-      bindingNonce: context.bindingNonce,
+      ...context.relayBinding,
       fetchImpl,
       timeoutMs,
     });
@@ -1114,7 +1238,7 @@ export async function retryReconcileConfiguredArtifacts({
     const flushed = await flushArtifactCheckpoints({
       store: context.store,
       endpoint: context.endpoint,
-      bindingNonce: context.bindingNonce,
+      ...context.relayBinding,
       fetchImpl,
       timeoutMs,
     });
@@ -1126,10 +1250,16 @@ export async function retryReconcileConfiguredArtifacts({
       pending: flushed.pending,
       ...(flushed.errorCode === null ? {} : { errorCode: flushed.errorCode }),
     };
-  } catch {
+  } catch (error) {
+    const code =
+      error instanceof ArtifactCheckpointError
+        ? error.code
+        : "CONFIG_CONFLICT";
     if (context) {
       try {
-        context.store.markError("CONFIG_CONFLICT");
+        context.store.markError(
+          HEALTH_ERROR_CODES.has(code) ? code : "CONFIG_CONFLICT",
+        );
       } catch {
         // Corrupt state remains a bounded CONFIG_CONFLICT to the caller.
       }
@@ -1140,7 +1270,7 @@ export async function retryReconcileConfiguredArtifacts({
       queued: 0,
       sent: 0,
       pending: safePendingCount(context),
-      errorCode: "CONFIG_CONFLICT",
+      errorCode: HEALTH_ERROR_CODES.has(code) ? code : "CONFIG_CONFLICT",
     };
   }
 }

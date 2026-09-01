@@ -42,12 +42,30 @@ path.
 | Claude/Codex peer review | The explicitly selected provider CLI |
 | Coredoc graph context | An available Coredoc MCP server |
 | Coredoc Desktop QA | An explicitly opted-in Coredoc development app |
-| Managed workflow capture | Capture provisioned and enabled by Coredoc Desktop |
+| Plugin-managed workflow and native telemetry capture | macOS on Apple silicon, a compatible Coredoc server, and an operator-provisioned `~/.coredoc/capture-agent-policy.json` |
 
-Installing the plugin does **not** register a relay, enable OpenTelemetry, or
-create a cloud credential. Its session hook only checks a pre-existing,
-Desktop-provisioned loopback relay when the managed capture environment is
-already present. Otherwise it returns silently as unconfigured.
+Installing the plugin does **not** register a LaunchAgent, enable OpenTelemetry,
+create a cloud credential, or change Claude Code or Codex settings. Capture is
+an explicit, per-user setup step. It works without a repository, Coredoc MCP,
+or Coredoc Desktop and is fixed to the one server origin and workspace UUID in
+the mode-0600 user policy. Every plugin command uses the pinned bundled Bun;
+capture setup copies the verified Bun executable together with the relay into
+the immutable per-user runtime, so no system Node, Bun, or Python installation
+is required.
+
+From a source checkout, an operator can inspect or enable it with:
+
+```bash
+plugins/coredoc-workflows/bin/coredoc-workflows capture status
+plugins/coredoc-workflows/bin/coredoc-workflows capture setup
+```
+
+The installed `coredoc-capture` skill resolves the same executable without
+requiring it on `PATH`. Setup may open a browser for enrollment, installs an
+immutable runtime below `~/.coredoc/capture-agent`, and writes only marker-owned
+global host configuration. See the
+[capture-agent guide](docs/plugin-managed-capture-agent.md) for the exact policy,
+migration, lifecycle, security, rollback, and uninstall contracts.
 
 An advanced compatibility path can send workflow events directly when the
 operator explicitly supplies `COREDOC_CAPTURE_ENDPOINT` and an independent

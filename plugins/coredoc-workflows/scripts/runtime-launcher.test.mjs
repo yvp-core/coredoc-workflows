@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -14,7 +14,6 @@ const unsupported =
   process.platform === "darwin" && process.arch === "arm64"
     ? false
     : "bundled runtime supports darwin-arm64 only";
-
 test("launcher uses its bundled runtime with no global Node or Bun on PATH", { skip: unsupported }, async () => {
   const { stdout } = await run(launcher, ["version"], {
     env: { PATH: "/usr/bin:/bin" },
@@ -52,4 +51,26 @@ test("launcher ignores ambient preload flags and project dotenv files", { skip: 
     },
   });
   assert.notEqual(stdout.trim(), "dotenv-must-not-load");
+});
+
+test("launcher routes capture lifecycle through bundled Bun without replacing JSON-stdin capture", { skip: unsupported }, async () => {
+  const emptyPath = await mkdtemp(join(tmpdir(), "coredoc-no-runtime-path-"));
+  const root = await mkdtemp(join(tmpdir(), "coredoc-capture-launcher-"));
+  const env = {
+    PATH: emptyPath,
+    HOME: root,
+    COREDOC_HOME: join(root, ".coredoc"),
+  };
+  const { stdout } = await run(launcher, ["capture", "status"], { env });
+  assert.equal(JSON.parse(stdout).command, "status");
+  assert.equal(JSON.parse(stdout).status, "not-installed");
+
+  const recorder = spawnSync(launcher, ["capture"], {
+    env,
+    input: "{}",
+    encoding: "utf8",
+  });
+  assert.equal(recorder.status, 1);
+  assert.match(recorder.stderr, /Unsupported capture action/);
+  assert.doesNotMatch(recorder.stderr, /INVALID_ARGUMENTS/);
 });

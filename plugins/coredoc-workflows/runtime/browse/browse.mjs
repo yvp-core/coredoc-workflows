@@ -195,8 +195,8 @@ export function help() {
   return `Coredoc browse — bundled browser for macOS ARM
 
 Usage:
-  node browse.mjs doctor
-  node browse.mjs <command> [args...]
+  coredoc-workflows browse doctor
+  coredoc-workflows browse <command> [args...]
 
 Typical flow:
   browse.mjs goto https://example.com

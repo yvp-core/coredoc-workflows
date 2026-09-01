@@ -6,13 +6,19 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "../test/test-api.mjs";
 
-import { createConfiguredCaptureRecorder } from "./capture-client.mjs";
+import { persistCaptureHealth } from "../runtime/capture/health.mjs";
+import {
+  createConfiguredCaptureRecorder,
+  managedCaptureDirectoryForConfig,
+} from "./capture-client.mjs";
 import {
   artifactCheckpointDirectory,
   createArtifactCheckpointStore,
 } from "./artifact-checkpoints.mjs";
 import { captureHealthReport } from "./capture-health-report.mjs";
+import { renderClaudeGlobalSettings } from "./host-global-config.mjs";
 import {
+  managedRelayBindingStorageHash,
   sha256BindingNonce,
   writeManagedRelayConfig,
 } from "./managed-otel-relay.mjs";
@@ -173,6 +179,35 @@ test("managed reporting resolves exact global binding health without cwd or plai
   );
 });
 
+test("managed reporting preserves repository-attribution degradation", () => {
+  const { configPath, first } = managedFixture();
+  const directory = managedCaptureDirectoryForConfig(
+    managedRelayBindingStorageHash(first),
+    configPath,
+  );
+  persistCaptureHealth({
+    directory,
+    status: { pending: 0 },
+    errorCode: "REPOSITORY_ATTRIBUTION_DEGRADED",
+    now: () => "2026-09-01T12:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    captureHealthReport({
+      env: {
+        COREDOC_RELAY_CONFIG_PATH: configPath,
+        COREDOC_RELAY_BINDING_ID: BINDING_ONE_ID,
+      },
+    }),
+    {
+      schemaVersion: 1,
+      pendingCount: 0,
+      errorCode: "REPOSITORY_ATTRIBUTION_DEGRADED",
+      ...EMPTY_ATTRIBUTION,
+    },
+  );
+});
+
 test("managed Codex reporting reads pending events under the writer's exact binding fingerprint", () => {
   const stateHome = mkdtempSync(join(tmpdir(), "coredoc-codex-report-state-"));
   const configPath = join(stateHome, "capture-relay", "relay.json");
@@ -197,6 +232,59 @@ test("managed Codex reporting reads pending events under the writer's exact bind
   });
   recorder.record({
     occurredAt: "2026-08-18T15:00:00.000Z",
+    type: "capability.used",
+    data: { kind: "skill", capabilityId: "coredoc-tdd", outcome: "success" },
+  });
+
+  assert.deepEqual(
+    captureHealthReport({
+      env: {
+        COREDOC_RELAY_CONFIG_PATH: configPath,
+        COREDOC_RELAY_BINDING_ID: BINDING_ONE_ID,
+      },
+    }),
+    {
+      schemaVersion: 1,
+      pendingCount: 1,
+      errorCode: "OUTBOX_PENDING",
+      ...EMPTY_ATTRIBUTION,
+    },
+  );
+});
+
+test("rendered workspace Claude env records and reports from the stable binding-ID directory", () => {
+  const stateHome = mkdtempSync(join(tmpdir(), "coredoc-claude-workspace-report-state-"));
+  const configPath = join(stateHome, "capture-relay", "relay.json");
+  const legacy = binding({
+    bindingId: BINDING_ONE_ID,
+    nonce: NONCE_ONE,
+    workspaceId: "33333333-3333-4333-8333-333333333333",
+  });
+  const { repositoryKey: _repositoryKey, ...withoutRepository } = legacy;
+  const configured = { ...withoutRepository, workspaceMode: true };
+  writeManagedRelayConfig(configPath, {
+    schemaVersion: 1,
+    bindings: [configured],
+  });
+  const rendered = JSON.parse(
+    renderClaudeGlobalSettings("{}", {
+      operation: "install",
+      ingressToken: NONCE_ONE,
+      bindingId: BINDING_ONE_ID,
+      workspaceId: "33333333-3333-4333-8333-333333333333",
+    }),
+  ).env;
+  const recorder = createConfiguredCaptureRecorder({
+    env: {
+      ...rendered,
+      COREDOC_WORKFLOWS_STATE_HOME: stateHome,
+    },
+    cwd: stateHome,
+    sessionId: "claude-session",
+    idFactory: () => "55555555-5555-4555-8555-555555555555",
+  });
+  recorder.record({
+    occurredAt: "2026-09-01T12:00:00.000Z",
     type: "capability.used",
     data: { kind: "skill", capabilityId: "coredoc-tdd", outcome: "success" },
   });
@@ -310,6 +398,13 @@ test("managed health folds binding-scoped artifact pending and overflow into the
     schemaVersion: 1,
     pendingCount: 1,
     errorCode: "OUTBOX_OVERFLOW",
+    ...EMPTY_ATTRIBUTION,
+  });
+  store.markError("REPOSITORY_UNAVAILABLE");
+  assert.deepEqual(captureHealthReport({ env }), {
+    schemaVersion: 1,
+    pendingCount: 1,
+    errorCode: "REPOSITORY_UNAVAILABLE",
     ...EMPTY_ATTRIBUTION,
   });
 });

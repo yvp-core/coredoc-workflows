@@ -59,6 +59,7 @@ function health() {
     state: "ready",
     native: channel,
     capture: { ...channel, acceptedSchemaVersions: [1, 2, 3] },
+    attribution: { pendingCount: 0, rejectedCount: 0, lastClaimAt: null },
   };
 }
 

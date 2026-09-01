@@ -50,6 +50,7 @@ function bunContextTest(name, optionsOrFn, maybeFn) {
     if (failure) throw failure;
   };
 
+  if (options?.skip) return api.test.skip(name, wrapped);
   return options === undefined
     ? api.test(name, wrapped)
     : api.test(name, options, wrapped);

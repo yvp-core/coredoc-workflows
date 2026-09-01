@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -29,6 +30,8 @@ import {
   retryReconcileConfiguredArtifacts,
   runConfiguredArtifactCheckpoint,
 } from "./artifact-checkpoints.mjs";
+import { renderClaudeGlobalSettings } from "./host-global-config.mjs";
+import { sha256BindingNonce } from "./managed-otel-relay.mjs";
 
 const TASK_ID = "cdt_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const ARTIFACT_ID = "cda_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -69,6 +72,19 @@ function repositoryFixture({ glob = ".scratch/*/spec.md", kind = "spec" } = {}) 
   );
   mkdirSync(join(root, ".scratch", "phase"), { recursive: true });
   writeFileSync(join(root, ".scratch", "phase", "spec.md"), document());
+  return root;
+}
+
+function gitRepositoryWithOrigin(origin) {
+  const root = repositoryFixture();
+  execFileSync("git", ["init", "-q"], {
+    cwd: root,
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  execFileSync("git", ["remote", "add", "origin", origin], {
+    cwd: root,
+    stdio: ["ignore", "ignore", "ignore"],
+  });
   return root;
 }
 
@@ -1100,6 +1116,263 @@ test("unconfigured managed artifacts are disabled without scanning stale state o
     await retryReconcileConfiguredArtifacts({ env, cwd, fetchImpl }),
     { status: "disabled", attempted: 0, queued: 0, sent: 0, pending: 0 },
   );
+});
+
+test("workspace artifacts fail explicitly when no normalized repository candidate exists", async () => {
+  const cwd = repositoryFixture();
+  let calls = 0;
+  const env = {
+    COREDOC_CAPTURE_ENDPOINT: "http://127.0.0.1:43181/capture/v1/events",
+    COREDOC_CAPTURE_HEADERS:
+      "X-Coredoc-Relay-Ingress=machine_ingress_abcdefghijklmnopqrstuvwxyz012345,X-Coredoc-Relay-Binding-Id=22222222-2222-4222-8222-222222222222",
+    COREDOC_CAPTURE_BINDING_ID: "22222222-2222-4222-8222-222222222222",
+    COREDOC_CAPTURE_WORKSPACE_MODE: "1",
+    COREDOC_WORKFLOWS_STATE_HOME: mkdtempSync(
+      join(tmpdir(), "coredoc-artifact-repoless-state-"),
+    ),
+  };
+  const fetchImpl = async () => {
+    calls += 1;
+    throw new Error("repository-less artifacts must not reach the relay");
+  };
+  const result = await runConfiguredArtifactCheckpoint({
+    env,
+    cwd,
+    checkpoint: "run-finish",
+    fetchImpl,
+  });
+
+  assert.deepEqual(result, {
+    status: "failed",
+    queued: 0,
+    sent: 0,
+    pending: 0,
+    errorCode: "REPOSITORY_UNAVAILABLE",
+  });
+  assert.deepEqual(
+    await retryReconcileConfiguredArtifacts({ env, cwd, fetchImpl }),
+    {
+      status: "failed",
+      attempted: 0,
+      queued: 0,
+      sent: 0,
+      pending: 0,
+      errorCode: "REPOSITORY_UNAVAILABLE",
+    },
+  );
+  assert.equal(calls, 0);
+});
+
+test("workspace artifact requests carry only a normalized candidate and loopback capability", async () => {
+  const cwd = gitRepositoryWithOrigin(
+    "https://github.com/acme/workspace-payments.git",
+  );
+  const stateHome = mkdtempSync(
+    join(tmpdir(), "coredoc-artifact-workspace-state-"),
+  );
+  const ingress = "machine_ingress_abcdefghijklmnopqrstuvwxyz012345";
+  const bindingId = "22222222-2222-4222-8222-222222222222";
+  const calls = [];
+  const result = await runConfiguredArtifactCheckpoint({
+    env: {
+      COREDOC_CAPTURE_ENDPOINT: "http://127.0.0.1:43181/capture/v1/events",
+      COREDOC_CAPTURE_HEADERS: `X-Coredoc-Relay-Ingress=${ingress},X-Coredoc-Relay-Binding-Id=${bindingId}`,
+      COREDOC_CAPTURE_BINDING_ID: bindingId,
+      COREDOC_CAPTURE_WORKSPACE_MODE: "1",
+      COREDOC_CAPTURE_REPOSITORY_CANDIDATE_KEY: "stale/injected",
+      COREDOC_WORKFLOWS_REPO_KEY: "stale/legacy",
+      COREDOC_WORKFLOWS_STATE_HOME: stateHome,
+    },
+    cwd,
+    checkpoint: "run-finish",
+    fetchImpl: async (url, init) => {
+      const body = JSON.parse(init.body);
+      calls.push({ url, headers: init.headers, body });
+      if (url.endsWith(`/tasks/${TASK_ID}`)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: TASK_ID,
+            repositoryKey: "acme/workspace-payments",
+            lifecycle: "active",
+            authority: "coredoc",
+            externalRefs: [],
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: "accepted",
+          artifact: {
+            id: ARTIFACT_ID,
+            taskId: TASK_ID,
+            repositoryKey: "acme/workspace-payments",
+            kind: "spec",
+          },
+          revision: {
+            id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            sha256: digest(body.markdown),
+            byteCount: Buffer.byteLength(body.markdown),
+            checkpoint: body.checkpoint,
+            runId: body.runId ?? null,
+            createdAt: "2026-08-16T20:00:00.000Z",
+          },
+        }),
+      };
+    },
+  });
+
+  assert.deepEqual(result, {
+    status: "sent",
+    queued: 1,
+    sent: 1,
+    pending: 0,
+  });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].body, {
+    repositoryKey: "acme/workspace-payments",
+  });
+  assert.equal(calls[1].body.repositoryKey, "acme/workspace-payments");
+  for (const call of calls) {
+    assert.match(call.url, /^http:\/\/127\.0\.0\.1:43181\//);
+    assert.deepEqual(call.headers, {
+      "content-type": "application/json",
+      "X-Coredoc-Relay-Ingress": ingress,
+      "X-Coredoc-Relay-Binding-Id": bindingId,
+    });
+    assert.equal(Object.hasOwn(call.headers, "Authorization"), false);
+  }
+  const serialized = JSON.stringify(calls);
+  assert.doesNotMatch(serialized, /github\.com|origin|stale\/injected|stale\/legacy/);
+  assert.doesNotMatch(serialized, new RegExp(cwd));
+});
+
+test("rendered workspace Claude env authenticates with its nonce and stores artifacts by binding ID", async () => {
+  const cwd = gitRepositoryWithOrigin(
+    "https://github.com/acme/workspace-payments.git",
+  );
+  const stateHome = mkdtempSync(
+    join(tmpdir(), "coredoc-artifact-claude-workspace-state-"),
+  );
+  const ingress = "claude_ingress_abcdefghijklmnopqrstuvwxyz012345";
+  const bindingId = "22222222-2222-4222-8222-222222222222";
+  const rendered = JSON.parse(
+    renderClaudeGlobalSettings("{}", {
+      operation: "install",
+      ingressToken: ingress,
+      bindingId,
+      workspaceId: "33333333-3333-4333-8333-333333333333",
+    }),
+  ).env;
+
+  const result = await runConfiguredArtifactCheckpoint({
+    env: {
+      ...rendered,
+      COREDOC_WORKFLOWS_STATE_HOME: stateHome,
+    },
+    cwd,
+    checkpoint: "run-finish",
+    flush: false,
+  });
+
+  assert.deepEqual(result, {
+    status: "queued",
+    queued: 1,
+    pending: 1,
+    sent: 0,
+  });
+  const directory = artifactCheckpointDirectory(
+    join(stateHome, "capture-relay"),
+    sha256BindingNonce(bindingId),
+  );
+  assert.equal(artifactCheckpointHealth(directory).pendingCount, 1);
+});
+
+test("configured Codex artifacts use ingress and binding-ID authentication", async () => {
+  const cwd = repositoryFixture();
+  const stateHome = mkdtempSync(join(tmpdir(), "coredoc-artifact-codex-state-"));
+  const ingress = "machine_ingress_abcdefghijklmnopqrstuvwxyz012345";
+  const bindingId = "22222222-2222-4222-8222-222222222222";
+  const calls = [];
+  const result = await runConfiguredArtifactCheckpoint({
+    env: {
+      COREDOC_CAPTURE_ENDPOINT: "http://127.0.0.1:43181/capture/v1/events",
+      COREDOC_CAPTURE_HEADERS: `X-Coredoc-Relay-Ingress=${ingress},X-Coredoc-Relay-Binding-Id=${bindingId}`,
+      COREDOC_CAPTURE_BINDING_ID: bindingId,
+      COREDOC_WORKFLOWS_REPO_KEY: REPOSITORY_KEY,
+      COREDOC_WORKFLOWS_STATE_HOME: stateHome,
+    },
+    cwd,
+    checkpoint: "run-finish",
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init });
+      if (url.endsWith(`/tasks/${TASK_ID}`)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: TASK_ID,
+            repositoryKey: REPOSITORY_KEY,
+            lifecycle: "active",
+            authority: "coredoc",
+            externalRefs: [],
+          }),
+        };
+      }
+      const body = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          status: "accepted",
+          artifact: {
+            id: ARTIFACT_ID,
+            taskId: TASK_ID,
+            repositoryKey: REPOSITORY_KEY,
+            kind: "spec",
+          },
+          revision: {
+            id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            sha256: digest(body.markdown),
+            byteCount: Buffer.byteLength(body.markdown),
+            checkpoint: body.checkpoint,
+            runId: body.runId ?? null,
+            createdAt: "2026-08-16T20:00:00.000Z",
+          },
+        }),
+      };
+    },
+  });
+
+  assert.deepEqual(result, {
+    status: "sent",
+    queued: 1,
+    sent: 1,
+    pending: 0,
+  });
+  for (const { init } of calls) {
+    assert.deepEqual(init.headers, {
+      "content-type": "application/json",
+      "X-Coredoc-Relay-Ingress": ingress,
+      "X-Coredoc-Relay-Binding-Id": bindingId,
+    });
+  }
+  const state = JSON.parse(
+    readFileSync(
+      join(
+        artifactCheckpointDirectory(
+          join(stateHome, "capture-relay"),
+          digest(bindingId),
+        ),
+        "state.json",
+      ),
+      "utf8",
+    ),
+  );
+  assert.equal(state.schemaVersion, 1);
 });
 
 test("corrupt managed state returns one bounded CONFIG_CONFLICT instead of rethrowing diagnostics", async () => {

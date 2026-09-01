@@ -34,7 +34,11 @@ fi
 # Do not let ambient Bun/Node flags inject code, load project .env files, install
 # packages, emit telemetry, or persist a transpiler cache from trusted hooks.
 unset BUN_OPTIONS
+unset BUN_INSPECT
+unset BUN_INSPECT_CONNECT_TO
+unset BUN_INSPECT_NOTIFY
 unset BUN_INSPECT_PRELOAD
+unset BUN_JS_DEBUG
 unset BUN_CONFIG_VERBOSE_FETCH
 unset NODE_OPTIONS
 export DO_NOT_TRACK=1
@@ -44,7 +48,14 @@ case "$command_name" in
   artifact-checkpoints) target=scripts/artifact-checkpoints.mjs ;;
   browse) target=runtime/browse/browse.mjs ;;
   build-skills) target=scripts/build-skills.mjs ;;
-  capture) target=runtime/capture/cli.mjs ;;
+  capture)
+    case "${1:-}" in
+      setup|status|doctor|repair|upgrade|disable|uninstall)
+        target=scripts/capture-agent-setup.mjs
+        ;;
+      *) target=runtime/capture/cli.mjs ;;
+    esac
+    ;;
   capture-health) target=scripts/capture-health-report.mjs ;;
   claude-peer) target=skills/coredoc-claude/scripts/run.mjs ;;
   codex-peer) target=skills/coredoc-codex/scripts/run.mjs ;;

@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "entry": "scripts/managed-otel-relay.mjs",
+  "files": [
+    {
+      "path": "runtime/artifacts/contract.mjs",
+      "sha256": "0ae032df1cc8d3cfd0a49421b36cea716b5f985ec970e8ea844ad913381ef69f"
+    },
+    {
+      "path": "runtime/bun/bunfig.toml",
+      "sha256": "66a3ca148c446bdb484b33815567ed0446ef9b24ab7507ca5c6d6d0b8840580a"
+    },
+    {
+      "path": "runtime/bun/darwin-arm64/bun",
+      "sha256": "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233"
+    },
+    {
+      "path": "runtime/bun/runner",
+      "sha256": "0fce5ff3f06ac5ba1e330fd2e4f71918cbf4a1a2550e9eb8f472c54e32fa207f"
+    },
+    {
+      "path": "runtime/capture/contract.mjs",
+      "sha256": "d4526dad70e757f6049e5f2f61e4d2dd79826f0489e475384518ce008e594d2c"
+    },
+    {
+      "path": "runtime/capture/file-outbox.mjs",
+      "sha256": "d1421ec7d38a060f7b7af6c1fc5cdeb1e751dc581a6f2a0c8f0ea0a5c184152d"
+    },
+    {
+      "path": "runtime/capture/health.mjs",
+      "sha256": "015e9ce7fea29aeef10becd19f62a7772b36d2a7aad8f8f2e0cd1faba8442451"
+    },
+    {
+      "path": "runtime/capture/index.mjs",
+      "sha256": "1160d330e904e80c4b881deaeb5d1300fd270bbd6f3a5726ff3169d0518cd241"
+    },
+    {
+      "path": "scripts/artifact-checkpoints.mjs",
+      "sha256": "a593b6827e87978266cf450f730301ba0f3a3db29d65029712eb5dc99b777c3d"
+    },
+    {
+      "path": "scripts/capture-client.mjs",
+      "sha256": "3ef6cf368b913760494e08c6f5584816ecaa9e921825fb8a1143ea3a751a8dce"
+    },
+    {
+      "path": "scripts/capture-health-report.mjs",
+      "sha256": "2247134184b89ab2ce3fff4732f839d4eed1b291c0ae61f5f6871dc76f1274b3"
+    },
+    {
+      "path": "scripts/codex-attribution-state.mjs",
+      "sha256": "1532044380a175cdd27ac8f1d2793b38584d4f24f7b486afc900366ef4e83940"
+    },
+    {
+      "path": "scripts/codex-session-claim.mjs",
+      "sha256": "0bedaad0003b91495990127b2b379e1e681efbf28c636b043d1adc45c382d380"
+    },
+    {
+      "path": "scripts/managed-otel-relay.mjs",
+      "sha256": "79f9d01ca51bce7994c2d57c57a20c72666ce369d61fe5948a0c7239f659cba2"
+    },
+    {
+      "path": "scripts/native-otel-sanitizer.mjs",
+      "sha256": "9681c2cee01237b7e2466462396a0f23f875fa108518be4b16c0322ec7ed113c"
+    },
+    {
+      "path": "scripts/project-key.mjs",
+      "sha256": "71b0742267048b40b3eafb5f400f727f9bcd27a582c99d900668a0351a3c88ca"
+    }
+  ]
+}

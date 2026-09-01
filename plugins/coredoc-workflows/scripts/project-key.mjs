@@ -28,6 +28,7 @@
  * `cache/` is a deliberate subdirectory rather than the project root: credentials
  * sit beside it, and "clear the cache" must never become `rm -rf ~/.coredoc`.
  */
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -36,6 +37,14 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 /** A path segment safe to use as a directory name. */
 const KEY_SEGMENT_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 const PROJECT_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
+const REPOSITORY_KEY_SEGMENT_RE = /^[a-zA-Z0-9._-]+$/;
+const GIT_ORIGIN_PROTOCOLS = new Set([
+  "git:",
+  "git+ssh:",
+  "http:",
+  "https:",
+  "ssh:",
+]);
 
 /** Root for all plugin state. `COREDOC_HOME` overrides for tests and odd setups. */
 export function stateRoot(env = process.env) {
@@ -50,6 +59,54 @@ function shortHash(value) {
 
 function repositoryScopeHash(value) {
   return createHash("sha256").update(value).digest("hex").slice(0, 24);
+}
+
+function repositoryScopeKey(metadata) {
+  return `repo-${repositoryScopeHash(canonicalPath(metadata.commonDir ?? metadata.root))}`;
+}
+
+// `project-key.mjs` is copied into the standalone capture runtime without the
+// session hook entrypoint, so origin normalization remains self-contained here.
+function normalizedRepositoryKeyFromOrigin(origin) {
+  if (typeof origin !== "string" || origin === "") return undefined;
+  const input = origin.trim();
+  let path = input;
+  const scp =
+    !/^[a-z+]+:\/\//i.test(input) && input.match(/^[^@]+@[^:]+:(.+)$/);
+  if (scp) {
+    path = scp[1];
+  } else if (/^[a-z+]+:\/\//i.test(input)) {
+    let parsed;
+    try {
+      parsed = new URL(input);
+    } catch {
+      return undefined;
+    }
+    if (
+      !GIT_ORIGIN_PROTOCOLS.has(parsed.protocol) ||
+      !parsed.hostname ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash ||
+      ((parsed.protocol === "http:" || parsed.protocol === "https:") &&
+        parsed.username)
+    ) {
+      return undefined;
+    }
+    path = parsed.pathname.replace(/^\/+/, "");
+  }
+  path = path.replace(/\.git$/, "");
+  const segments = path.split("/");
+  return path.length <= 256 &&
+    segments.length >= 2 &&
+    segments.every(
+      (segment) =>
+        segment !== "." &&
+        segment !== ".." &&
+        REPOSITORY_KEY_SEGMENT_RE.test(segment),
+    )
+    ? path
+    : undefined;
 }
 
 function canonicalPath(value) {
@@ -206,11 +263,82 @@ export function resolveProjectKey(cwd = process.cwd(), env = process.env) {
   return resolvePathProjectKey(cwd);
 }
 
+function normalizedOriginFor(metadata) {
+  let origin;
+  try {
+    origin = execFileSync(
+      "git",
+      ["-C", metadata.root, "config", "--get", "remote.origin.url"],
+      {
+        encoding: "utf8",
+        timeout: 1_000,
+        maxBuffer: 4_096,
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).trim();
+  } catch {
+    return undefined;
+  }
+  return normalizedRepositoryKeyFromOrigin(origin);
+}
+
+function authoritativeRepositoryKey(value) {
+  if (value === undefined) return undefined;
+  const normalized = normalizedRepositoryKeyFromOrigin(value);
+  if (!normalized || normalized !== value) {
+    throw new Error("authoritative repository key must already be normalized");
+  }
+  return normalized;
+}
+
+/**
+ * Repository identity for attribution-sensitive callers.
+ *
+ * `null` is the explicit non-repository state. A Git repository without a
+ * server-approved mapping is `unmapped`; its normalized origin is only a lookup
+ * candidate and is never promoted to `repositoryKey`. Only the caller-supplied
+ * authoritative key can produce `known`.
+ */
+export function resolveRepositoryIdentity(
+  cwd = process.cwd(),
+  { authoritativeRepositoryKey: mappedRepositoryKey } = {},
+) {
+  const metadata = gitMetadata(cwd);
+  if (!metadata) return null;
+
+  const mapped = authoritativeRepositoryKey(mappedRepositoryKey);
+  const normalizedRepositoryKey = normalizedOriginFor(metadata);
+  return {
+    state: mapped === undefined ? "unmapped" : "known",
+    repositoryScopeKey: repositoryScopeKey(metadata),
+    ...(normalizedRepositoryKey === undefined
+      ? {}
+      : { normalizedRepositoryKey }),
+    ...(mapped === undefined ? {} : { repositoryKey: mapped }),
+  };
+}
+
+export class RepositoryUnavailableError extends Error {
+  constructor() {
+    super("REPOSITORY_UNAVAILABLE");
+    this.name = "RepositoryUnavailableError";
+    this.code = "REPOSITORY_UNAVAILABLE";
+  }
+}
+
+/** Require a normalized local lookup candidate for relay-resolved operations. */
+export function requireRepositoryCandidate(identity) {
+  if (!identity?.normalizedRepositoryKey) {
+    throw new RepositoryUnavailableError();
+  }
+  return identity.normalizedRepositoryKey;
+}
+
 /** Stable, non-secret identity used below a readable project namespace. */
 export function resolveRepositoryScopeKey(cwd = process.cwd()) {
   const metadata = gitMetadata(cwd);
-  const identity = metadata?.commonDir ?? metadata?.root ?? resolve(cwd);
-  return `repo-${repositoryScopeHash(canonicalPath(identity))}`;
+  if (metadata) return repositoryScopeKey(metadata);
+  return `repo-${repositoryScopeHash(canonicalPath(resolve(cwd)))}`;
 }
 
 function projectStatePath(cwd, env, leaf) {
