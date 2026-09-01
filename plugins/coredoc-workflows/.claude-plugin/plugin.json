@@ -1,7 +1,7 @@
 {
   "name": "coredoc-workflows",
   "version": "0.11.2",
-  "description": "Self-contained Claude Code engineering workflows with read-only Coredoc context, explicit Claude/Codex peer adapters, compact learning and retrospectives, and bundled macOS ARM browser QA.",
+  "description": "Self-contained Claude Code engineering workflows with read-only Coredoc context, explicit peer adapters, bundled macOS ARM browser QA, and an opt-in macOS capture agent.",
   "author": {
     "name": "Coredoc team"
   },
@@ -13,6 +13,8 @@
     "review",
     "implementation",
     "tdd",
-    "qa"
+    "qa",
+    "capture",
+    "telemetry"
   ]
 }

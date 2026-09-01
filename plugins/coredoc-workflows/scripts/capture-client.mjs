@@ -14,6 +14,7 @@ import {
 } from "../runtime/capture/index.mjs";
 
 import {
+  managedCaptureBindingStorageHash,
   managedRelayHealth,
   readManagedRelayConfig,
   relayBindingNonceFromCaptureHeaders,
@@ -21,7 +22,7 @@ import {
 } from "./managed-otel-relay.mjs";
 import {
   persistentDirs,
-  resolveRepositoryScopeKey,
+  resolveRepositoryIdentity,
   stateRoot,
 } from "./project-key.mjs";
 
@@ -98,31 +99,71 @@ function codexIngressToken(path) {
   }
 }
 
-function managedCodexBinding(env, cwd) {
+function unavailableManagedCodexBinding() {
+  throw new Error("managed Codex relay binding is unavailable");
+}
+
+export function selectManagedCaptureBinding({
+  bindings,
+  host,
+  bindingNonceHash,
+  repositoryIdentity,
+}) {
+  if (!Array.isArray(bindings)) unavailableManagedCodexBinding();
+  const eligibleHostBindings = bindings.filter(
+    (candidate) =>
+      candidate.host === host &&
+      candidate.bindingNonceHash === bindingNonceHash &&
+      // The persisted relay schema has no `enabled` field. A stale/injected
+      // explicit false is tolerated here, but production selection relies on
+      // the workspaceMode marker and exact host/nonce match.
+      candidate.enabled !== false,
+  );
+  const workspaceBindings = eligibleHostBindings.filter(
+    (candidate) => candidate.workspaceMode === true,
+  );
+  if (workspaceBindings.length === 1) {
+    return { mode: "workspace", binding: workspaceBindings[0] };
+  }
+  if (workspaceBindings.length > 1 || repositoryIdentity == null) {
+    unavailableManagedCodexBinding();
+  }
+
+  const repositoryBindings = eligibleHostBindings.filter(
+    (candidate) =>
+      candidate.workspaceMode !== true &&
+      candidate.repositoryScopeKey === repositoryIdentity.repositoryScopeKey,
+  );
+  if (repositoryBindings.length !== 1) unavailableManagedCodexBinding();
+  return { mode: "repository", binding: repositoryBindings[0] };
+}
+
+function managedCodexBinding(env, cwd, readRelayConfig) {
   const relayRoot = join(resolve(stateRoot(env)), "capture-relay");
   const bindingNonce = codexIngressToken(join(relayRoot, "codex-ingress.json"));
   if (bindingNonce === undefined) return undefined;
   let relayConfig;
   try {
-    relayConfig = readManagedRelayConfig(join(relayRoot, "relay.json"));
+    relayConfig = readRelayConfig(join(relayRoot, "relay.json"));
   } catch {
-    throw new Error("managed Codex relay binding is unavailable");
+    unavailableManagedCodexBinding();
   }
   const bindingNonceHash = sha256BindingNonce(bindingNonce);
-  const repositoryScopeKey = resolveRepositoryScopeKey(cwd);
-  const matches = relayConfig.bindings.filter(
-    (candidate) =>
-      candidate.host === "codex" &&
-      candidate.bindingNonceHash === bindingNonceHash &&
-      candidate.repositoryScopeKey === repositoryScopeKey,
-  );
-  if (matches.length !== 1) {
-    throw new Error("managed Codex relay binding is unavailable");
-  }
-  return { bindingNonce, binding: matches[0], repositoryScopeKey };
+  const repositoryIdentity = resolveRepositoryIdentity(cwd);
+  const selected = selectManagedCaptureBinding({
+    bindings: relayConfig.bindings,
+    host: "codex",
+    bindingNonceHash,
+    repositoryIdentity,
+  });
+  return { bindingNonce, repositoryIdentity, ...selected };
 }
 
-export function resolveWorkflowRuntime({ env = process.env, cwd = process.cwd() } = {}) {
+export function resolveWorkflowRuntime({
+  env = process.env,
+  cwd = process.cwd(),
+  readRelayConfig = readManagedRelayConfig,
+} = {}) {
   const sessionId = workflowSessionId(env);
   const resolvedEnv = {
     ...env,
@@ -130,31 +171,82 @@ export function resolveWorkflowRuntime({ env = process.env, cwd = process.cwd() 
       ? {}
       : { COREDOC_WORKFLOWS_SESSION_ID: sessionId }),
   };
+  const workspaceEnv = workspaceCaptureEnv(resolvedEnv, cwd);
   if (
     Object.hasOwn(env, "COREDOC_CAPTURE_ENDPOINT") ||
     Object.hasOwn(env, "COREDOC_WORKFLOWS_SESSION_ID") ||
     codexSessionId(env) === undefined
   ) {
-    return { env: resolvedEnv, sessionId };
+    return { env: workspaceEnv, sessionId };
   }
-  const managed = managedCodexBinding(env, cwd);
+  const managed = managedCodexBinding(env, cwd, readRelayConfig);
   if (managed === undefined) return { env: resolvedEnv, sessionId };
+  const captureEnv = { ...resolvedEnv };
+  if (managed.mode === "workspace") {
+    delete captureEnv.COREDOC_WORKFLOWS_REPO_KEY;
+    delete captureEnv.COREDOC_CAPTURE_REPOSITORY_KEY;
+    delete captureEnv.COREDOC_CAPTURE_REPOSITORY_CANDIDATE_KEY;
+    delete captureEnv.COREDOC_CAPTURE_REPOSITORY_SCOPE_KEY;
+  } else {
+    delete captureEnv.COREDOC_CAPTURE_WORKSPACE_MODE;
+    delete captureEnv.COREDOC_CAPTURE_REPOSITORY_STATE;
+    delete captureEnv.COREDOC_CAPTURE_REPOSITORY_CANDIDATE_KEY;
+  }
   return {
     sessionId,
-    env: {
-      ...resolvedEnv,
+    env: workspaceCaptureEnv({
+      ...captureEnv,
       COREDOC_CAPTURE_ENDPOINT: MANAGED_CAPTURE_ENDPOINT,
       COREDOC_CAPTURE_HEADERS: `X-Coredoc-Relay-Ingress=${managed.bindingNonce},X-Coredoc-Relay-Binding-Id=${managed.binding.bindingId}`,
       COREDOC_CAPTURE_BINDING_ID: managed.binding.bindingId,
-      COREDOC_CAPTURE_REPOSITORY_SCOPE_KEY: managed.repositoryScopeKey,
       COREDOC_CAPTURE_WORKSPACE_ID: managed.binding.workspaceId,
       COREDOC_CAPTURE_HOST: "codex",
-      ...(resolvedEnv.COREDOC_WORKFLOWS_REPO_KEY !== undefined ||
-      managed.binding.repositoryKey === undefined
-        ? {}
-        : { COREDOC_WORKFLOWS_REPO_KEY: managed.binding.repositoryKey }),
-    },
+      ...(managed.mode === "workspace"
+        ? {
+            COREDOC_CAPTURE_WORKSPACE_MODE: "1",
+            COREDOC_CAPTURE_REPOSITORY_STATE:
+              managed.repositoryIdentity?.state ?? "none",
+            ...(managed.repositoryIdentity?.normalizedRepositoryKey === undefined
+              ? {}
+              : {
+                  // This is a local lookup candidate, never client authority.
+                  // The relay resolves or strips it before cloud forwarding.
+                  COREDOC_CAPTURE_REPOSITORY_CANDIDATE_KEY:
+                    managed.repositoryIdentity.normalizedRepositoryKey,
+                }),
+          }
+        : {
+            COREDOC_CAPTURE_REPOSITORY_SCOPE_KEY:
+              managed.repositoryIdentity.repositoryScopeKey,
+            ...(resolvedEnv.COREDOC_WORKFLOWS_REPO_KEY !== undefined ||
+            managed.binding.repositoryKey === undefined
+              ? {}
+              : { COREDOC_WORKFLOWS_REPO_KEY: managed.binding.repositoryKey }),
+          }),
+    }, cwd),
   };
+}
+
+export function workspaceCaptureEnv(env, cwd = process.cwd()) {
+  const captureEnv = { ...env };
+  if (
+    captureEnv.COREDOC_CAPTURE_ENDPOINT !== MANAGED_CAPTURE_ENDPOINT ||
+    captureEnv.COREDOC_CAPTURE_WORKSPACE_MODE !== "1"
+  ) {
+    return captureEnv;
+  }
+  delete captureEnv.COREDOC_WORKFLOWS_REPO_KEY;
+  delete captureEnv.COREDOC_CAPTURE_REPOSITORY_KEY;
+  delete captureEnv.COREDOC_CAPTURE_REPOSITORY_CANDIDATE_KEY;
+  delete captureEnv.COREDOC_CAPTURE_REPOSITORY_SCOPE_KEY;
+  const repositoryIdentity = resolveRepositoryIdentity(cwd);
+  captureEnv.COREDOC_CAPTURE_REPOSITORY_STATE =
+    repositoryIdentity?.state ?? "none";
+  if (repositoryIdentity?.normalizedRepositoryKey !== undefined) {
+    captureEnv.COREDOC_CAPTURE_REPOSITORY_CANDIDATE_KEY =
+      repositoryIdentity.normalizedRepositoryKey;
+  }
+  return captureEnv;
 }
 
 export async function preflightCaptureSchemaVersion(
@@ -249,17 +341,23 @@ export function managedCaptureDirectoryForConfig(
 
 export function captureDirectory(cwd, env) {
   if (env.COREDOC_CAPTURE_ENDPOINT === MANAGED_CAPTURE_ENDPOINT) {
-    if (env.COREDOC_CAPTURE_BINDING_ID !== undefined) {
-      if (!/^[0-9a-f-]{36}$/i.test(env.COREDOC_CAPTURE_BINDING_ID)) {
-        throw new Error("managed capture binding id is invalid");
-      }
-      return managedCaptureDirectory(
-        sha256BindingNonce(env.COREDOC_CAPTURE_BINDING_ID),
-        env,
-      );
-    }
-    const nonce = relayBindingNonceFromCaptureHeaders(env.COREDOC_CAPTURE_HEADERS);
-    return managedCaptureDirectory(sha256BindingNonce(nonce), env);
+    const host = env.COREDOC_CAPTURE_HOST ?? "claude-code";
+    const workspaceMode = env.COREDOC_CAPTURE_WORKSPACE_MODE === "1";
+    const bindingNonceHash =
+      workspaceMode || host === "codex"
+        ? undefined
+        : sha256BindingNonce(
+            relayBindingNonceFromCaptureHeaders(env.COREDOC_CAPTURE_HEADERS),
+          );
+    return managedCaptureDirectory(
+      managedCaptureBindingStorageHash({
+        bindingId: env.COREDOC_CAPTURE_BINDING_ID,
+        bindingNonceHash,
+        host,
+        workspaceMode,
+      }),
+      env,
+    );
   }
   if (env.COREDOC_WORKFLOWS_CAPTURE_DIR) {
     return env.COREDOC_WORKFLOWS_CAPTURE_DIR;
@@ -276,23 +374,26 @@ export function createConfiguredCaptureRecorder({
   idFactory,
   createRecorder = createCaptureRecorder,
 } = {}) {
+  const captureEnv = workspaceCaptureEnv(env, cwd);
+  const repositoryKey =
+    captureEnv.COREDOC_CAPTURE_WORKSPACE_MODE === "1"
+      ? captureEnv.COREDOC_CAPTURE_REPOSITORY_CANDIDATE_KEY
+      : captureEnv.COREDOC_WORKFLOWS_REPO_KEY;
   const context =
     sessionId === undefined
       ? undefined
       : {
           host,
           sessionId,
-          ...(env.COREDOC_WORKFLOWS_REPO_KEY
-            ? { repositoryKey: env.COREDOC_WORKFLOWS_REPO_KEY }
-            : {}),
+          ...(repositoryKey ? { repositoryKey } : {}),
         };
   return createRecorder({
-    directory: captureDirectory(cwd, env),
-    target: env.COREDOC_CAPTURE_ENDPOINT ?? "",
-    headers: captureHeaders(env.COREDOC_CAPTURE_HEADERS ?? ""),
-    ...(env.COREDOC_CAPTURE_WORKSPACE_ID === undefined
+    directory: captureDirectory(cwd, captureEnv),
+    target: captureEnv.COREDOC_CAPTURE_ENDPOINT ?? "",
+    headers: captureHeaders(captureEnv.COREDOC_CAPTURE_HEADERS ?? ""),
+    ...(captureEnv.COREDOC_CAPTURE_WORKSPACE_ID === undefined
       ? {}
-      : { workspaceId: env.COREDOC_CAPTURE_WORKSPACE_ID }),
+      : { workspaceId: captureEnv.COREDOC_CAPTURE_WORKSPACE_ID }),
     ...(context === undefined ? {} : { context }),
     ...(idFactory === undefined ? {} : { idFactory }),
   });
@@ -341,6 +442,7 @@ export async function deliverCaptureEvent(
       host === "codex" &&
       sessionId &&
       env.COREDOC_CAPTURE_REPOSITORY_SCOPE_KEY &&
+      env.COREDOC_CAPTURE_WORKSPACE_MODE !== "1" &&
       target === MANAGED_CAPTURE_ENDPOINT
     ) {
       try {

@@ -86,6 +86,22 @@ function validHealthChannel(value, { capture = false } = {}) {
   );
 }
 
+function validAttributionHealth(value) {
+  return (
+    exactFields(
+      value,
+      new Set(["pendingCount", "rejectedCount", "lastClaimAt"]),
+    ) &&
+    Number.isInteger(value.pendingCount) &&
+    value.pendingCount >= 0 &&
+    value.pendingCount <= 1_000_000 &&
+    Number.isInteger(value.rejectedCount) &&
+    value.rejectedCount >= 0 &&
+    value.rejectedCount <= 1_000_000 &&
+    validTimestamp(value.lastClaimAt)
+  );
+}
+
 function validHealth(value, expectedWorkspaceId) {
   return (
     exactFields(
@@ -98,6 +114,7 @@ function validHealth(value, expectedWorkspaceId) {
         "state",
         "native",
         "capture",
+        "attribution",
       ]),
     ) &&
     value.schemaVersion === 1 &&
@@ -109,7 +126,8 @@ function validHealth(value, expectedWorkspaceId) {
     value.workspaceId === expectedWorkspaceId &&
     value.state === "ready" &&
     validHealthChannel(value.native) &&
-    validHealthChannel(value.capture, { capture: true })
+    validHealthChannel(value.capture, { capture: true }) &&
+    validAttributionHealth(value.attribution)
   );
 }
 
@@ -221,7 +239,7 @@ export async function ensureManagedRelayAtSessionStart({
 export const BINDING_MISMATCH_NOTICE =
   "Coredoc: the local capture relay port is answering with a different identity; " +
   "telemetry export may not be reaching the managed relay. " +
-  "Re-provision capture from Coredoc Desktop.";
+  "Run capture doctor, then repair the plugin-managed capture agent.";
 
 export async function runSessionStartEnsure({
   write = (line) => process.stdout.write(line),

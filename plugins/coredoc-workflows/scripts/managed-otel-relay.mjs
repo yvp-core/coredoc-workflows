@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomInt, randomUUID } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -10,6 +10,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:http";
@@ -60,6 +61,15 @@ const KEEP_ALIVE_TIMEOUT_MS = 1_000;
 const MANAGED_RELAY_PORT = 43_181;
 const DEFAULT_TIMEOUT_MS = 4_500;
 const OUTBOX_FLUSH_INTERVAL_MS = 30_000;
+const NATIVE_OUTBOX_DIRECTORY_NAME = "native-outbox";
+const NATIVE_OUTBOX_STATE_NAME = "state.json";
+const NATIVE_OUTBOX_RECORD_RE =
+  /^([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.native\.json$/;
+const DEFAULT_NATIVE_OUTBOX_MAX_RECORDS = 512;
+const DEFAULT_NATIVE_OUTBOX_MAX_BYTES = 64 * 1024 * 1024;
+const DEFAULT_NATIVE_OUTBOX_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
+const MAX_NATIVE_OUTBOX_RECORD_BYTES = 26 * 1024 * 1024;
+const MAX_NATIVE_RETRY_DELAY_MS = 60 * 60 * 1_000;
 const OUTBOX_EVENT_FILE_RE = /^([0-9a-f-]{36})\.event\.json$/i;
 const CODEX_CLAIM_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
 const CODEX_BUFFER_TTL_MS = 30_000;
@@ -74,6 +84,41 @@ const WORKSPACE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
 const REPOSITORY_SEGMENT_RE = /^[a-zA-Z0-9._-]+$/;
 const ISO_TIMESTAMP_RE =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+const AGENT_HEALTH_TOKEN_RE = /^[A-Za-z0-9_-]{32,256}$/;
+const RUNTIME_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
+const CAPTURE_AGENT_STATE_MARKER = "coredoc-workflows.capture-agent.v1";
+const ARTIFACT_OUTBOX_RECORD_RE =
+  /^revision-\d{6}-cda_[0-9a-f-]+-[0-9a-f]{64}\.json$/;
+const ARTIFACT_QUARANTINE_RECORD_RE =
+  /^quarantine-\d{6}-cda_[0-9a-f-]+-[0-9a-f]{64}\.json$/;
+const MAX_HEALTH_QUEUE_ENTRIES = 10_000;
+const MAX_HEALTH_QUEUE_FILE_BYTES = 26 * 1024 * 1024;
+const MAX_ARTIFACT_HEALTH_STATE_BYTES = 64 * 1024;
+const ARTIFACT_HEALTH_ERROR_CODES = new Set([
+  "AUTH_REJECTED",
+  "OUTBOX_OVERFLOW",
+  "REPOSITORY_UNAVAILABLE",
+  "TRANSPORT_UNAVAILABLE",
+  "CONFIG_CONFLICT",
+]);
+const HEALTH_DEGRADED_REASONS = new Set([
+  "ATTRIBUTION_PENDING",
+  "ATTRIBUTION_REJECTED",
+  "AUTH_REJECTED",
+  "CHANNEL_DEGRADED",
+  "CLAUDE_INGRESS_UNCONFIGURED",
+  "CODEX_INGRESS_UNCONFIGURED",
+  "CONFIG_CONFLICT",
+  "CONFIG_UNAVAILABLE",
+  "NATIVE_OUTBOX_UNAVAILABLE",
+  "QUEUE_PENDING",
+  "QUEUE_UNSAFE",
+  "REPOSITORY_ATTRIBUTION_DEGRADED",
+  "REPOSITORY_UNAVAILABLE",
+  "TRANSPORT_UNAVAILABLE",
+  "UPSTREAM_REJECTED",
+  "WORKSPACE_CONFLICT",
+]);
 
 export class ManagedRelayError extends Error {
   constructor(code) {
@@ -175,6 +220,7 @@ export function relayBinding(input) {
       "bindingNonceHash",
       "host",
       "workspaceId",
+      "workspaceMode",
       "repositoryKey",
       "repositoryScopeKey",
       "profileName",
@@ -198,14 +244,26 @@ export function relayBinding(input) {
   ) {
     fail("INVALID_CONFIG");
   }
+  const workspaceMode = value.workspaceMode === true;
+  if (
+    (value.workspaceMode !== undefined && !workspaceMode) ||
+    (workspaceMode &&
+      (value.repositoryKey !== undefined ||
+        value.repositoryScopeKey !== undefined ||
+        value.profileName !== undefined))
+  ) {
+    fail("INVALID_CONFIG");
+  }
   return {
     schemaVersion: CONFIG_VERSION,
     bindingId: value.bindingId.toLowerCase(),
     bindingNonceHash: value.bindingNonceHash,
     host: value.host,
     workspaceId: value.workspaceId,
-    repositoryKey: normalizedRepositoryKey(value.repositoryKey),
-    ...(value.host === "codex"
+    ...(workspaceMode
+      ? { workspaceMode: true }
+      : { repositoryKey: normalizedRepositoryKey(value.repositoryKey) }),
+    ...(!workspaceMode && value.host === "codex"
       ? {
           repositoryScopeKey:
             typeof value.repositoryScopeKey === "string" &&
@@ -238,6 +296,35 @@ export function relayBinding(input) {
   };
 }
 
+export function managedCaptureBindingStorageHash({
+  bindingId,
+  bindingNonceHash,
+  host,
+  workspaceMode = false,
+} = {}) {
+  if (
+    (host !== "claude-code" && host !== "codex") ||
+    typeof workspaceMode !== "boolean"
+  ) {
+    fail("INVALID_CONFIG");
+  }
+  if (workspaceMode || host === "codex") {
+    if (typeof bindingId !== "string" || !UUID_RE.test(bindingId)) {
+      fail("INVALID_CONFIG");
+    }
+    return sha256BindingNonce(bindingId.toLowerCase());
+  }
+  if (typeof bindingNonceHash !== "string" || !SHA256_RE.test(bindingNonceHash)) {
+    fail("INVALID_CONFIG");
+  }
+  return bindingNonceHash;
+}
+
+export function managedRelayBindingStorageHash(input) {
+  const binding = relayBinding(input);
+  return managedCaptureBindingStorageHash(binding);
+}
+
 export function managedRelayConfig(input) {
   const value = exactObject(
     input,
@@ -267,7 +354,9 @@ export function managedRelayConfig(input) {
   const codexNonces = new Set(
     codex.map(({ bindingNonceHash }) => bindingNonceHash)
   );
-  const codexScopes = codex.map(({ repositoryScopeKey }) => repositoryScopeKey);
+  const codexScopes = codex
+    .filter(({ workspaceMode }) => workspaceMode !== true)
+    .map(({ repositoryScopeKey }) => repositoryScopeKey);
   const claudeNonces = new Set(
     bindings
       .filter(({ host }) => host === "claude-code")
@@ -276,6 +365,14 @@ export function managedRelayConfig(input) {
   if (
     codexNonces.size > 1 ||
     new Set(codexScopes).size !== codexScopes.length ||
+    (codex.some(({ workspaceMode }) => workspaceMode === true) &&
+      codex.length !== 1) ||
+    new Set(
+      bindings
+        .filter(({ workspaceMode }) => workspaceMode === true)
+        .map(({ host }) => host)
+    ).size !==
+      bindings.filter(({ workspaceMode }) => workspaceMode === true).length ||
     [...codexNonces].some((nonce) => claudeNonces.has(nonce))
   )
     fail("INVALID_CONFIG");
@@ -469,6 +566,190 @@ function healthSnapshot(binding, state, attribution) {
   };
 }
 
+function agentHealthSnapshot(value) {
+  if (value === undefined) return null;
+  const candidate = exactObject(
+    value,
+    new Set([
+      "token",
+      "runtimeVersion",
+      "runtimeDigest",
+      "protocolVersion",
+      "configSchemaVersion",
+    ]),
+    "INVALID_CONFIG"
+  );
+  if (
+    typeof candidate.token !== "string" ||
+    !AGENT_HEALTH_TOKEN_RE.test(candidate.token) ||
+    typeof candidate.runtimeVersion !== "string" ||
+    !RUNTIME_VERSION_RE.test(candidate.runtimeVersion) ||
+    typeof candidate.runtimeDigest !== "string" ||
+    !SHA256_RE.test(candidate.runtimeDigest) ||
+    candidate.protocolVersion !== 1 ||
+    candidate.configSchemaVersion !== CONFIG_VERSION
+  ) {
+    fail("INVALID_CONFIG");
+  }
+  return {
+    token: candidate.token,
+    identity: {
+      schemaVersion: 2,
+      runtimeVersion: candidate.runtimeVersion,
+      runtimeDigest: candidate.runtimeDigest,
+      protocolVersion: 1,
+      configSchemaVersion: CONFIG_VERSION,
+    },
+  };
+}
+
+function safeHealthQueueDirectory(path) {
+  const metadata = lstatSync(path);
+  if (
+    !metadata.isDirectory() ||
+    metadata.isSymbolicLink() ||
+    (metadata.mode & 0o022) !== 0 ||
+    (typeof process.getuid === "function" && metadata.uid !== process.getuid())
+  ) {
+    fail("QUEUE_UNSAFE");
+  }
+}
+
+function safeHealthQueueFile(path) {
+  const metadata = lstatSync(path);
+  if (
+    !metadata.isFile() ||
+    metadata.isSymbolicLink() ||
+    metadata.nlink !== 1 ||
+    (metadata.mode & 0o077) !== 0 ||
+    metadata.size > MAX_HEALTH_QUEUE_FILE_BYTES ||
+    (typeof process.getuid === "function" && metadata.uid !== process.getuid())
+  ) {
+    fail("QUEUE_UNSAFE");
+  }
+}
+
+function bindingQueueCount(root, kind) {
+  if (!existsSync(root)) return 0;
+  safeHealthQueueDirectory(root);
+  let count = 0;
+  let visited = 0;
+  for (const bindingHash of readdirSync(root).sort()) {
+    if (!SHA256_RE.test(bindingHash)) fail("QUEUE_UNSAFE");
+    const directory = join(root, bindingHash);
+    safeHealthQueueDirectory(directory);
+    for (const name of readdirSync(directory).sort()) {
+      visited += 1;
+      if (visited > MAX_HEALTH_QUEUE_ENTRIES) fail("QUEUE_UNSAFE");
+      const path = join(directory, name);
+      safeHealthQueueFile(path);
+      if (kind === "semantic") {
+        if (OUTBOX_EVENT_FILE_RE.test(name)) count += 1;
+        else if (name !== "capture-health.json") fail("QUEUE_UNSAFE");
+      } else if (ARTIFACT_OUTBOX_RECORD_RE.test(name)) {
+        count += 1;
+      } else if (
+        name !== "state.json" &&
+        !ARTIFACT_QUARANTINE_RECORD_RE.test(name)
+      ) {
+        fail("QUEUE_UNSAFE");
+      }
+    }
+  }
+  return count;
+}
+
+function artifactQueueErrorCodes(root) {
+  if (!existsSync(root)) return new Set();
+  safeHealthQueueDirectory(root);
+  const errors = new Set();
+  for (const bindingHash of readdirSync(root).sort()) {
+    if (!SHA256_RE.test(bindingHash)) fail("QUEUE_UNSAFE");
+    const directory = join(root, bindingHash);
+    safeHealthQueueDirectory(directory);
+    const statePath = join(directory, "state.json");
+    if (!existsSync(statePath)) continue;
+    safeHealthQueueFile(statePath);
+    if (lstatSync(statePath).size > MAX_ARTIFACT_HEALTH_STATE_BYTES) {
+      fail("QUEUE_UNSAFE");
+    }
+    let state;
+    try {
+      state = JSON.parse(readFileSync(statePath, "utf8"));
+    } catch {
+      fail("QUEUE_UNSAFE");
+    }
+    const fields = new Set([
+      "schemaVersion",
+      "nextSequence",
+      "artifacts",
+      "quarantined",
+      "errorCode",
+    ]);
+    if (
+      !state ||
+      typeof state !== "object" ||
+      Array.isArray(state) ||
+      Object.keys(state).some((field) => !fields.has(field)) ||
+      state.schemaVersion !== 1 ||
+      !Number.isInteger(state.nextSequence) ||
+      state.nextSequence < 1 ||
+      state.nextSequence > 999_999 ||
+      !state.artifacts ||
+      typeof state.artifacts !== "object" ||
+      Array.isArray(state.artifacts) ||
+      !Array.isArray(state.quarantined ?? []) ||
+      (state.errorCode !== null &&
+        !ARTIFACT_HEALTH_ERROR_CODES.has(state.errorCode))
+    ) {
+      fail("QUEUE_UNSAFE");
+    }
+    if (state.errorCode !== null) errors.add(state.errorCode);
+  }
+  return errors;
+}
+
+function agentQueueCount(configPath) {
+  const relayRoot = dirname(configPath);
+  if (
+    basename(configPath) !== "relay.json" ||
+    basename(relayRoot) !== "capture-relay"
+  ) {
+    return 0;
+  }
+  const root = join(dirname(relayRoot), "capture-agent", "outbox");
+  if (!existsSync(root)) return 0;
+  let count = 0;
+  let visited = 0;
+  const visit = (directory) => {
+    safeHealthQueueDirectory(directory);
+    for (const name of readdirSync(directory).sort()) {
+      visited += 1;
+      if (visited > MAX_HEALTH_QUEUE_ENTRIES) fail("QUEUE_UNSAFE");
+      const path = join(directory, name);
+      const metadata = lstatSync(path);
+      if (metadata.isSymbolicLink()) fail("QUEUE_UNSAFE");
+      if (metadata.isDirectory()) {
+        visit(path);
+      } else {
+        safeHealthQueueFile(path);
+        if (!name.endsWith(".json")) fail("QUEUE_UNSAFE");
+        count += 1;
+      }
+    }
+  };
+  visit(root);
+  return count;
+}
+
+function healthReasonForChannelError(code) {
+  if (code === null) return null;
+  if (HEALTH_DEGRADED_REASONS.has(code)) return code;
+  if (code === "UPSTREAM_INVALID") return "UPSTREAM_REJECTED";
+  if (code === "BINDING_MISMATCH") return "CONFIG_CONFLICT";
+  return "CHANNEL_DEGRADED";
+}
+
 function isTimestamp(value) {
   return (
     typeof value === "string" &&
@@ -477,7 +758,574 @@ function isTimestamp(value) {
   );
 }
 
-function captureBatch(input, binding) {
+function defaultNativeOutboxRetryDelay(attempt) {
+  const base = Math.min(60_000, 1_000 * 2 ** Math.min(attempt - 1, 6));
+  return base + randomInt(0, Math.floor(base / 4) + 1);
+}
+
+function ensureNativeOutboxDirectory(path, { create = false } = {}) {
+  if (!existsSync(path)) {
+    if (!create) return false;
+    try {
+      mkdirSync(path, { mode: 0o700 });
+      chmodSync(path, 0o700);
+    } catch {
+      fail("NATIVE_OUTBOX_UNAVAILABLE");
+    }
+  }
+  let metadata;
+  try {
+    metadata = lstatSync(path);
+  } catch {
+    fail("NATIVE_OUTBOX_UNAVAILABLE");
+  }
+  if (
+    !metadata.isDirectory() ||
+    metadata.isSymbolicLink() ||
+    (metadata.mode & 0o777) !== 0o700 ||
+    (typeof process.getuid === "function" && metadata.uid !== process.getuid())
+  ) {
+    fail("NATIVE_OUTBOX_UNAVAILABLE");
+  }
+  return true;
+}
+
+function nativeOutboxFile(path, maximum = MAX_NATIVE_OUTBOX_RECORD_BYTES) {
+  let metadata;
+  try {
+    metadata = lstatSync(path);
+  } catch {
+    fail("NATIVE_OUTBOX_UNAVAILABLE");
+  }
+  if (
+    !metadata.isFile() ||
+    metadata.isSymbolicLink() ||
+    metadata.nlink !== 1 ||
+    (metadata.mode & 0o777) !== 0o600 ||
+    metadata.size > maximum ||
+    (typeof process.getuid === "function" && metadata.uid !== process.getuid())
+  ) {
+    fail("NATIVE_OUTBOX_UNAVAILABLE");
+  }
+  return metadata;
+}
+
+function atomicNativeOutboxWrite(path, content) {
+  const temporary = join(dirname(path), `.native-${randomUUID()}.tmp`);
+  try {
+    if (existsSync(path) && lstatSync(path).isSymbolicLink()) {
+      fail("NATIVE_OUTBOX_UNAVAILABLE");
+    }
+    writeFileSync(temporary, content, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    chmodSync(temporary, 0o600);
+    renameSync(temporary, path);
+    chmodSync(path, 0o600);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    if (error instanceof ManagedRelayError) throw error;
+    fail("NATIVE_OUTBOX_UNAVAILABLE");
+  }
+}
+
+function sanitizedNativePayload(input, host) {
+  if (
+    !input ||
+    typeof input !== "object" ||
+    Array.isArray(input) ||
+    Object.keys(input).length !== 1 ||
+    !Array.isArray(input.resourceLogs) ||
+    input.resourceLogs.length !== 1
+  ) {
+    fail("NATIVE_OUTBOX_UNAVAILABLE");
+  }
+  const resourceLog = input.resourceLogs[0];
+  const resourceAttributes = resourceLog?.resource?.attributes;
+  const scopeLogs = resourceLog?.scopeLogs;
+  const attributeValue = (attributes, key) =>
+    attributes?.find((entry) => entry?.key === key)?.value?.stringValue;
+  if (
+    attributeValue(resourceAttributes, "service.name") !==
+      "coredoc-native-sanitizer" ||
+    attributeValue(resourceAttributes, "coredoc.host") !== host ||
+    !Array.isArray(scopeLogs) ||
+    scopeLogs.length !== 1 ||
+    scopeLogs[0]?.scope?.name !== `coredoc.${host}.sanitized` ||
+    !Array.isArray(scopeLogs[0]?.logRecords) ||
+    scopeLogs[0].logRecords.length < 1
+  ) {
+    fail("NATIVE_OUTBOX_UNAVAILABLE");
+  }
+  const forbiddenKeys = new Set([
+    "prompt",
+    "path",
+    "file",
+    "cwd",
+    "command",
+    "argument",
+    "arguments",
+    "tool_input",
+    "tool_output",
+    "message",
+    "content",
+    "transcript",
+  ]);
+  const inspect = (value) => {
+    if (Array.isArray(value)) {
+      for (const entry of value) inspect(entry);
+      return;
+    }
+    if (!value || typeof value !== "object") {
+      if (
+        typeof value === "string" &&
+        (/Bearer\s/i.test(value) || value.includes("\0") || value.includes("/Users/"))
+      ) {
+        fail("NATIVE_OUTBOX_UNAVAILABLE");
+      }
+      return;
+    }
+    for (const [key, nested] of Object.entries(value)) {
+      if (forbiddenKeys.has(key.toLowerCase())) {
+        fail("NATIVE_OUTBOX_UNAVAILABLE");
+      }
+      inspect(nested);
+    }
+  };
+  inspect(input);
+  try {
+    return JSON.parse(JSON.stringify(input));
+  } catch {
+    fail("NATIVE_OUTBOX_UNAVAILABLE");
+  }
+}
+
+function createNativeOutboxStore({
+  configPath,
+  maxRecords,
+  maxBytes,
+  maxAgeMs,
+  recordId,
+  retryDelayMs,
+  readFile,
+}) {
+  if (
+    !Number.isInteger(maxRecords) ||
+    maxRecords < 1 ||
+    maxRecords > 10_000 ||
+    !Number.isInteger(maxBytes) ||
+    maxBytes < 1 ||
+    maxBytes > 256 * 1024 * 1024 ||
+    !Number.isInteger(maxAgeMs) ||
+    maxAgeMs < 1 ||
+    maxAgeMs > 30 * 24 * 60 * 60 * 1_000 ||
+    typeof recordId !== "function" ||
+    typeof retryDelayMs !== "function" ||
+    typeof readFile !== "function"
+  ) {
+    fail("INVALID_CONFIG");
+  }
+  const root = join(dirname(configPath), NATIVE_OUTBOX_DIRECTORY_NAME);
+  const bindingDirectory = (bindingId) => join(root, bindingId);
+  const statePath = (bindingId) =>
+    join(bindingDirectory(bindingId), NATIVE_OUTBOX_STATE_NAME);
+  const recordPath = (bindingId, id) =>
+    join(bindingDirectory(bindingId), `${id}.native.json`);
+
+  function emptyState() {
+    return {
+      schemaVersion: 1,
+      evictedCount: 0,
+      lastEvictionReason: null,
+      lastEvictedAt: null,
+    };
+  }
+
+  function readState(bindingId) {
+    const path = statePath(bindingId);
+    if (!existsSync(path)) return emptyState();
+    nativeOutboxFile(path, 16 * 1024);
+    let value;
+    try {
+      value = JSON.parse(readFile(path, "utf8"));
+    } catch {
+      fail("NATIVE_OUTBOX_UNAVAILABLE");
+    }
+    if (
+      !value ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      Object.keys(value).length !== 4 ||
+      value.schemaVersion !== 1 ||
+      !Number.isInteger(value.evictedCount) ||
+      value.evictedCount < 0 ||
+      value.evictedCount > 1_000_000 ||
+      !new Set([null, "age", "bytes", "count"]).has(
+        value.lastEvictionReason
+      ) ||
+      (value.lastEvictedAt !== null && !isTimestamp(value.lastEvictedAt))
+    ) {
+      fail("NATIVE_OUTBOX_UNAVAILABLE");
+    }
+    return value;
+  }
+
+  function writeState(bindingId, value) {
+    atomicNativeOutboxWrite(
+      statePath(bindingId),
+      `${JSON.stringify(value)}\n`
+    );
+  }
+
+  function parsedRecord(path, expectedId) {
+    const metadata = nativeOutboxFile(path);
+    let value;
+    try {
+      value = JSON.parse(readFile(path, "utf8"));
+    } catch {
+      fail("NATIVE_OUTBOX_UNAVAILABLE");
+    }
+    if (
+      !value ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      Object.keys(value).length !== 10 ||
+      value.schemaVersion !== 1 ||
+      typeof value.recordId !== "string" ||
+      !UUID_RE.test(value.recordId) ||
+      value.recordId.toLowerCase() !== expectedId ||
+      typeof value.bindingId !== "string" ||
+      !UUID_RE.test(value.bindingId) ||
+      (value.host !== "claude-code" && value.host !== "codex") ||
+      typeof value.workspaceId !== "string" ||
+      !WORKSPACE_ID_RE.test(value.workspaceId) ||
+      !isTimestamp(value.enqueuedAt) ||
+      !Number.isInteger(value.attempts) ||
+      value.attempts < 0 ||
+      value.attempts > 1_000 ||
+      !isTimestamp(value.nextAttemptAt) ||
+      (value.lastErrorCode !== null &&
+        (typeof value.lastErrorCode !== "string" ||
+          !/^[A-Z][A-Z0-9_]{0,63}$/.test(value.lastErrorCode)))
+    ) {
+      fail("NATIVE_OUTBOX_UNAVAILABLE");
+    }
+    value.payload = sanitizedNativePayload(value.payload, value.host);
+    return { path, size: metadata.size, record: value };
+  }
+
+  function loadRecords() {
+    if (!ensureNativeOutboxDirectory(root)) return [];
+    const records = [];
+    for (const bindingId of readdirSync(root).sort()) {
+      if (!UUID_RE.test(bindingId)) fail("NATIVE_OUTBOX_UNAVAILABLE");
+      const directory = bindingDirectory(bindingId);
+      ensureNativeOutboxDirectory(directory);
+      for (const name of readdirSync(directory).sort()) {
+        if (name === NATIVE_OUTBOX_STATE_NAME) continue;
+        if (/^\.native-[0-9a-f-]{36}\.tmp$/.test(name)) {
+          nativeOutboxFile(join(directory, name));
+          unlinkSync(join(directory, name));
+          continue;
+        }
+        const match = NATIVE_OUTBOX_RECORD_RE.exec(name);
+        if (!match) fail("NATIVE_OUTBOX_UNAVAILABLE");
+        const entry = parsedRecord(join(directory, name), match[1]);
+        if (entry.record.bindingId !== bindingId) {
+          fail("NATIVE_OUTBOX_UNAVAILABLE");
+        }
+        records.push(entry);
+      }
+    }
+    return records.sort(
+      (left, right) =>
+        left.record.enqueuedAt.localeCompare(right.record.enqueuedAt) ||
+        left.record.recordId.localeCompare(right.record.recordId)
+    );
+  }
+
+  const recordKey = ({ bindingId, recordId }) => `${bindingId}/${recordId}`;
+  const cachedRecords = new Map();
+  for (const entry of loadRecords()) {
+    const key = recordKey(entry.record);
+    if (cachedRecords.has(key)) fail("NATIVE_OUTBOX_UNAVAILABLE");
+    cachedRecords.set(key, entry);
+  }
+  const orderedRecords = () =>
+    [...cachedRecords.values()].sort(
+      (left, right) =>
+        left.record.enqueuedAt.localeCompare(right.record.enqueuedAt) ||
+        left.record.recordId.localeCompare(right.record.recordId)
+    );
+
+  function evict(entry, reason, at) {
+    const key = recordKey(entry.record);
+    if (!existsSync(entry.path)) {
+      cachedRecords.delete(key);
+      return;
+    }
+    const current = parsedRecord(entry.path, entry.record.recordId);
+    if (current.record.bindingId !== entry.record.bindingId) {
+      fail("NATIVE_OUTBOX_UNAVAILABLE");
+    }
+    const bindingId = entry.record.bindingId;
+    const state = readState(bindingId);
+    writeState(bindingId, {
+      schemaVersion: 1,
+      evictedCount: Math.min(1_000_000, state.evictedCount + 1),
+      lastEvictionReason: reason,
+      lastEvictedAt: at,
+    });
+    unlinkSync(entry.path);
+    cachedRecords.delete(key);
+  }
+
+  function pruneAge(records, at) {
+    const atMs = Date.parse(at);
+    const retained = [];
+    for (const entry of records) {
+      if (atMs - Date.parse(entry.record.enqueuedAt) >= maxAgeMs) {
+        evict(entry, "age", at);
+      } else {
+        retained.push(entry);
+      }
+    }
+    return retained;
+  }
+
+  function admit({ binding, payload, at }) {
+    try {
+      if (!isTimestamp(at)) fail("NATIVE_OUTBOX_UNAVAILABLE");
+      const id = recordId();
+      if (typeof id !== "string" || !UUID_RE.test(id)) {
+        fail("NATIVE_OUTBOX_UNAVAILABLE");
+      }
+      const normalizedId = id.toLowerCase();
+      const record = {
+        schemaVersion: 1,
+        recordId: normalizedId,
+        bindingId: binding.bindingId,
+        host: binding.host,
+        workspaceId: binding.workspaceId,
+        enqueuedAt: at,
+        attempts: 0,
+        nextAttemptAt: at,
+        lastErrorCode: null,
+        payload: sanitizedNativePayload(payload, binding.host),
+      };
+      const content = `${JSON.stringify(record)}\n`;
+      const bytes = Buffer.byteLength(content);
+      if (bytes > maxBytes || bytes > MAX_NATIVE_OUTBOX_RECORD_BYTES) {
+        fail("NATIVE_OUTBOX_UNAVAILABLE");
+      }
+      ensureNativeOutboxDirectory(root, { create: true });
+      ensureNativeOutboxDirectory(bindingDirectory(binding.bindingId), {
+        create: true,
+      });
+      let records = pruneAge(orderedRecords(), at);
+      let totalBytes = records.reduce((total, entry) => total + entry.size, 0);
+      while (
+        records.length + 1 > maxRecords ||
+        totalBytes + bytes > maxBytes
+      ) {
+        const oldest = records.shift();
+        if (!oldest) fail("NATIVE_OUTBOX_UNAVAILABLE");
+        const reason = records.length + 2 > maxRecords ? "count" : "bytes";
+        evict(oldest, reason, at);
+        totalBytes -= oldest.size;
+      }
+      const path = recordPath(binding.bindingId, normalizedId);
+      const key = recordKey(record);
+      if (cachedRecords.has(key) || existsSync(path)) {
+        fail("NATIVE_OUTBOX_UNAVAILABLE");
+      }
+      atomicNativeOutboxWrite(path, content);
+      const entry = { path, size: bytes, record };
+      cachedRecords.set(key, entry);
+      return entry;
+    } catch {
+      throw new ManagedRelayError("NATIVE_OUTBOX_ADMISSION_FAILED");
+    }
+  }
+
+  function ready(at) {
+    if (!isTimestamp(at)) fail("NATIVE_OUTBOX_UNAVAILABLE");
+    return pruneAge(orderedRecords(), at)
+      .filter((entry) => Date.parse(entry.record.nextAttemptAt) <= Date.parse(at))
+      .slice(0, 64);
+  }
+
+  function acknowledge(entry) {
+    const key = recordKey(entry.record);
+    if (!existsSync(entry.path)) {
+      cachedRecords.delete(key);
+      return;
+    }
+    const current = parsedRecord(entry.path, entry.record.recordId);
+    if (current.record.bindingId !== entry.record.bindingId) {
+      fail("NATIVE_OUTBOX_UNAVAILABLE");
+    }
+    unlinkSync(entry.path);
+    cachedRecords.delete(key);
+  }
+
+  function defer(entry, code, at) {
+    const key = recordKey(entry.record);
+    if (!existsSync(entry.path)) {
+      cachedRecords.delete(key);
+      return;
+    }
+    if (!isTimestamp(at) || !/^[A-Z][A-Z0-9_]{0,63}$/.test(code)) {
+      fail("NATIVE_OUTBOX_UNAVAILABLE");
+    }
+    const current = parsedRecord(entry.path, entry.record.recordId);
+    const attempts = Math.min(1_000, current.record.attempts + 1);
+    const delay = retryDelayMs(attempts);
+    if (
+      !Number.isInteger(delay) ||
+      delay < 0 ||
+      delay > MAX_NATIVE_RETRY_DELAY_MS
+    ) {
+      fail("NATIVE_OUTBOX_UNAVAILABLE");
+    }
+    const record = {
+      ...current.record,
+      attempts,
+      nextAttemptAt: new Date(Date.parse(at) + delay).toISOString(),
+      lastErrorCode: code,
+    };
+    const content = `${JSON.stringify(record)}\n`;
+    atomicNativeOutboxWrite(entry.path, content);
+    cachedRecords.set(key, {
+      path: entry.path,
+      size: Buffer.byteLength(content),
+      record,
+    });
+  }
+
+  function diagnostics(bindingId) {
+    if (typeof bindingId !== "string" || !UUID_RE.test(bindingId)) {
+      fail("NATIVE_OUTBOX_UNAVAILABLE");
+    }
+    const records = orderedRecords().filter(
+      (entry) => entry.record.bindingId === bindingId
+    );
+    const state = existsSync(bindingDirectory(bindingId))
+      ? readState(bindingId)
+      : emptyState();
+    return {
+      schemaVersion: 1,
+      bindingId,
+      pendingCount: records.length,
+      pendingBytes: records.reduce((total, entry) => total + entry.size, 0),
+      evictedCount: state.evictedCount,
+      lastEvictionReason: state.lastEvictionReason,
+      lastEvictedAt: state.lastEvictedAt,
+    };
+  }
+
+  function diagnosticsAll() {
+    if (!ensureNativeOutboxDirectory(root)) return { pendingCount: 0 };
+    let pendingCount = 0;
+    let visited = 0;
+    for (const bindingId of readdirSync(root).sort()) {
+      visited += 1;
+      if (visited > MAX_HEALTH_QUEUE_ENTRIES || !UUID_RE.test(bindingId)) {
+        fail("NATIVE_OUTBOX_UNAVAILABLE");
+      }
+      const directory = bindingDirectory(bindingId);
+      ensureNativeOutboxDirectory(directory);
+      for (const name of readdirSync(directory).sort()) {
+        visited += 1;
+        if (visited > MAX_HEALTH_QUEUE_ENTRIES) {
+          fail("NATIVE_OUTBOX_UNAVAILABLE");
+        }
+        const path = join(directory, name);
+        if (name === NATIVE_OUTBOX_STATE_NAME) {
+          readState(bindingId);
+          continue;
+        }
+        if (/^\.native-[0-9a-f-]{36}\.tmp$/.test(name)) {
+          nativeOutboxFile(path);
+          continue;
+        }
+        if (!NATIVE_OUTBOX_RECORD_RE.test(name)) {
+          fail("NATIVE_OUTBOX_UNAVAILABLE");
+        }
+        nativeOutboxFile(path);
+        pendingCount += 1;
+      }
+    }
+    return { pendingCount };
+  }
+
+  return { acknowledge, admit, defer, diagnostics, diagnosticsAll, ready };
+}
+
+function repositoryResolverEndpoint(binding) {
+  const endpoint = new URL(binding.captureForwardEndpoint);
+  endpoint.pathname = `/api/v1/workspaces/${binding.workspaceId}/capture/v1/repositories/resolve`;
+  return endpoint.href;
+}
+
+async function resolveWorkspaceRepository(
+  binding,
+  repositoryKey,
+  { fetchImpl, timeoutMs, allowDegraded }
+) {
+  let response;
+  try {
+    response = await fetchImpl(repositoryResolverEndpoint(binding), {
+      method: "POST",
+      redirect: "error",
+      headers: {
+        "content-type": "application/json",
+        Authorization: binding.cloudAuthorization,
+      },
+      body: JSON.stringify({ repositoryKey }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    if (allowDegraded) return { status: "degraded" };
+    fail("REPOSITORY_UNAVAILABLE");
+  }
+  if (response.status >= 500) {
+    await cancelResponseBody(response);
+    if (allowDegraded) return { status: "degraded" };
+    fail("REPOSITORY_UNAVAILABLE");
+  }
+  if (!response.ok) {
+    await cancelResponseBody(response);
+    if (response.status === 401 || response.status === 403) {
+      fail("AUTH_REJECTED");
+    }
+    fail("REPOSITORY_UNAVAILABLE");
+  }
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    fail("REPOSITORY_UNAVAILABLE");
+  }
+  if (
+    result?.status === "unregistered" &&
+    Object.keys(result).length === 1
+  ) {
+    return { status: "unregistered" };
+  }
+  if (
+    result?.status === "resolved" &&
+    Object.keys(result).length === 2 &&
+    result.repositoryKey === repositoryKey
+  ) {
+    return { status: "resolved", repositoryKey };
+  }
+  fail("REPOSITORY_UNAVAILABLE");
+}
+
+async function captureBatch(input, binding, { fetchImpl, timeoutMs }) {
   const candidate = exactObject(input, new Set(["events"]), "INVALID_CAPTURE");
   if (
     !Array.isArray(candidate.events) ||
@@ -489,6 +1337,8 @@ function captureBatch(input, binding) {
   const attemptedEventIds = [];
   const forwarded = [];
   const rejected = [];
+  const resolutions = new Map();
+  let repositoryAttributionDegraded = false;
   for (const inputEvent of candidate.events) {
     let event;
     try {
@@ -506,6 +1356,30 @@ function captureBatch(input, binding) {
     attemptedEventIds.push(event.eventId);
     if (event.host !== binding.host) {
       rejected.push({ eventId: event.eventId, code: "INVALID_EVENT" });
+    } else if (binding.workspaceMode === true) {
+      if (event.repositoryKey === undefined) {
+        forwarded.push(event);
+        continue;
+      }
+      let resolution = resolutions.get(event.repositoryKey);
+      if (!resolution) {
+        resolution = resolveWorkspaceRepository(binding, event.repositoryKey, {
+          fetchImpl,
+          timeoutMs,
+          allowDegraded: true,
+        });
+        resolutions.set(event.repositoryKey, resolution);
+      }
+      const result = await resolution;
+      if (result.status === "resolved") {
+        forwarded.push(event);
+      } else {
+        const { repositoryKey: _omitted, ...workspaceEvent } = event;
+        forwarded.push(workspaceEvent);
+        if (result.status === "degraded") {
+          repositoryAttributionDegraded = true;
+        }
+      }
     } else if (
       (binding.host === "codex" && event.repositoryKey === undefined) ||
       (event.repositoryKey !== undefined &&
@@ -519,7 +1393,12 @@ function captureBatch(input, binding) {
       forwarded.push(event);
     }
   }
-  return { events: forwarded, attemptedEventIds, rejected };
+  return {
+    events: forwarded,
+    attemptedEventIds,
+    rejected,
+    repositoryAttributionDegraded,
+  };
 }
 
 async function cancelResponseBody(response) {
@@ -528,6 +1407,38 @@ async function cancelResponseBody(response) {
   } catch {
     // Cleanup must not replace the bounded upstream result exposed by the relay.
   }
+}
+
+function captureProbeEndpoint(binding) {
+  const endpoint = new URL(binding.captureForwardEndpoint);
+  endpoint.pathname = `/api/v1/workspaces/${binding.workspaceId}/capture/v1/probe`;
+  return endpoint.href;
+}
+
+async function captureProbeError(response) {
+  if (response.status === 401 || response.status === 403) {
+    await cancelResponseBody(response);
+    return "AUTH_REJECTED";
+  }
+  if (response.status === 200) {
+    try {
+      const body = await response.json();
+      if (
+        body &&
+        typeof body === "object" &&
+        !Array.isArray(body) &&
+        Object.keys(body).length === 1 &&
+        body.status === "ready"
+      ) {
+        return null;
+      }
+    } catch {
+      // A non-contract body proves neither authentication nor capture readiness.
+    }
+    return "TRANSPORT_UNAVAILABLE";
+  }
+  await cancelResponseBody(response);
+  return "TRANSPORT_UNAVAILABLE";
 }
 
 async function forward(binding, channel, body, fetchImpl, timeoutMs) {
@@ -598,6 +1509,7 @@ function failureStatus(code) {
   if (code === "BINDING_MISMATCH") return 401;
   if (code === "AUTH_REJECTED") return 403;
   if (code === "CONFIG_CONFLICT") return 409;
+  if (code === "REPOSITORY_UNAVAILABLE") return 503;
   if (code === "PAYLOAD_TOO_LARGE") return 413;
   if (
     code === "INVALID_CAPTURE" ||
@@ -615,17 +1527,168 @@ function failureStatus(code) {
 
 export function createManagedRelay({
   configPath,
+  agentHealth,
   fetchImpl = fetch,
   now = () => new Date().toISOString(),
   timeoutMs = DEFAULT_TIMEOUT_MS,
   outboxFlushIntervalMs = OUTBOX_FLUSH_INTERVAL_MS,
+  nativeOutboxFlushIntervalMs = OUTBOX_FLUSH_INTERVAL_MS,
+  nativeOutboxMaxRecords = DEFAULT_NATIVE_OUTBOX_MAX_RECORDS,
+  nativeOutboxMaxBytes = DEFAULT_NATIVE_OUTBOX_MAX_BYTES,
+  nativeOutboxMaxAgeMs = DEFAULT_NATIVE_OUTBOX_MAX_AGE_MS,
+  nativeOutboxRecordId = randomUUID,
+  nativeOutboxRetryDelayMs = defaultNativeOutboxRetryDelay,
+  nativeOutboxReadFileSync = readFileSync,
 } = {}) {
   if (typeof configPath !== "string" || configPath.length === 0) {
     fail("INVALID_CONFIG");
   }
+  if (
+    !Number.isInteger(nativeOutboxFlushIntervalMs) ||
+    nativeOutboxFlushIntervalMs < 10 ||
+    nativeOutboxFlushIntervalMs > 60 * 60 * 1_000
+  ) {
+    fail("INVALID_CONFIG");
+  }
+  const healthV2 = agentHealthSnapshot(agentHealth);
+  const nativeOutbox = createNativeOutboxStore({
+    configPath,
+    maxRecords: nativeOutboxMaxRecords,
+    maxBytes: nativeOutboxMaxBytes,
+    maxAgeMs: nativeOutboxMaxAgeMs,
+    recordId: nativeOutboxRecordId,
+    retryDelayMs: nativeOutboxRetryDelayMs,
+    readFile: nativeOutboxReadFileSync,
+  });
+  const nativeOutboxInFlight = new Set();
   const states = new Map();
   const attributionPath = codexAttributionStatePath(configPath);
   const journalPath = join(dirname(configPath), CODEX_JOURNAL_NAME);
+
+  function queueCounts() {
+    const counts = {};
+    let unsafe = false;
+    let artifactErrors = new Set();
+    const inspect = (name, operation) => {
+      try {
+        counts[name] = operation();
+      } catch {
+        counts[name] = null;
+        unsafe = true;
+      }
+    };
+    inspect("native", () => nativeOutbox.diagnosticsAll().pendingCount);
+    inspect("semantic", () =>
+      bindingQueueCount(join(dirname(configPath), "outbox"), "semantic")
+    );
+    inspect("artifact", () => {
+      const root = join(dirname(configPath), "artifact-outbox");
+      const count = bindingQueueCount(root, "artifact");
+      artifactErrors = artifactQueueErrorCodes(root);
+      return count;
+    });
+    inspect("agent", () => agentQueueCount(configPath));
+    const values = [counts.native, counts.semantic, counts.artifact, counts.agent];
+    counts.total = values.every(Number.isInteger)
+      ? values.reduce((total, value) => total + value, 0)
+      : null;
+    return { counts, unsafe, artifactErrors };
+  }
+
+  function agentHealthDiagnostics() {
+    const reasons = new Set();
+    let config;
+    try {
+      config = configAndStates();
+    } catch {
+      reasons.add("CONFIG_UNAVAILABLE");
+    }
+    const hostIngress = {
+      claudeCode: config === undefined ? "unknown" : "unconfigured",
+      codex: config === undefined ? "unknown" : "unconfigured",
+    };
+    let fixedWorkspaceHash = null;
+    let lastSuccessfulDeliveryAt = null;
+    let repositoryAttribution = config === undefined ? "unknown" : "ready";
+    if (config !== undefined) {
+      const workspaceIds = new Set(
+        config.bindings.map(({ workspaceId }) => workspaceId)
+      );
+      if (workspaceIds.size === 1) {
+        fixedWorkspaceHash = createHash("sha256")
+          .update([...workspaceIds][0])
+          .digest("hex");
+      } else if (workspaceIds.size > 1) {
+        reasons.add("WORKSPACE_CONFLICT");
+        repositoryAttribution = "unavailable";
+      }
+      for (const host of ["claude-code", "codex"]) {
+        const field = host === "claude-code" ? "claudeCode" : "codex";
+        if (config.bindings.some((binding) => binding.host === host)) {
+          hostIngress[field] = "ready";
+        } else {
+          reasons.add(
+            host === "claude-code"
+              ? "CLAUDE_INGRESS_UNCONFIGURED"
+              : "CODEX_INGRESS_UNCONFIGURED"
+          );
+        }
+      }
+      for (const binding of config.bindings) {
+        const state = bindingState(binding);
+        for (const channel of [state.native, state.capture]) {
+          if (
+            channel.lastForwardedAt !== null &&
+            (lastSuccessfulDeliveryAt === null ||
+              channel.lastForwardedAt > lastSuccessfulDeliveryAt)
+          ) {
+            lastSuccessfulDeliveryAt = channel.lastForwardedAt;
+          }
+          const reason = healthReasonForChannelError(channel.lastErrorCode);
+          if (reason !== null) reasons.add(reason);
+        }
+        if (state.capture.lastErrorCode === "REPOSITORY_UNAVAILABLE") {
+          repositoryAttribution = "unavailable";
+        } else if (
+          repositoryAttribution !== "unavailable" &&
+          state.capture.lastErrorCode === "REPOSITORY_ATTRIBUTION_DEGRADED"
+        ) {
+          repositoryAttribution = "degraded";
+        }
+      }
+      if (attribution.unattributed.pendingCount > 0) {
+        reasons.add("ATTRIBUTION_PENDING");
+        if (repositoryAttribution === "ready") repositoryAttribution = "degraded";
+      }
+      if (attribution.unattributed.rejectedCount > 0) {
+        reasons.add("ATTRIBUTION_REJECTED");
+        if (repositoryAttribution === "ready") repositoryAttribution = "degraded";
+      }
+    }
+    const queues = queueCounts();
+    for (const errorCode of queues.artifactErrors) {
+      const reason = healthReasonForChannelError(errorCode);
+      if (reason !== null) reasons.add(reason);
+      if (errorCode === "REPOSITORY_UNAVAILABLE") {
+        repositoryAttribution = "unavailable";
+      }
+    }
+    if (queues.unsafe) reasons.add("QUEUE_UNSAFE");
+    if (queues.counts.total !== null && queues.counts.total > 0) {
+      reasons.add("QUEUE_PENDING");
+    }
+    const degradedReasons = [...reasons].sort().slice(0, 16);
+    return {
+      ...healthV2.identity,
+      state: degradedReasons.length === 0 ? "ready" : "degraded",
+      fixedWorkspaceHash,
+      hostIngress,
+      queueCounts: queues.counts,
+      lastSuccessfulDeliveryAt,
+      repositoryAttribution,
+      degradedReasons,
+    };
+  }
 
   function journalCodex(entry) {
     try {
@@ -750,6 +1813,48 @@ export function createManagedRelay({
       rejectedCount: attribution.unattributed.rejectedCount,
       lastClaimAt: entry?.lastClaimAt ?? null,
     };
+  }
+
+  function nativeFailureCode(error) {
+    return error instanceof ManagedRelayError
+      ? error.code
+      : "TRANSPORT_UNAVAILABLE";
+  }
+
+  async function deliverNativeDurably(binding, payload, seenAt, coverageState) {
+    const state = bindingState(binding);
+    const entry = nativeOutbox.admit({ binding, payload, at: seenAt });
+    nativeOutboxInFlight.add(entry.record.recordId);
+    try {
+      const forwarded = await forward(
+        binding,
+        "native",
+        payload,
+        fetchImpl,
+        timeoutMs
+      );
+      await cancelResponseBody(forwarded);
+      try {
+        nativeOutbox.acknowledge(entry);
+        state.native.state = coverageState;
+        state.native.lastForwardedAt = seenAt;
+        state.native.lastErrorCode = null;
+      } catch {
+        state.native.state = "error";
+        state.native.lastErrorCode = "NATIVE_OUTBOX_UNAVAILABLE";
+      }
+    } catch (error) {
+      const code = nativeFailureCode(error);
+      state.native.state = "error";
+      state.native.lastErrorCode = code;
+      try {
+        nativeOutbox.defer(entry, code, seenAt);
+      } catch {
+        // Initial admission is already durable. A later drain can safely retry it.
+      }
+    } finally {
+      nativeOutboxInFlight.delete(entry.record.recordId);
+    }
   }
 
   function rejectExpiredBuffers(nowMs) {
@@ -912,6 +2017,25 @@ export function createManagedRelay({
     ) {
       fail("INVALID_PAYLOAD");
     }
+    const workspaceBinding = bindings.find(
+      (candidate) => candidate.workspaceMode === true
+    );
+    if (workspaceBinding) {
+      const claimedAt = now();
+      if (!isTimestamp(claimedAt)) fail("CLOCK_UNAVAILABLE");
+      attribution = pruneCodexAttributionState(
+        attribution,
+        Date.parse(claimedAt)
+      );
+      attribution.health[workspaceBinding.bindingId] = { lastClaimAt: claimedAt };
+      persistAttribution();
+      journalCodex({
+        event: "claim.observed",
+        sessionHash: codexSessionHash(body.sessionId),
+        ...bindingJournalFields(workspaceBinding),
+      });
+      return { status: "claimed", bindingId: workspaceBinding.bindingId };
+    }
     let repositoryScopeKey;
     try {
       repositoryScopeKey = resolveRepositoryScopeKey(body.cwd);
@@ -993,7 +2117,7 @@ export function createManagedRelay({
   }
 
   async function handleCodexNative(request, response) {
-    resolveCodexIngress(request);
+    const { bindings } = resolveCodexIngress(request);
     const seenAt = now();
     if (!isTimestamp(seenAt)) fail("CLOCK_UNAVAILABLE");
     const seenAtMs = Date.parse(seenAt);
@@ -1002,6 +2126,30 @@ export function createManagedRelay({
     const sanitized = sanitizeCodexOtlp(
       await readJsonBody(request, MAX_NATIVE_BODY_BYTES)
     );
+    const workspaceBinding = bindings.find(
+      (candidate) => candidate.workspaceMode === true
+    );
+    if (workspaceBinding) {
+      const state = bindingState(workspaceBinding);
+      state.native.lastSeenAt = seenAt;
+      const coverageState =
+        sanitized.coverage.nativeUsage === "observed" ? "observed" : "ready";
+      if (sanitized.payload.resourceLogs.length > 0) {
+        await deliverNativeDurably(
+          workspaceBinding,
+          sanitized.payload,
+          seenAt,
+          coverageState
+        );
+      } else {
+        state.native.state = coverageState;
+        state.native.lastErrorCode = null;
+      }
+      attribution.unattributed.pendingCount = 0;
+      persistAttribution();
+      json(response, 200, { partialSuccess: {} });
+      return;
+    }
     for (const [sessionId, payload] of codexPayloadsBySession(
       sanitized.payload
     )) {
@@ -1070,7 +2218,13 @@ export function createManagedRelay({
       request.method === "PUT" ? deliveryRoute(request.url) : null;
     if (
       !(
-        (request.method === "GET" && request.url === "/health") ||
+        (request.method === "GET" &&
+          new Set([
+            "/health",
+            "/health/v1",
+            "/health/v2",
+            "/native-outbox/v1",
+          ]).has(request.url)) ||
         (request.method === "POST" && request.url === "/v1/logs") ||
         (request.method === "POST" &&
           request.url === "/codex/v1/session-claims") ||
@@ -1079,6 +2233,18 @@ export function createManagedRelay({
       )
     ) {
       json(response, 404, { error: "NOT_FOUND" });
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/health/v2") {
+      if (
+        healthV2 === null ||
+        request.headers["x-coredoc-agent-health"] !== healthV2.token
+      ) {
+        json(response, 401, { error: "AUTH_REJECTED" });
+        return;
+      }
+      json(response, 200, agentHealthDiagnostics());
       return;
     }
 
@@ -1132,6 +2298,15 @@ export function createManagedRelay({
     }
     const { binding, state } = resolved;
 
+    if (request.method === "GET" && request.url === "/native-outbox/v1") {
+      try {
+        json(response, 200, nativeOutbox.diagnostics(binding.bindingId));
+      } catch {
+        json(response, 502, { error: "NATIVE_OUTBOX_UNAVAILABLE" });
+      }
+      return;
+    }
+
     if (request.method === "GET") {
       const checkedAt = now();
       if (!isTimestamp(checkedAt)) {
@@ -1153,7 +2328,6 @@ export function createManagedRelay({
         if (request.headers.authorization !== undefined) {
           fail("INVALID_DELIVERY");
         }
-        if (binding.repositoryKey === undefined) fail("INVALID_DELIVERY");
         const input = await readJsonBody(
           request,
           delivery.kind === "artifact"
@@ -1167,8 +2341,20 @@ export function createManagedRelay({
           } catch {
             fail("INVALID_DELIVERY");
           }
-          if (body.repositoryKey !== binding.repositoryKey) {
+          if (
+            binding.workspaceMode !== true &&
+            body.repositoryKey !== binding.repositoryKey
+          ) {
             fail("INVALID_DELIVERY");
+          }
+          if (binding.workspaceMode === true) {
+            await resolveWorkspaceRepository(binding, body.repositoryKey, {
+              fetchImpl,
+              timeoutMs,
+              allowDegraded: false,
+            }).then((result) => {
+              if (result.status !== "resolved") fail("REPOSITORY_UNAVAILABLE");
+            });
           }
           const forwarded = await forwardDelivery(
             binding,
@@ -1181,7 +2367,7 @@ export function createManagedRelay({
           try {
             receipt = taskEnsureResponse(await forwarded.json(), {
               taskId: delivery.taskId,
-              repositoryKey: binding.repositoryKey,
+              repositoryKey: body.repositoryKey,
             });
           } catch {
             fail("UPSTREAM_INVALID");
@@ -1199,8 +2385,20 @@ export function createManagedRelay({
         } catch {
           fail("INVALID_DELIVERY");
         }
-        if (body.repositoryKey !== binding.repositoryKey) {
+        if (
+          binding.workspaceMode !== true &&
+          body.repositoryKey !== binding.repositoryKey
+        ) {
           fail("INVALID_DELIVERY");
+        }
+        if (binding.workspaceMode === true) {
+          await resolveWorkspaceRepository(binding, body.repositoryKey, {
+            fetchImpl,
+            timeoutMs,
+            allowDegraded: false,
+          }).then((result) => {
+            if (result.status !== "resolved") fail("REPOSITORY_UNAVAILABLE");
+          });
         }
         const forwarded = await forwardDelivery(
           binding,
@@ -1251,25 +2449,27 @@ export function createManagedRelay({
           binding.host === "codex"
             ? sanitizeCodexOtlp(input)
             : sanitizeClaudeOtlp(input);
-        if (sanitized.payload.resourceLogs.length > 0) {
-          const forwarded = await forward(
-            binding,
-            channel,
-            sanitized.payload,
-            fetchImpl,
-            timeoutMs
-          );
-          await cancelResponseBody(forwarded);
-          state.native.lastForwardedAt = seenAt;
-        }
-        state.native.state =
+        const coverageState =
           sanitized.coverage.nativeUsage === "observed" ? "observed" : "ready";
-        state.native.lastErrorCode = null;
+        if (sanitized.payload.resourceLogs.length > 0) {
+          await deliverNativeDurably(
+            binding,
+            sanitized.payload,
+            seenAt,
+            coverageState
+          );
+        } else {
+          state.native.state = coverageState;
+          state.native.lastErrorCode = null;
+        }
         json(response, 200, { partialSuccess: {} });
         return;
       }
 
-      const batch = captureBatch(input, binding);
+      const batch = await captureBatch(input, binding, {
+        fetchImpl,
+        timeoutMs,
+      });
       let upstreamReceipt = {
         acceptedEventIds: [],
         duplicateEventIds: [],
@@ -1301,7 +2501,9 @@ export function createManagedRelay({
         batch.attemptedEventIds
       );
       state.capture.state = batch.events.length > 0 ? "observed" : "ready";
-      state.capture.lastErrorCode = null;
+      state.capture.lastErrorCode = batch.repositoryAttributionDegraded
+        ? "REPOSITORY_ATTRIBUTION_DEGRADED"
+        : null;
       json(response, 200, receipt);
     } catch (error) {
       const code =
@@ -1324,9 +2526,80 @@ export function createManagedRelay({
       }
     }
   });
+  let nativeOutboxDrainInFlight = false;
+  async function drainNativeOutbox(maximum = 8) {
+    if (nativeOutboxDrainInFlight) return;
+    nativeOutboxDrainInFlight = true;
+    try {
+      const at = now();
+      if (!isTimestamp(at)) return;
+      let entries;
+      let config;
+      try {
+        entries = nativeOutbox.ready(at).slice(0, maximum);
+        config = configAndStates();
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        if (nativeOutboxInFlight.has(entry.record.recordId)) continue;
+        const binding = config.bindings.find(
+          (candidate) => candidate.bindingId === entry.record.bindingId
+        );
+        if (
+          !binding ||
+          binding.host !== entry.record.host ||
+          binding.workspaceId !== entry.record.workspaceId
+        ) {
+          try {
+            nativeOutbox.defer(
+              entry,
+              binding ? "CONFIG_CONFLICT" : "CONFIG_UNAVAILABLE",
+              at
+            );
+          } catch {
+            // Marker-owned evidence remains queued for a later healthy drain.
+          }
+          continue;
+        }
+        nativeOutboxInFlight.add(entry.record.recordId);
+        const state = bindingState(binding);
+        try {
+          const forwarded = await forward(
+            binding,
+            "native",
+            entry.record.payload,
+            fetchImpl,
+            timeoutMs
+          );
+          await cancelResponseBody(forwarded);
+          nativeOutbox.acknowledge(entry);
+          state.native.state = "observed";
+          state.native.lastForwardedAt = at;
+          state.native.lastErrorCode = null;
+        } catch (error) {
+          const code = nativeFailureCode(error);
+          state.native.state = "error";
+          state.native.lastErrorCode = code;
+          try {
+            nativeOutbox.defer(entry, code, at);
+          } catch {
+            // The original durable record remains authoritative.
+          }
+        } finally {
+          nativeOutboxInFlight.delete(entry.record.recordId);
+        }
+      }
+    } catch {
+      // A malformed clock or local queue race must not escape an unawaited
+      // startup/interval drain. The durable records remain for a later tick.
+    } finally {
+      nativeOutboxDrainInFlight = false;
+    }
+  }
   // ---------------------------------------------------------------------------
   // Interval outbox drain. Hooks enqueue capture events into the relay-owned
-  // outbox (`<capture-relay>/outbox/<bindingNonceHash>/`) whenever forwarding
+  // outbox (`<capture-relay>/outbox/<bindingIdentityHash>/`) whenever forwarding
   // fails; historically only the next SessionStart retried them, so a transport
   // blip mid-session left events pending until a NEW session began. The relay is
   // the long-lived process, so it drains every binding's outbox in batches on an
@@ -1335,7 +2608,11 @@ export function createManagedRelay({
   // delivered, and both sides delete acknowledged files idempotently.
   // ---------------------------------------------------------------------------
   function outboxDirectoryFor(binding) {
-    return join(dirname(configPath), "outbox", binding.bindingNonceHash);
+    return join(
+      dirname(configPath),
+      "outbox",
+      managedRelayBindingStorageHash(binding)
+    );
   }
 
   function outboxEntriesFor(binding) {
@@ -1386,10 +2663,10 @@ export function createManagedRelay({
           // A transport failure latched by a mid-session forward (e.g. an upstream restart)
           // has nothing left to retry once the outbox is empty, so it would stay red until the
           // NEXT session flush — in relay memory AND in the binding's persisted
-          // capture-health.json, which the desktop's health report reads. Probe the same
-          // endpoint instead: ANY HTTP response — even the 4xx an empty batch earns — proves
-          // the transport recovered. Other error codes (auth, upstream verdicts) are not
-          // transport facts and stay until a real forward.
+          // capture-health.json, which the capture health reporter reads. Probe the same
+          // side-effect-free probe endpoint instead. Only its exact authenticated ready contract
+          // proves capture readiness; auth and upstream failures remain visible and are retried
+          // without fabricating queued events.
           const state = bindingState(binding);
           let persistedError = null;
           try {
@@ -1399,31 +2676,35 @@ export function createManagedRelay({
           } catch {
             // An unreadable health file is the client's fact to re-establish, not ours.
           }
+          const probeableErrors = new Set([
+            "AUTH_REJECTED",
+            "TRANSPORT_UNAVAILABLE",
+          ]);
           if (
-            state.capture.lastErrorCode !== "TRANSPORT_UNAVAILABLE" &&
-            persistedError !== "TRANSPORT_UNAVAILABLE"
+            !probeableErrors.has(state.capture.lastErrorCode) &&
+            !probeableErrors.has(persistedError)
           ) {
             continue;
           }
           try {
-            const probed = await fetchImpl(binding.captureForwardEndpoint, {
+            const probed = await fetchImpl(captureProbeEndpoint(binding), {
               method: "POST",
               redirect: "error",
               headers: {
                 "content-type": "application/json",
                 Authorization: binding.cloudAuthorization,
               },
-              body: '{"events":[]}',
+              body: "{}",
               signal: AbortSignal.timeout(timeoutMs),
             });
-            await cancelResponseBody(probed);
-            state.capture.state = "ready";
-            state.capture.lastErrorCode = null;
-            if (persistedError === "TRANSPORT_UNAVAILABLE") {
+            const probeError = await captureProbeError(probed);
+            state.capture.state = probeError === null ? "ready" : "error";
+            state.capture.lastErrorCode = probeError;
+            if (probeableErrors.has(persistedError)) {
               persistCaptureHealth({
                 directory: outboxDirectoryFor(binding),
                 status: { pending: 0 },
-                errorCode: null,
+                errorCode: probeError,
                 now,
               });
             }
@@ -1434,13 +2715,14 @@ export function createManagedRelay({
         }
         const state = bindingState(binding);
         try {
-          const batch = captureBatch(
+          const batch = await captureBatch(
             { events: entries.map(({ event }) => event) },
-            binding
+            binding,
+            { fetchImpl, timeoutMs }
           );
-          // Rejections are FINAL verdicts (host/repository mismatch against the binding, or an
-          // upstream contradiction) — leaving those files pending would retry a poison event
-          // every tick forever, which is exactly the failure mode this drain replaces.
+          // Only local terminal event invalidity and explicit upstream receipt verdicts are
+          // settled. Resolver/auth/config failures throw before this point, leaving every valid
+          // record durable for a later retry.
           const settled = new Set(
             batch.rejected
               .map(({ eventId }) => eventId)
@@ -1466,7 +2748,9 @@ export function createManagedRelay({
             const at = now();
             if (isTimestamp(at)) state.capture.lastForwardedAt = at;
             state.capture.state = "observed";
-            state.capture.lastErrorCode = null;
+            state.capture.lastErrorCode = batch.repositoryAttributionDegraded
+              ? "REPOSITORY_ATTRIBUTION_DEGRADED"
+              : null;
             for (const eventId of receipt.acceptedEventIds) settled.add(eventId);
             for (const eventId of receipt.duplicateEventIds) settled.add(eventId);
             for (const { eventId } of receipt.rejected) {
@@ -1478,7 +2762,7 @@ export function createManagedRelay({
             if (settled.has(event.eventId)) rmSync(path, { force: true });
             else remaining += 1;
           }
-          // The binding's persisted capture-health.json is what the desktop's health report
+          // The binding's persisted capture-health.json is what the capture health reporter
           // reads; a client-latched error must not outlive the delivery that resolved it. The
           // error clears only when a forward actually succeeded — settling nothing but local
           // rejections proves no transport fact.
@@ -1486,7 +2770,13 @@ export function createManagedRelay({
             persistCaptureHealth({
               directory: outboxDirectoryFor(binding),
               status: { pending: remaining },
-              ...(batch.events.length > 0 ? { errorCode: null } : {}),
+              ...(batch.events.length > 0
+                ? {
+                    errorCode: batch.repositoryAttributionDegraded
+                      ? "REPOSITORY_ATTRIBUTION_DEGRADED"
+                      : null,
+                  }
+                : {}),
               now,
             });
           } catch {
@@ -1506,17 +2796,34 @@ export function createManagedRelay({
   }
 
   let outboxDrainTimer;
+  let nativeOutboxDrainTimer;
   server.on("listening", () => {
     void drainCaptureOutboxes();
+    void drainNativeOutbox();
     outboxDrainTimer = setInterval(
       () => void drainCaptureOutboxes(),
       outboxFlushIntervalMs
     );
     outboxDrainTimer.unref?.();
+    nativeOutboxDrainTimer = setInterval(
+      () => void drainNativeOutbox(),
+      nativeOutboxFlushIntervalMs
+    );
+    nativeOutboxDrainTimer.unref?.();
   });
   server.on("close", () => {
     if (outboxDrainTimer) clearInterval(outboxDrainTimer);
+    if (nativeOutboxDrainTimer) clearInterval(nativeOutboxDrainTimer);
   });
+
+  const closeServer = server.close.bind(server);
+  server.close = (callback) => {
+    if (outboxDrainTimer) clearInterval(outboxDrainTimer);
+    if (nativeOutboxDrainTimer) clearInterval(nativeOutboxDrainTimer);
+    return closeServer((error) => {
+      void drainNativeOutbox(1).finally(() => callback?.(error));
+    });
+  };
 
   server.maxConnections = MAX_CONNECTIONS;
   server.maxHeadersCount = MAX_HEADERS;
@@ -1727,10 +3034,28 @@ export async function ensureManagedRelay({
 export async function startManagedRelay({
   configPath,
   port = MANAGED_RELAY_PORT,
+  agentStatePath,
+  runtimeVersion,
+  runtimeDigest,
   ...options
 } = {}) {
   readManagedRelayConfig(configPath);
-  const server = createManagedRelay({ configPath, ...options });
+  const agentArguments = [agentStatePath, runtimeVersion, runtimeDigest];
+  const configuredAgentArguments = agentArguments.filter(
+    (value) => value !== undefined
+  ).length;
+  if (configuredAgentArguments !== 0 && configuredAgentArguments !== 3) {
+    fail("INVALID_CONFIG");
+  }
+  const agentHealth =
+    configuredAgentArguments === 0
+      ? undefined
+      : readCaptureAgentHealthContext({
+          statePath: agentStatePath,
+          runtimeVersion,
+          runtimeDigest,
+        });
+  const server = createManagedRelay({ configPath, agentHealth, ...options });
   await new Promise((resolve, reject) => {
     const onError = () => reject(new ManagedRelayError("LISTENER_UNAVAILABLE"));
     server.once("error", onError);
@@ -1740,6 +3065,58 @@ export async function startManagedRelay({
     });
   });
   return server;
+}
+
+export function readCaptureAgentHealthContext({
+  statePath,
+  runtimeVersion,
+  runtimeDigest,
+} = {}) {
+  if (
+    typeof statePath !== "string" ||
+    !isAbsolute(statePath) ||
+    typeof runtimeVersion !== "string" ||
+    !RUNTIME_VERSION_RE.test(runtimeVersion) ||
+    typeof runtimeDigest !== "string" ||
+    !SHA256_RE.test(runtimeDigest)
+  ) {
+    fail("INVALID_CONFIG");
+  }
+  let metadata;
+  let candidate;
+  try {
+    metadata = lstatSync(statePath);
+    if (
+      !metadata.isFile() ||
+      metadata.isSymbolicLink() ||
+      metadata.size > 64 * 1024 ||
+      (metadata.mode & 0o777) !== 0o600 ||
+      (typeof process.getuid === "function" && metadata.uid !== process.getuid())
+    ) {
+      fail("INVALID_CONFIG");
+    }
+    candidate = JSON.parse(readFileSync(statePath, "utf8"));
+  } catch (error) {
+    if (error instanceof ManagedRelayError) throw error;
+    fail("INVALID_CONFIG");
+  }
+  if (
+    candidate?.schemaVersion !== 1 ||
+    candidate?.marker !== CAPTURE_AGENT_STATE_MARKER ||
+    typeof candidate?.healthToken !== "string" ||
+    !AGENT_HEALTH_TOKEN_RE.test(candidate.healthToken) ||
+    candidate?.current?.version !== runtimeVersion ||
+    candidate?.current?.digest !== runtimeDigest
+  ) {
+    fail("INVALID_CONFIG");
+  }
+  return {
+    token: candidate.healthToken,
+    runtimeVersion,
+    runtimeDigest,
+    protocolVersion: 1,
+    configSchemaVersion: CONFIG_VERSION,
+  };
 }
 
 function cliArguments(args) {
@@ -1753,7 +3130,16 @@ function cliArguments(args) {
   for (let index = offset; index < args.length; index += 2) {
     const flag = args[index];
     const value = args[index + 1];
-    if (!new Set(["--config", "--endpoint"]).has(flag) || !value) {
+    if (
+      !new Set([
+        "--config",
+        "--endpoint",
+        "--agent-state",
+        "--runtime-version",
+        "--runtime-digest",
+      ]).has(flag) ||
+      !value
+    ) {
       fail("INVALID_ARGUMENTS");
     }
     values[flag] = value;
@@ -1774,7 +3160,12 @@ function configuredBinding(configPath, nonce) {
 async function main(env = process.env) {
   const { command, values } = cliArguments(process.argv.slice(2));
   if (command === "serve") {
-    const server = await startManagedRelay({ configPath: values["--config"] });
+    const server = await startManagedRelay({
+      configPath: values["--config"],
+      agentStatePath: values["--agent-state"],
+      runtimeVersion: values["--runtime-version"],
+      runtimeDigest: values["--runtime-digest"],
+    });
     const close = () => server.close();
     server.on("error", () => {
       process.stderr.write("LISTENER_UNAVAILABLE\n");

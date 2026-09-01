@@ -1,7 +1,7 @@
 {
   "name": "coredoc-workflows",
   "version": "0.11.2",
-  "description": "Self-contained engineering workflows with read-only Coredoc context, explicit Claude/Codex peer adapters, compact learning and retrospectives, and bundled macOS ARM browser QA.",
+  "description": "Self-contained engineering workflows with read-only Coredoc context, explicit peer adapters, bundled macOS ARM browser QA, and an opt-in macOS capture agent.",
   "author": {
     "name": "Coredoc team"
   },
@@ -16,13 +16,15 @@
     "tdd",
     "review",
     "qa",
-    "retro"
+    "retro",
+    "capture",
+    "telemetry"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Coredoc Workflows",
     "shortDescription": "Self-contained engineering workflows for Codex.",
-    "longDescription": "Routes work through investigation, planning, adaptive implementation, optional strict TDD, review, spec, browser QA, benchmark, security, learning, and retrospective methods; offers explicit host-specific Claude and Codex peer review with resumable consultation; and grounds decisions with read-only Coredoc context.",
+    "longDescription": "Routes work through investigation, planning, adaptive implementation, optional strict TDD, review, spec, browser QA, benchmark, security, learning, and retrospective methods; offers explicit Claude and Codex peer review; grounds decisions with read-only Coredoc context; and includes an optional per-user macOS capture agent.",
     "developerName": "Coredoc team",
     "category": "Developer Tools",
     "capabilities": [
@@ -33,7 +35,8 @@
       "Reusable Electron QA",
       "Coredoc authenticated desktop QA",
       "Read-only Coredoc context policy",
-      "Compact learning and retrospectives"
+      "Compact learning and retrospectives",
+      "Opt-in macOS capture agent"
     ],
     "defaultPrompt": [
       "Route this task through the smallest useful workflow.",

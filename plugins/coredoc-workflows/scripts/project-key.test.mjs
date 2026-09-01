@@ -8,7 +8,9 @@ import {
   cacheDir,
   persistentDir,
   persistentDirs,
+  requireRepositoryCandidate,
   resolveProjectKey,
+  resolveRepositoryIdentity,
   resolveRepositoryScopeKey,
   stateRoot,
 } from "./project-key.mjs";
@@ -218,6 +220,70 @@ test("a plain directory that is not a repository still resolves", () => {
   const key = resolveProjectKey(dir, {});
   assert.match(key, /-[0-9a-f]{8}$/);
   assert.ok(!key.includes(sep));
+});
+
+test("explicit repository identity is null outside Git and never hashes cwd", () => {
+  const dir = scratch();
+
+  assert.equal(resolveRepositoryIdentity(dir), null);
+});
+
+test("explicit repository identity preserves normalized Git remote identity without exposing paths or origins", () => {
+  const dir = gitInit(scratch());
+  execFileSync(
+    "git",
+    ["remote", "add", "origin", "https://github.com/acme/payments.git"],
+    { cwd: dir, stdio: ["ignore", "ignore", "ignore"] },
+  );
+
+  const identity = resolveRepositoryIdentity(dir);
+  assert.equal(identity.state, "unmapped");
+  assert.equal(identity.normalizedRepositoryKey, "acme/payments");
+  assert.match(identity.repositoryScopeKey, /^repo-[0-9a-f]{24}$/);
+  assert.equal(Object.hasOwn(identity, "path"), false);
+  assert.equal(Object.hasOwn(identity, "cwd"), false);
+  assert.equal(Object.hasOwn(identity, "origin"), false);
+  assert.doesNotMatch(JSON.stringify(identity), new RegExp(dir));
+});
+
+test("explicit authoritative mapping distinguishes known from unmapped identity", () => {
+  const dir = gitInit(scratch());
+  const unmapped = resolveRepositoryIdentity(dir);
+  const known = resolveRepositoryIdentity(dir, {
+    authoritativeRepositoryKey: "acme/payments",
+  });
+
+  assert.equal(unmapped.state, "unmapped");
+  assert.deepEqual(known, {
+    state: "known",
+    repositoryScopeKey: unmapped.repositoryScopeKey,
+    repositoryKey: "acme/payments",
+  });
+});
+
+test("repository-bound clients require a normalized local candidate or receive an explicit unavailable contract", () => {
+  const mapped = gitInit(scratch());
+  execFileSync(
+    "git",
+    ["remote", "add", "origin", "git@github.com:acme/payments.git"],
+    { cwd: mapped, stdio: ["ignore", "ignore", "ignore"] },
+  );
+  assert.equal(
+    requireRepositoryCandidate(resolveRepositoryIdentity(mapped)),
+    "acme/payments",
+  );
+
+  const noRemote = gitInit(scratch());
+  for (const identity of [null, resolveRepositoryIdentity(noRemote)]) {
+    assert.throws(
+      () => requireRepositoryCandidate(identity),
+      (error) => {
+        assert.equal(error.code, "REPOSITORY_UNAVAILABLE");
+        assert.equal(error.message, "REPOSITORY_UNAVAILABLE");
+        return true;
+      },
+    );
+  }
 });
 
 test("the key is stable across calls", () => {

@@ -19,6 +19,7 @@ import {
   checkManagedRelay,
   createManagedRelay,
   ensureManagedRelay,
+  readCaptureAgentHealthContext,
   readManagedRelayConfig,
   relayBindingNonceFromCaptureHeaders,
   removeManagedRelayBinding,
@@ -28,6 +29,10 @@ import {
 } from "./managed-otel-relay.mjs";
 import { sanitizeCodexOtlp } from "./native-otel-sanitizer.mjs";
 import { resolveRepositoryScopeKey } from "./project-key.mjs";
+import {
+  artifactCheckpointDirectory,
+  createArtifactCheckpointStore,
+} from "./artifact-checkpoints.mjs";
 
 const CODEX_FIXTURE = JSON.parse(
   readFileSync(
@@ -109,6 +114,13 @@ function binding({
   };
 }
 
+function workspaceBinding(options = {}) {
+  const configured = binding({ ...options, withoutRepository: true });
+  delete configured.repositoryScopeKey;
+  delete configured.profileName;
+  return { ...configured, workspaceMode: true };
+}
+
 function listen(server) {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -121,6 +133,24 @@ function listen(server) {
 
 function close(server) {
   return new Promise((resolve) => server.close(resolve));
+}
+
+async function waitFor(predicate, timeoutMs = 1_000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail("timed out waiting for relay state");
+}
+
+function nativeQueueRecordPaths(directory, bindingId) {
+  const bindingDirectory = join(directory, "native-outbox", bindingId);
+  if (!existsSync(bindingDirectory)) return [];
+  return readdirSync(bindingDirectory)
+    .filter((name) => name.endsWith(".native.json"))
+    .sort()
+    .map((name) => join(bindingDirectory, name));
 }
 
 function readJson(request) {
@@ -227,6 +257,166 @@ test("authenticated relay health advertises the exact accepted capture schemas",
   assert.deepEqual(checked.capture.acceptedSchemaVersions, [1, 2, 3]);
 });
 
+test("serves authenticated agent health v2 without changing exact binding health v1", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-managed-relay-health-v2-"));
+  const path = join(directory, "capture-relay", "relay.json");
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [binding()] });
+  const agentOutbox = join(directory, "capture-agent", "outbox");
+  mkdirSync(agentOutbox, { recursive: true, mode: 0o700 });
+  writeFileSync(join(agentOutbox, "pending.json"), "{}\n", { mode: 0o600 });
+  const relay = createManagedRelay({
+    configPath: path,
+    agentHealth: {
+      token: "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
+      runtimeVersion: "0.11.2",
+      runtimeDigest: "a".repeat(64),
+      protocolVersion: 1,
+      configSchemaVersion: 1,
+    },
+  });
+  const port = await listen(relay);
+  t.after(() => close(relay));
+  const endpoint = `http://127.0.0.1:${port}`;
+  const bindingHeaders = { "X-Coredoc-Relay-Binding": "local-binding-one" };
+
+  const unauthorized = await fetch(`${endpoint}/health/v2`);
+  assert.equal(unauthorized.status, 401);
+  assert.deepEqual(await unauthorized.json(), { error: "AUTH_REJECTED" });
+
+  const v2 = await fetch(`${endpoint}/health/v2`, {
+    headers: {
+      "X-Coredoc-Agent-Health":
+        "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
+    },
+  });
+  assert.equal(v2.status, 200);
+  assert.deepEqual(await v2.json(), {
+    schemaVersion: 2,
+    state: "degraded",
+    runtimeVersion: "0.11.2",
+    runtimeDigest: "a".repeat(64),
+    protocolVersion: 1,
+    configSchemaVersion: 1,
+    fixedWorkspaceHash: createHash("sha256").update("ws-one").digest("hex"),
+    hostIngress: {
+      claudeCode: "ready",
+      codex: "unconfigured",
+    },
+    queueCounts: {
+      native: 0,
+      semantic: 0,
+      artifact: 0,
+      agent: 1,
+      total: 1,
+    },
+    lastSuccessfulDeliveryAt: null,
+    repositoryAttribution: "ready",
+    degradedReasons: ["CODEX_INGRESS_UNCONFIGURED", "QUEUE_PENDING"],
+  });
+
+  const legacy = await (await fetch(`${endpoint}/health`, { headers: bindingHeaders })).json();
+  const versionedV1 = await (
+    await fetch(`${endpoint}/health/v1`, { headers: bindingHeaders })
+  ).json();
+  assert.deepEqual(versionedV1, legacy);
+  assert.deepEqual(Object.keys(legacy), [
+    "schemaVersion",
+    "bindingId",
+    "host",
+    "workspaceId",
+    "state",
+    "native",
+    "capture",
+    "attribution",
+  ]);
+});
+
+test("authenticated health v2 surfaces artifact-only repository attribution failure", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-managed-relay-artifact-health-v2-"));
+  const path = join(directory, "capture-relay", "relay.json");
+  const configured = binding();
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [configured] });
+  const artifactStore = createArtifactCheckpointStore({
+    directory: artifactCheckpointDirectory(
+      join(directory, "capture-relay"),
+      configured.bindingNonceHash,
+    ),
+  });
+  artifactStore.markError("REPOSITORY_UNAVAILABLE");
+  const relay = createManagedRelay({
+    configPath: path,
+    agentHealth: {
+      token: "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
+      runtimeVersion: "0.11.2",
+      runtimeDigest: "a".repeat(64),
+      protocolVersion: 1,
+      configSchemaVersion: 1,
+    },
+  });
+  const port = await listen(relay);
+  t.after(() => close(relay));
+
+  const health = await (
+    await fetch(`http://127.0.0.1:${port}/health/v2`, {
+      headers: {
+        "X-Coredoc-Agent-Health":
+          "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
+      },
+    })
+  ).json();
+  assert.equal(health.state, "degraded");
+  assert.equal(health.repositoryAttribution, "unavailable");
+  assert.equal(health.queueCounts.artifact, 0);
+  assert.deepEqual(health.degradedReasons, [
+    "CODEX_INGRESS_UNCONFIGURED",
+    "REPOSITORY_UNAVAILABLE",
+  ]);
+  assert.doesNotMatch(JSON.stringify(health), /acme|Bearer|artifact-outbox/);
+});
+
+test("loads agent health identity only from a matching mode-0600 lifecycle state", () => {
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-agent-health-state-"));
+  const statePath = join(directory, "state.json");
+  writeFileSync(
+    statePath,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      marker: "coredoc-workflows.capture-agent.v1",
+      healthToken: "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
+      current: {
+        version: "0.11.2",
+        digest: "a".repeat(64),
+      },
+      previous: null,
+    })}\n`,
+    { mode: 0o600 }
+  );
+  assert.deepEqual(
+    readCaptureAgentHealthContext({
+      statePath,
+      runtimeVersion: "0.11.2",
+      runtimeDigest: "a".repeat(64),
+    }),
+    {
+      token: "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
+      runtimeVersion: "0.11.2",
+      runtimeDigest: "a".repeat(64),
+      protocolVersion: 1,
+      configSchemaVersion: 1,
+    }
+  );
+  chmodSync(statePath, 0o644);
+  assert.throws(
+    () =>
+      readCaptureAgentHealthContext({
+        statePath,
+        runtimeVersion: "0.11.2",
+        runtimeDigest: "a".repeat(64),
+      }),
+    (error) => error?.code === "INVALID_CONFIG"
+  );
+});
+
 test("writes and atomically replaces a versioned mode-0600 multi-binding relay config", () => {
   const directory = mkdtempSync(
     join(tmpdir(), "coredoc-managed-relay-config-")
@@ -273,6 +463,105 @@ test("writes and atomically replaces a versioned mode-0600 multi-binding relay c
   assert.throws(
     () => readManagedRelayConfig(path),
     (error) => error?.code === "CONFIG_UNAVAILABLE"
+  );
+});
+
+test("round-trips exact workspace-mode bindings without weakening legacy binding schemas", () => {
+  const directory = mkdtempSync(
+    join(tmpdir(), "coredoc-managed-relay-workspace-config-")
+  );
+  const path = join(directory, "relay.json");
+  const claude = workspaceBinding();
+  const codex = workspaceBinding({
+    bindingId: BINDING_TWO_ID,
+    nonce: "workspace-codex-ingress",
+    host: "codex",
+    workspaceId: "ws-two",
+    cloudAuthorization: "Bearer workspace-codex-token",
+  });
+
+  writeManagedRelayConfig(path, {
+    schemaVersion: 1,
+    bindings: [claude, codex],
+  });
+  assert.deepEqual(readManagedRelayConfig(path), {
+    schemaVersion: 1,
+    bindings: [claude, codex],
+  });
+
+  const legacy = binding();
+  assert.deepEqual(
+    readManagedRelayConfig(
+      (() => {
+        const legacyPath = join(directory, "legacy.json");
+        writeManagedRelayConfig(legacyPath, {
+          schemaVersion: 1,
+          bindings: [legacy],
+        });
+        return legacyPath;
+      })()
+    ),
+    { schemaVersion: 1, bindings: [legacy] }
+  );
+
+  for (const invalid of [
+    { ...claude, repositoryKey: "acme/api" },
+    { ...claude, repositoryScopeKey: "repo-111111111111111111111111" },
+    { ...claude, profileName: null },
+    { ...claude, workspaceMode: false },
+    { ...claude, enabled: true },
+  ]) {
+    assert.throws(
+      () => writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [invalid] }),
+      (error) => error?.code === "INVALID_CONFIG"
+    );
+  }
+
+  assert.throws(
+    () =>
+      writeManagedRelayConfig(path, {
+        schemaVersion: 1,
+        bindings: [
+          claude,
+          workspaceBinding({
+            bindingId: BINDING_TWO_ID,
+            nonce: "second-claude-workspace",
+            workspaceId: "ws-two",
+          }),
+        ],
+      }),
+    (error) => error?.code === "INVALID_CONFIG"
+  );
+  assert.throws(
+    () =>
+      writeManagedRelayConfig(path, {
+        schemaVersion: 1,
+        bindings: [
+          codex,
+          binding({
+            host: "codex",
+            nonce: "workspace-codex-ingress",
+            workspaceId: "ws-three",
+          }),
+        ],
+      }),
+    (error) => error?.code === "INVALID_CONFIG"
+  );
+  assert.throws(
+    () =>
+      writeManagedRelayConfig(path, {
+        schemaVersion: 1,
+        bindings: [
+          claude,
+          workspaceBinding({
+            bindingId: BINDING_TWO_ID,
+            nonce: "local-binding-one",
+            host: "codex",
+            workspaceId: "ws-two",
+          }),
+        ],
+      }),
+    (error) => error?.code === "INVALID_CONFIG"
   );
 });
 
@@ -474,6 +763,82 @@ test("routes one machine ingress to two Codex repositories only after exact sess
   assert.equal(afterRestart.status, 200);
   assert.equal(requests.at(-1).url, "/api/v1/workspaces/ws-one/otel/v1/logs");
   assert.equal(requests.length, 3);
+});
+
+test("forwards a unique workspace-mode Codex binding immediately while claims stay diagnostic", async (t) => {
+  const requests = [];
+  const upstream = createServer(async (request, response) => {
+    requests.push({ url: request.url, body: await readJson(request) });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end("{}\n");
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => close(upstream));
+
+  const directory = mkdtempSync(
+    join(tmpdir(), "coredoc-workspace-codex-native-")
+  );
+  const path = join(directory, "relay.json");
+  const configured = workspaceBinding({
+    host: "codex",
+    nonce: "workspace-codex-ingress",
+    nativeForwardEndpoint: `http://127.0.0.1:${upstreamPort}/api/v1/workspaces/ws-one/otel/v1/logs`,
+    captureForwardEndpoint: `http://127.0.0.1:${upstreamPort}/api/v1/workspaces/ws-one/capture/v1/events`,
+  });
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [configured] });
+  const relay = createManagedRelay({ configPath: path });
+  const relayPort = await listen(relay);
+  t.after(() => close(relay));
+  const endpoint = `http://127.0.0.1:${relayPort}`;
+  const ingressHeaders = {
+    "content-type": "application/json",
+    "X-Coredoc-Relay-Ingress": "workspace-codex-ingress",
+  };
+
+  const first = await fetch(`${endpoint}/v1/logs`, {
+    method: "POST",
+    headers: ingressHeaders,
+    body: JSON.stringify(CODEX_FIXTURE),
+  });
+  assert.equal(first.status, 200);
+  assert.equal(requests.length, 1);
+  assert.equal(
+    requests[0].url,
+    "/api/v1/workspaces/ws-one/otel/v1/logs"
+  );
+
+  const claim = await fetch(`${endpoint}/codex/v1/session-claims`, {
+    method: "POST",
+    headers: ingressHeaders,
+    body: JSON.stringify({
+      sessionId: codexFixtureSessionId(),
+      cwd: join(directory, "unregistered-repository"),
+    }),
+  });
+  assert.equal(claim.status, 200);
+  assert.deepEqual(await claim.json(), {
+    status: "claimed",
+    bindingId: configured.bindingId,
+  });
+
+  const second = await fetch(`${endpoint}/v1/logs`, {
+    method: "POST",
+    headers: ingressHeaders,
+    body: JSON.stringify(CODEX_FIXTURE),
+  });
+  assert.equal(second.status, 200);
+  assert.equal(requests.length, 2);
+  const health = await (
+    await fetch(`${endpoint}/health`, {
+      headers: {
+        "X-Coredoc-Relay-Ingress": "workspace-codex-ingress",
+        "X-Coredoc-Relay-Binding-Id": configured.bindingId,
+      },
+    })
+  ).json();
+  assert.equal(health.attribution.pendingCount, 0);
+  assert.equal(health.attribution.rejectedCount, 0);
+  assert.equal(typeof health.attribution.lastClaimAt, "string");
 });
 
 test("pins the first Codex repository claim and serializes its buffered drain", async (t) => {
@@ -1771,6 +2136,710 @@ test("authenticates and isolates canonical task/artifact PUTs with a route-speci
   assert.equal(recoveredHealth.capture.lastErrorCode, null);
 });
 
+test("workspace semantic capture resolves optional repository keys without losing workspace events", async (t) => {
+  const calls = [];
+  let resolverMode = "resolved";
+  const fetchImpl = async (url, options) => {
+    const pathname = new URL(url).pathname;
+    const body = JSON.parse(options.body);
+    calls.push({ pathname, headers: options.headers, body });
+    if (pathname.endsWith("/capture/v1/repositories/resolve")) {
+      if (resolverMode === "transport") throw new Error("PRIVATE transport");
+      if (resolverMode === "server-error") {
+        return new Response("PRIVATE /Users/alice/repository", { status: 503 });
+      }
+      if (resolverMode === "conflict") {
+        return new Response("PRIVATE conflict", { status: 409 });
+      }
+      if (resolverMode === "unregistered") {
+        return Response.json({ status: "unregistered" });
+      }
+      if (resolverMode === "mismatch") {
+        return Response.json({
+          status: "resolved",
+          repositoryKey: "other/repository",
+        });
+      }
+      if (resolverMode === "malformed") {
+        return Response.json({ status: "resolved" });
+      }
+      return Response.json({
+        status: "resolved",
+        repositoryKey: body.repositoryKey,
+      });
+    }
+    return Response.json({
+      acceptedEventIds: body.events.map(({ eventId }) => eventId),
+      duplicateEventIds: [],
+      rejected: [],
+    });
+  };
+
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-workspace-semantic-"));
+  const path = join(directory, "relay.json");
+  const configured = workspaceBinding();
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [configured] });
+  const relay = createManagedRelay({
+    configPath: path,
+    fetchImpl,
+    agentHealth: {
+      token: "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
+      runtimeVersion: "0.11.2",
+      runtimeDigest: "a".repeat(64),
+      protocolVersion: 1,
+      configSchemaVersion: 1,
+    },
+  });
+  const relayPort = await listen(relay);
+  t.after(() => close(relay));
+  const endpoint = `http://127.0.0.1:${relayPort}`;
+  const headers = {
+    "content-type": "application/json",
+    "X-Coredoc-Relay-Binding": "local-binding-one",
+  };
+  const submit = (event) =>
+    fetch(`${endpoint}/capture/v1/events`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ events: [event] }),
+    });
+
+  const repositoryless = startedEvent({ repositoryKey: undefined });
+  const repositorylessForwarded = { ...repositoryless };
+  delete repositorylessForwarded.repositoryKey;
+  let response = await submit(repositoryless);
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls.at(-1).body.events, [repositorylessForwarded]);
+  assert.equal(
+    calls.filter(({ pathname }) => pathname.endsWith("repositories/resolve"))
+      .length,
+    0
+  );
+
+  resolverMode = "resolved";
+  response = await submit(startedEvent());
+  assert.equal(response.status, 200);
+  assert.equal(calls.at(-1).body.events[0].repositoryKey, "acme/api");
+
+  resolverMode = "unregistered";
+  response = await submit(startedEvent());
+  assert.equal(response.status, 200);
+  assert.equal(Object.hasOwn(calls.at(-1).body.events[0], "repositoryKey"), false);
+
+  for (const degradedMode of ["transport", "server-error"]) {
+    resolverMode = degradedMode;
+    response = await submit(startedEvent());
+    assert.equal(response.status, 200);
+    assert.equal(
+      Object.hasOwn(calls.at(-1).body.events[0], "repositoryKey"),
+      false
+    );
+    const health = await (
+      await fetch(`${endpoint}/health`, {
+        headers: { "X-Coredoc-Relay-Binding": "local-binding-one" },
+      })
+    ).json();
+    assert.equal(
+      health.capture.lastErrorCode,
+      "REPOSITORY_ATTRIBUTION_DEGRADED"
+    );
+    assert.doesNotMatch(
+      JSON.stringify(health),
+      /PRIVATE|Users|repositories\/resolve/
+    );
+  }
+
+  const agentHealth = await (
+    await fetch(`${endpoint}/health/v2`, {
+      headers: {
+        "X-Coredoc-Agent-Health":
+          "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
+      },
+    })
+  ).json();
+  assert.equal(agentHealth.state, "degraded");
+  assert.equal(agentHealth.repositoryAttribution, "degraded");
+  assert.equal(agentHealth.hostIngress.claudeCode, "ready");
+  assert.equal(agentHealth.hostIngress.codex, "unconfigured");
+  assert.match(agentHealth.lastSuccessfulDeliveryAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(agentHealth.queueCounts, {
+    native: 0,
+    semantic: 0,
+    artifact: 0,
+    agent: 0,
+    total: 0,
+  });
+  assert.equal(
+    agentHealth.degradedReasons.includes("REPOSITORY_ATTRIBUTION_DEGRADED"),
+    true,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(agentHealth),
+    new RegExp(
+      `PRIVATE|Users|repositories/resolve|local-binding-one|${BINDING_ONE_ID}`,
+    ),
+  );
+
+  for (const unavailableMode of ["conflict", "mismatch", "malformed"]) {
+    resolverMode = unavailableMode;
+    const beforeForwards = calls.filter(({ pathname }) =>
+      pathname.endsWith("/capture/v1/events")
+    ).length;
+    response = await submit(startedEvent());
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), {
+      error: "REPOSITORY_UNAVAILABLE",
+    });
+    assert.equal(
+      calls.filter(({ pathname }) => pathname.endsWith("/capture/v1/events"))
+        .length,
+      beforeForwards
+    );
+  }
+});
+
+test("keeps a queued workspace event across resolver auth failure and delivers it after recovery", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-workspace-resolver-auth-retry-"));
+  const path = join(directory, "relay.json");
+  const configured = workspaceBinding();
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [configured] });
+  const event = startedEvent();
+  const outboxDirectory = join(
+    directory,
+    "outbox",
+    sha256BindingNonce(configured.bindingId),
+  );
+  mkdirSync(outboxDirectory, { recursive: true, mode: 0o700 });
+  const entryPath = join(outboxDirectory, `${event.eventId}.event.json`);
+  writeFileSync(
+    entryPath,
+    `${JSON.stringify({
+      binding: {
+        endpoint: "http://127.0.0.1:43181/capture/v1/events",
+        workspaceId: configured.workspaceId,
+        credentialFingerprint: "a".repeat(64),
+      },
+      event,
+    })}\n`,
+    { mode: 0o600 },
+  );
+  let authorized = false;
+  let resolverAttempts = 0;
+  let forwarded = 0;
+  const relay = createManagedRelay({
+    configPath: path,
+    outboxFlushIntervalMs: 25,
+    fetchImpl: async (url, options) => {
+      const pathname = new URL(url).pathname;
+      const body = JSON.parse(options.body);
+      if (pathname.endsWith("/capture/v1/repositories/resolve")) {
+        resolverAttempts += 1;
+        if (!authorized) {
+          return Response.json({ error: "AUTH_REJECTED" }, { status: 401 });
+        }
+        return Response.json({
+          status: "resolved",
+          repositoryKey: body.repositoryKey,
+        });
+      }
+      forwarded += 1;
+      return Response.json({
+        acceptedEventIds: body.events.map(({ eventId }) => eventId),
+        duplicateEventIds: [],
+        rejected: [],
+      });
+    },
+  });
+  const port = await listen(relay);
+  t.after(() => close(relay));
+
+  await waitFor(() => resolverAttempts > 0);
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(existsSync(entryPath), true);
+  assert.equal(forwarded, 0);
+  const failedHealth = await (
+    await fetch(`http://127.0.0.1:${port}/health`, {
+      headers: { "X-Coredoc-Relay-Binding": "local-binding-one" },
+    })
+  ).json();
+  assert.equal(failedHealth.capture.lastErrorCode, "AUTH_REJECTED");
+
+  authorized = true;
+  await waitFor(() => !existsSync(entryPath), 2_000);
+  assert.equal(forwarded, 1);
+  assert.ok(resolverAttempts >= 2);
+});
+
+test("workspace task and artifact delivery require an exact resolved repository", async (t) => {
+  const calls = [];
+  let resolverMode = "resolved";
+  const taskId = "cdt_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const artifactId = "cda_bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const fetchImpl = async (url, options) => {
+    const pathname = new URL(url).pathname;
+    const body = JSON.parse(options.body);
+    calls.push({ pathname, headers: options.headers, body });
+    if (pathname.endsWith("/capture/v1/repositories/resolve")) {
+      if (resolverMode === "transport") throw new Error("PRIVATE transport");
+      if (resolverMode === "server-error") return new Response("PRIVATE", { status: 503 });
+      if (resolverMode === "conflict") return new Response("PRIVATE", { status: 409 });
+      if (resolverMode === "unregistered") {
+        return Response.json({ status: "unregistered" });
+      }
+      if (resolverMode === "mismatch") {
+        return Response.json({ status: "resolved", repositoryKey: "other/repo" });
+      }
+      return Response.json({ status: "resolved", repositoryKey: body.repositoryKey });
+    }
+    if (pathname.includes("/tasks/")) {
+      return Response.json({
+        id: taskId,
+        repositoryKey: body.repositoryKey,
+        lifecycle: "active",
+        authority: "coredoc",
+        externalRefs: [],
+      });
+    }
+    return Response.json({
+      status: "accepted",
+      artifact: {
+        id: artifactId,
+        taskId: body.taskId,
+        repositoryKey: body.repositoryKey,
+        kind: body.kind,
+      },
+      revision: {
+        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        sha256: createHash("sha256").update(body.markdown).digest("hex"),
+        byteCount: Buffer.byteLength(body.markdown),
+        checkpoint: body.checkpoint,
+        runId: body.runId ?? null,
+        createdAt: "2026-08-16T20:00:00.000Z",
+      },
+    });
+  };
+
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-workspace-delivery-"));
+  const path = join(directory, "relay.json");
+  writeManagedRelayConfig(path, {
+    schemaVersion: 1,
+    bindings: [workspaceBinding()],
+  });
+  const relay = createManagedRelay({ configPath: path, fetchImpl });
+  const relayPort = await listen(relay);
+  t.after(() => close(relay));
+  const endpoint = `http://127.0.0.1:${relayPort}`;
+  const headers = {
+    "content-type": "application/json",
+    "X-Coredoc-Relay-Binding": "local-binding-one",
+  };
+  const taskBody = { repositoryKey: "acme/api" };
+  const artifactBody = {
+    taskId,
+    repositoryKey: "acme/api",
+    kind: "spec",
+    checkpoint: "run-finish",
+    markdown: "# Accepted specification\n",
+  };
+
+  for (const unavailableMode of [
+    "unregistered",
+    "conflict",
+    "mismatch",
+    "transport",
+    "server-error",
+  ]) {
+    resolverMode = unavailableMode;
+    const beforeDelivery = calls.filter(
+      ({ pathname }) => !pathname.endsWith("repositories/resolve")
+    ).length;
+    const response = await fetch(`${endpoint}/delivery/v2/tasks/${taskId}`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify(taskBody),
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "REPOSITORY_UNAVAILABLE" });
+    assert.equal(
+      calls.filter(({ pathname }) => !pathname.endsWith("repositories/resolve"))
+        .length,
+      beforeDelivery
+    );
+  }
+
+  resolverMode = "unregistered";
+  const refusedArtifact = await fetch(
+    `${endpoint}/delivery/v2/artifacts/${artifactId}/revisions`,
+    { method: "PUT", headers, body: JSON.stringify(artifactBody) }
+  );
+  assert.equal(refusedArtifact.status, 503);
+  assert.deepEqual(await refusedArtifact.json(), {
+    error: "REPOSITORY_UNAVAILABLE",
+  });
+
+  resolverMode = "resolved";
+  const task = await fetch(`${endpoint}/delivery/v2/tasks/${taskId}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(taskBody),
+  });
+  assert.equal(task.status, 200);
+  const artifact = await fetch(
+    `${endpoint}/delivery/v2/artifacts/${artifactId}/revisions`,
+    { method: "PUT", headers, body: JSON.stringify(artifactBody) }
+  );
+  assert.equal(artifact.status, 200);
+  const deliveryCalls = calls.filter(
+    ({ pathname }) => !pathname.endsWith("repositories/resolve")
+  );
+  assert.equal(deliveryCalls.length, 2);
+  assert.equal(deliveryCalls[0].headers.Authorization, "Bearer cloud-token-one");
+  assert.equal(deliveryCalls[1].headers.Authorization, "Bearer cloud-token-one");
+});
+
+test("durably queues only sanitized Claude native OTLP and replays it with rotated config", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-native-outbox-replay-"));
+  const path = join(directory, "relay.json");
+  const configured = workspaceBinding({
+    cloudAuthorization: "Bearer PRIVATE_NATIVE_CLOUD_TOKEN",
+  });
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [configured] });
+  let attempts = 0;
+  const failingRelay = createManagedRelay({
+    configPath: path,
+    fetchImpl: async () => {
+      attempts += 1;
+      throw new Error("PRIVATE /Users/alice/source.ts");
+    },
+    nativeOutboxFlushIntervalMs: 60_000,
+    nativeOutboxRetryDelayMs: () => 0,
+  });
+  const failingPort = await listen(failingRelay);
+  const poison = claudeFixture();
+  poison.resourceLogs[0].resource.attributes.push({
+    key: "process.command_line",
+    value: { stringValue: "PRIVATE_TOOL --secret /Users/alice/project" },
+  });
+  poison.resourceLogs[0].scopeLogs[0].logRecords[0].attributes.push({
+    key: "tool_input",
+    value: { stringValue: "PRIVATE_TOOL_INPUT" },
+  });
+  const queued = await fetch(`http://127.0.0.1:${failingPort}/v1/logs`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      Authorization: "Bearer PRIVATE_HOSTILE_LOCAL_TOKEN",
+      "X-Coredoc-Relay-Binding": "local-binding-one",
+    },
+    body: JSON.stringify(poison),
+  });
+  assert.equal(queued.status, 200);
+  assert.deepEqual(await queued.json(), { partialSuccess: {} });
+  assert.equal(attempts, 1);
+
+  const records = nativeQueueRecordPaths(directory, configured.bindingId);
+  assert.equal(records.length, 1);
+  assert.equal(statSync(join(directory, "native-outbox")).mode & 0o777, 0o700);
+  assert.equal(
+    statSync(join(directory, "native-outbox", configured.bindingId)).mode & 0o777,
+    0o700
+  );
+  assert.equal(statSync(records[0]).mode & 0o777, 0o600);
+  const persisted = readFileSync(records[0], "utf8");
+  assert.match(persisted, /claude_code\.api_request/);
+  for (const secret of [
+    "PRIVATE_",
+    "/Users/",
+    "cloud-token",
+    "local-binding-one",
+    "Authorization",
+  ]) {
+    assert.doesNotMatch(persisted, new RegExp(secret));
+  }
+
+  const diagnostic = await fetch(
+    `http://127.0.0.1:${failingPort}/native-outbox/v1`,
+    { headers: { "X-Coredoc-Relay-Binding": "local-binding-one" } }
+  );
+  assert.equal(diagnostic.status, 200);
+  const queuedHealth = await diagnostic.json();
+  assert.equal(queuedHealth.schemaVersion, 1);
+  assert.equal(queuedHealth.bindingId, configured.bindingId);
+  assert.equal(queuedHealth.pendingCount, 1);
+  assert.equal(queuedHealth.evictedCount, 0);
+  assert.equal(queuedHealth.lastEvictionReason, null);
+  assert.doesNotMatch(JSON.stringify(queuedHealth), /PRIVATE|Users|token|path/i);
+  const unauthenticatedDiagnostic = await fetch(
+    `http://127.0.0.1:${failingPort}/native-outbox/v1`
+  );
+  assert.equal(unauthenticatedDiagnostic.status, 401);
+  assert.deepEqual(await unauthenticatedDiagnostic.json(), {
+    error: "BINDING_MISMATCH",
+  });
+  await close(failingRelay);
+
+  const rotated = {
+    ...configured,
+    cloudAuthorization: "Bearer replacement-native-cloud-token",
+  };
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [rotated] });
+  const replayed = [];
+  const healthyRelay = createManagedRelay({
+    configPath: path,
+    fetchImpl: async (url, options) => {
+      replayed.push({ url, options, body: JSON.parse(options.body) });
+      return new Response("{}", { status: 200 });
+    },
+    nativeOutboxFlushIntervalMs: 20,
+    nativeOutboxRetryDelayMs: () => 0,
+  });
+  await listen(healthyRelay);
+  t.after(() => close(healthyRelay));
+  await waitFor(
+    () => nativeQueueRecordPaths(directory, configured.bindingId).length === 0
+  );
+  assert.equal(replayed.length, 1);
+  assert.equal(
+    replayed[0].options.headers.Authorization,
+    "Bearer replacement-native-cloud-token"
+  );
+  assert.doesNotMatch(JSON.stringify(replayed[0].body), /PRIVATE|Users/);
+});
+
+test("graceful close performs one bounded native replay and leaves no retry timer", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-native-outbox-close-"));
+  const path = join(directory, "relay.json");
+  const configured = workspaceBinding();
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [configured] });
+  let available = false;
+  let attempts = 0;
+  const relay = createManagedRelay({
+    configPath: path,
+    fetchImpl: async () => {
+      attempts += 1;
+      if (!available) throw new Error("offline");
+      return new Response("{}", { status: 200 });
+    },
+    nativeOutboxFlushIntervalMs: 60_000,
+    nativeOutboxRetryDelayMs: () => 0,
+  });
+  t.after(() => (relay.listening ? close(relay) : undefined));
+  const port = await listen(relay);
+  const response = await fetch(`http://127.0.0.1:${port}/v1/logs`, {
+    method: "POST",
+    headers: { "X-Coredoc-Relay-Binding": "local-binding-one" },
+    body: JSON.stringify(claudeFixture()),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(nativeQueueRecordPaths(directory, configured.bindingId).length, 1);
+  assert.equal(attempts, 1);
+
+  available = true;
+  await close(relay);
+  assert.equal(attempts, 2);
+  assert.equal(nativeQueueRecordPaths(directory, configured.bindingId).length, 0);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(attempts, 2);
+});
+
+test("immediate Codex native failures are admitted durably and remain fail-open", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-native-outbox-codex-"));
+  const path = join(directory, "relay.json");
+  const configured = workspaceBinding({
+    host: "codex",
+    nonce: "workspace-codex-ingress",
+  });
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [configured] });
+  const relay = createManagedRelay({
+    configPath: path,
+    fetchImpl: async () => {
+      throw new Error("offline");
+    },
+    nativeOutboxRetryDelayMs: () => 60_000,
+  });
+  const port = await listen(relay);
+  t.after(() => close(relay));
+  const response = await fetch(`http://127.0.0.1:${port}/v1/logs`, {
+    method: "POST",
+    headers: { "X-Coredoc-Relay-Ingress": "workspace-codex-ingress" },
+    body: JSON.stringify(CODEX_FIXTURE),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { partialSuccess: {} });
+  assert.equal(nativeQueueRecordPaths(directory, configured.bindingId).length, 1);
+});
+
+test("repeated native admissions do not reread bodies already indexed in memory", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-native-outbox-index-"));
+  const path = join(directory, "relay.json");
+  const configured = workspaceBinding();
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [configured] });
+  const reads = new Map();
+  const ids = [
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  ];
+  const relay = createManagedRelay({
+    configPath: path,
+    fetchImpl: async () => {
+      throw new Error("offline");
+    },
+    nativeOutboxFlushIntervalMs: 60_000,
+    nativeOutboxRecordId: () => ids.shift(),
+    nativeOutboxRetryDelayMs: () => 60_000,
+    nativeOutboxReadFileSync: (recordPath, ...args) => {
+      if (recordPath.endsWith(".native.json")) {
+        reads.set(recordPath, (reads.get(recordPath) ?? 0) + 1);
+      }
+      return readFileSync(recordPath, ...args);
+    },
+  });
+  const port = await listen(relay);
+  t.after(() => close(relay));
+  const endpoint = `http://127.0.0.1:${port}/v1/logs`;
+  const headers = { "X-Coredoc-Relay-Binding": "local-binding-one" };
+
+  for (let admitted = 1; admitted <= 3; admitted += 1) {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(claudeFixture()),
+    });
+    assert.equal(response.status, 200);
+    const records = nativeQueueRecordPaths(directory, configured.bindingId);
+    assert.equal(records.length, admitted);
+    assert.deepEqual(
+      records.map((recordPath) => reads.get(recordPath)),
+      Array.from({ length: admitted }, () => 1),
+    );
+  }
+});
+
+test("native outbox startup indexing still rejects unknown on-disk entries", () => {
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-native-outbox-unsafe-"));
+  const path = join(directory, "relay.json");
+  const configured = workspaceBinding();
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [configured] });
+  const root = join(directory, "native-outbox");
+  const bindingDirectory = join(root, configured.bindingId);
+  mkdirSync(root, { mode: 0o700 });
+  mkdirSync(bindingDirectory, { mode: 0o700 });
+  chmodSync(root, 0o700);
+  chmodSync(bindingDirectory, 0o700);
+  writeFileSync(join(bindingDirectory, "foreign.txt"), "keep\n", {
+    mode: 0o600,
+  });
+
+  assert.throws(
+    () => createManagedRelay({ configPath: path }),
+    (error) => error?.code === "NATIVE_OUTBOX_UNAVAILABLE",
+  );
+});
+
+test("native outbox enforces deterministic bounds, owner-only modes, age, and retry backoff", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-native-outbox-bounds-"));
+  const path = join(directory, "relay.json");
+  const configured = workspaceBinding();
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [configured] });
+  let clock = Date.parse("2026-08-16T12:00:00.000Z");
+  let attempts = 0;
+  const retryAttempts = [];
+  const ids = [
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  ];
+  const relay = createManagedRelay({
+    configPath: path,
+    now: () => new Date(clock).toISOString(),
+    fetchImpl: async () => {
+      attempts += 1;
+      throw new Error("offline");
+    },
+    nativeOutboxFlushIntervalMs: 20,
+    nativeOutboxMaxRecords: 2,
+    nativeOutboxMaxBytes: 4 * 1024 * 1024,
+    nativeOutboxMaxAgeMs: 1_000,
+    nativeOutboxRecordId: () => ids.shift(),
+    nativeOutboxRetryDelayMs: (attempt) => {
+      retryAttempts.push(attempt);
+      return 60_000;
+    },
+  });
+  const port = await listen(relay);
+  t.after(() => close(relay));
+  for (let index = 0; index < 3; index += 1) {
+    clock += 1;
+    const response = await fetch(`http://127.0.0.1:${port}/v1/logs`, {
+      method: "POST",
+      headers: { "X-Coredoc-Relay-Binding": "local-binding-one" },
+      body: JSON.stringify(claudeFixture()),
+    });
+    assert.equal(response.status, 200);
+  }
+  assert.equal(attempts, 3);
+  assert.deepEqual(retryAttempts, [1, 1, 1]);
+  const records = nativeQueueRecordPaths(directory, configured.bindingId);
+  assert.equal(records.length, 2);
+  assert.equal(records.some((record) => record.includes("aaaaaaaa-")), false);
+  for (const record of records) assert.equal(statSync(record).mode & 0o777, 0o600);
+
+  const headers = { "X-Coredoc-Relay-Binding": "local-binding-one" };
+  let diagnostic = await (
+    await fetch(`http://127.0.0.1:${port}/native-outbox/v1`, { headers })
+  ).json();
+  assert.equal(diagnostic.pendingCount, 2);
+  assert.equal(diagnostic.evictedCount, 1);
+  assert.equal(diagnostic.lastEvictionReason, "count");
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(attempts, 3);
+
+  clock += 2_000;
+  await waitFor(
+    () => nativeQueueRecordPaths(directory, configured.bindingId).length === 0
+  );
+  diagnostic = await (
+    await fetch(`http://127.0.0.1:${port}/native-outbox/v1`, { headers })
+  ).json();
+  assert.equal(diagnostic.pendingCount, 0);
+  assert.equal(diagnostic.evictedCount, 3);
+  assert.equal(diagnostic.lastEvictionReason, "age");
+});
+
+test("native outbox rejects only local admissions that cannot fit its byte bound", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-native-outbox-full-"));
+  const path = join(directory, "relay.json");
+  writeManagedRelayConfig(path, {
+    schemaVersion: 1,
+    bindings: [workspaceBinding()],
+  });
+  let forwarded = 0;
+  const relay = createManagedRelay({
+    configPath: path,
+    fetchImpl: async () => {
+      forwarded += 1;
+      return new Response("{}", { status: 200 });
+    },
+    nativeOutboxMaxBytes: 128,
+  });
+  const port = await listen(relay);
+  t.after(() => close(relay));
+  const response = await fetch(`http://127.0.0.1:${port}/v1/logs`, {
+    method: "POST",
+    headers: { "X-Coredoc-Relay-Binding": "local-binding-one" },
+    body: JSON.stringify(claudeFixture()),
+  });
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), {
+    partialSuccess: {
+      rejectedLogRecords: 1,
+      errorMessage: "NATIVE_OUTBOX_ADMISSION_FAILED",
+    },
+  });
+  assert.equal(forwarded, 0);
+});
+
 test("drains pending outbox events to upstream without waiting for a session start", async (t) => {
   const requests = [];
   const upstream = createServer(async (request, response) => {
@@ -1828,6 +2897,129 @@ test("drains pending outbox events to upstream without waiting for a session sta
   );
 });
 
+test("drains Codex outbox events from the binding-ID-hash directory", async (t) => {
+  const requests = [];
+  const upstream = createServer(async (request, response) => {
+    const body = await readJson(request);
+    requests.push(body);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      `${JSON.stringify({
+        acceptedEventIds: body.events.map(({ eventId }) => eventId),
+        duplicateEventIds: [],
+        rejected: [],
+      })}\n`
+    );
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => close(upstream));
+
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-managed-relay-codex-drain-"));
+  const path = join(directory, "relay.json");
+  const configured = binding({
+    host: "codex",
+    captureForwardEndpoint: `http://127.0.0.1:${upstreamPort}/api/v1/workspaces/ws-one/capture/v1/events`,
+  });
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [configured] });
+
+  const event = startedEvent({ host: "codex" });
+  const outboxDirectory = join(
+    directory,
+    "outbox",
+    sha256BindingNonce(configured.bindingId)
+  );
+  mkdirSync(outboxDirectory, { recursive: true });
+  const entryPath = join(outboxDirectory, `${event.eventId}.event.json`);
+  writeFileSync(
+    entryPath,
+    `${JSON.stringify({
+      binding: {
+        endpoint: "http://127.0.0.1:43181/capture/v1/events",
+        workspaceId: "ws-one",
+        credentialFingerprint: "a".repeat(64),
+      },
+      event,
+    })}\n`
+  );
+
+  const relay = createManagedRelay({
+    configPath: path,
+    outboxFlushIntervalMs: 25,
+  });
+  await listen(relay);
+  t.after(() => (relay.listening ? close(relay) : undefined));
+
+  for (let attempt = 0; attempt < 25 && existsSync(entryPath); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(existsSync(entryPath), false);
+  assert.deepEqual(
+    requests.flatMap(({ events }) => events.map(({ eventId }) => eventId)),
+    [event.eventId]
+  );
+});
+
+test("drains workspace Claude outbox events from the stable binding-ID-hash directory", async (t) => {
+  const requests = [];
+  const upstream = createServer(async (request, response) => {
+    const body = await readJson(request);
+    requests.push(body);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      `${JSON.stringify({
+        acceptedEventIds: body.events.map(({ eventId }) => eventId),
+        duplicateEventIds: [],
+        rejected: [],
+      })}\n`
+    );
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => close(upstream));
+
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-managed-relay-claude-workspace-drain-"));
+  const path = join(directory, "relay.json");
+  const configured = workspaceBinding({
+    captureForwardEndpoint: `http://127.0.0.1:${upstreamPort}/api/v1/workspaces/ws-one/capture/v1/events`,
+  });
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [configured] });
+
+  const event = startedEvent({ repositoryKey: undefined });
+  const outboxDirectory = join(
+    directory,
+    "outbox",
+    sha256BindingNonce(configured.bindingId)
+  );
+  mkdirSync(outboxDirectory, { recursive: true });
+  const entryPath = join(outboxDirectory, `${event.eventId}.event.json`);
+  writeFileSync(
+    entryPath,
+    `${JSON.stringify({
+      binding: {
+        endpoint: "http://127.0.0.1:43181/capture/v1/events",
+        workspaceId: "ws-one",
+        credentialFingerprint: "a".repeat(64),
+      },
+      event,
+    })}\n`
+  );
+
+  const relay = createManagedRelay({
+    configPath: path,
+    outboxFlushIntervalMs: 25,
+  });
+  await listen(relay);
+  t.after(() => (relay.listening ? close(relay) : undefined));
+
+  for (let attempt = 0; attempt < 25 && existsSync(entryPath); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(existsSync(entryPath), false);
+  assert.deepEqual(
+    requests.flatMap(({ events }) => events.map(({ eventId }) => eventId)),
+    [event.eventId]
+  );
+});
+
 test("leaves outbox events untouched when the upstream is unavailable", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "coredoc-managed-relay-drain-"));
   const path = join(directory, "relay.json");
@@ -1864,18 +3056,23 @@ test("leaves outbox events untouched when the upstream is unavailable", async (t
   assert.equal(existsSync(entryPath), true);
 });
 
-test("self-heals a latched transport error once the upstream answers again", async (t) => {
+test("empty-outbox probes stay degraded on auth or invalid upstream responses and heal only on the capture contract", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "coredoc-managed-relay-heal-"));
   const path = join(directory, "relay.json");
   writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [binding()] });
-  let upstreamDown = true;
+  let upstreamMode = "down";
   const relay = createManagedRelay({
     configPath: path,
     outboxFlushIntervalMs: 25,
     fetchImpl: async () => {
-      if (upstreamDown) throw new Error("connection refused");
-      // ANY HTTP response proves the transport — even the 4xx an empty probe batch earns.
-      return new Response(JSON.stringify({ error: "INVALID_CAPTURE" }), { status: 422 });
+      if (upstreamMode === "down") throw new Error("connection refused");
+      if (upstreamMode === "auth") {
+        return Response.json({ error: "AUTH_REJECTED" }, { status: 401 });
+      }
+      if (upstreamMode === "invalid-contract") {
+        return Response.json({ status: "PRIVATE" }, { status: 200 });
+      }
+      return Response.json({ status: "ready" });
     },
   });
   const relayPort = await listen(relay);
@@ -1896,8 +3093,23 @@ test("self-heals a latched transport error once the upstream answers again", asy
   const latched = await (await fetch(`${endpoint}/health`, { headers })).json();
   assert.equal(latched.capture.lastErrorCode, "TRANSPORT_UNAVAILABLE");
 
-  // With an empty outbox nothing retries the channel, so the drain tick probes and clears it.
-  upstreamDown = false;
+  upstreamMode = "auth";
+  let authRejected;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    authRejected = await (await fetch(`${endpoint}/health`, { headers })).json();
+    if (authRejected.capture.lastErrorCode === "AUTH_REJECTED") break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(authRejected.capture.lastErrorCode, "AUTH_REJECTED");
+  assert.equal(authRejected.capture.state, "error");
+
+  upstreamMode = "invalid-contract";
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const stillDegraded = await (await fetch(`${endpoint}/health`, { headers })).json();
+  assert.notEqual(stillDegraded.capture.lastErrorCode, null);
+
+  // Only the exact side-effect-free probe contract proves the authenticated route.
+  upstreamMode = "recovered";
   let healed;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     healed = await (await fetch(`${endpoint}/health`, { headers })).json();
@@ -1911,7 +3123,7 @@ test("self-heals a latched transport error once the upstream answers again", asy
 test("heals a stale persisted transport error after a relay restart", async (t) => {
   // The user-visible case: the relay restarts (fresh in-memory state), the outbox is empty,
   // but the binding's capture-health.json still carries the transport error a failed client
-  // flush latched — and the desktop's health report reads exactly that file.
+  // flush latched — and the capture health reporter reads exactly that file.
   const directory = mkdtempSync(join(tmpdir(), "coredoc-managed-relay-heal-file-"));
   const path = join(directory, "relay.json");
   const configured = binding();
@@ -1934,7 +3146,14 @@ test("heals a stale persisted transport error after a relay restart", async (t) 
   const relay = createManagedRelay({
     configPath: path,
     outboxFlushIntervalMs: 25,
-    fetchImpl: async () => new Response(JSON.stringify({ error: "INVALID_CAPTURE" }), { status: 422 }),
+    fetchImpl: async (url, options) => {
+      assert.equal(
+        new URL(url).pathname,
+        "/api/v1/workspaces/ws-one/capture/v1/probe",
+      );
+      assert.equal(options.body, "{}");
+      return Response.json({ status: "ready" });
+    },
   });
   await listen(relay);
   t.after(() => (relay.listening ? close(relay) : undefined));

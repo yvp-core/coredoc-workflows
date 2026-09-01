@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "entry": "scripts/managed-otel-relay.mjs",
+  "files": [
+    {
+      "path": "runtime/artifacts/contract.mjs",
+      "sha256": "0ae032df1cc8d3cfd0a49421b36cea716b5f985ec970e8ea844ad913381ef69f"
+    },
+    {
+      "path": "runtime/capture/contract.mjs",
+      "sha256": "d4526dad70e757f6049e5f2f61e4d2dd79826f0489e475384518ce008e594d2c"
+    },
+    {
+      "path": "runtime/capture/file-outbox.mjs",
+      "sha256": "d1421ec7d38a060f7b7af6c1fc5cdeb1e751dc581a6f2a0c8f0ea0a5c184152d"
+    },
+    {
+      "path": "runtime/capture/health.mjs",
+      "sha256": "68b87283c05022624794bcf03b578bb913078410ba67962387986ca139d45f5f"
+    },
+    {
+      "path": "runtime/capture/index.mjs",
+      "sha256": "1160d330e904e80c4b881deaeb5d1300fd270bbd6f3a5726ff3169d0518cd241"
+    },
+    {
+      "path": "scripts/artifact-checkpoints.mjs",
+      "sha256": "a593b6827e87978266cf450f730301ba0f3a3db29d65029712eb5dc99b777c3d"
+    },
+    {
+      "path": "scripts/capture-client.mjs",
+      "sha256": "8864cafefb720e3545419e523bd2726e804bea5528ae868fcdc227a83e9f1e64"
+    },
+    {
+      "path": "scripts/capture-health-report.mjs",
+      "sha256": "da7af7f0cc2d66e25850b6f08c8a470b86b7d148dbc71cdbe2c8aa4ab54cbceb"
+    },
+    {
+      "path": "scripts/codex-attribution-state.mjs",
+      "sha256": "1532044380a175cdd27ac8f1d2793b38584d4f24f7b486afc900366ef4e83940"
+    },
+    {
+      "path": "scripts/codex-session-claim.mjs",
+      "sha256": "0bedaad0003b91495990127b2b379e1e681efbf28c636b043d1adc45c382d380"
+    },
+    {
+      "path": "scripts/managed-otel-relay.mjs",
+      "sha256": "79f9d01ca51bce7994c2d57c57a20c72666ce369d61fe5948a0c7239f659cba2"
+    },
+    {
+      "path": "scripts/native-otel-sanitizer.mjs",
+      "sha256": "9681c2cee01237b7e2466462396a0f23f875fa108518be4b16c0322ec7ed113c"
+    },
+    {
+      "path": "scripts/project-key.mjs",
+      "sha256": "71b0742267048b40b3eafb5f400f727f9bcd27a582c99d900668a0351a3c88ca"
+    }
+  ]
+}

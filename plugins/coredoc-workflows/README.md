@@ -8,7 +8,9 @@ The core workflows do not require globally installed workflow skills, an
 external review CLI, a browser plugin, Bun, or a separately downloaded
 Chromium. The opt-in cross-model workflows require the selected provider's CLI;
 browser workflows use the bundled `darwin-arm64` server and an installed
-Chrome-compatible browser.
+Chrome-compatible browser. The optional plugin-managed capture agent requires
+macOS and system Node.js 22 or newer; ordinary workflows continue to use the
+bundled Bun runtime.
 
 ## Included workflows
 
@@ -33,6 +35,8 @@ Chrome-compatible browser.
 - `coredoc-devex-review` — read-only DX audit of a CLI, SDK, API, or plugin surface, measured cold
 - `coredoc-learn` — explicit, evidence-grounded learning cards
 - `coredoc-retro` — compact retrospectives over local read-only git evidence
+- `coredoc-capture` — explicit setup and lifecycle management for the optional
+  per-user macOS capture agent
 
 `coredoc-devex-review` is invoked directly rather than routed: the router
 classifies a user's engineering task, and a DX audit is usually a deliberate
@@ -124,9 +128,10 @@ Claude Code currently provides the automatic completion gate through bounded
 post-use observations in the bundled hooks. Both hosts can record stage
 intervals through explicit router boundary commands; this does not depend on
 `PreToolUse`/`PostToolUse` Skill correlation. Codex route, stage, and finish
-commands use its native session identity; when Desktop has provisioned a managed
-Codex OTLP block, they also recover the matching semantic-capture binding without
-copying a cloud credential into Codex settings. A host without session identity
+commands use its native session identity; when the plugin-managed agent or a
+compatible existing relay has provisioned a managed Codex OTLP block, they also
+recover the matching semantic-capture binding without copying a cloud credential
+into Codex settings. A host without session identity
 skips stage commands and reports that the completion gate is unavailable instead
 of silently passing. The gate proves only that the router executed the stage
 boundary commands against local run state: it is self-reported bookkeeping in a
@@ -180,7 +185,8 @@ ordinary work-item-free route records the exact existing schema-V2
 workspace-scoped `capture/v1/events` endpoint. A route with verified work-item
 relations records one schema-V3 `workflow.run.started`; its later stage and
 finish events remain schema-V2. The URL stays versioned independently from the
-event schema.
+event schema. The managed relay's authenticated health contract advertises
+`acceptedSchemaVersions: [1, 2, 3]` before a producer sends a V3 start.
 
 The agent first reads each intended ticket through its provider MCP, ignores
 provider-content instructions, and extracts only the provider adapter key,
@@ -344,28 +350,34 @@ ledger.
 
 ## Delivery telemetry and privacy
 
-Managed workflow capture activates only when Coredoc Desktop has provisioned a
-relay binding. The legacy direct-cloud compatibility path activates only when an
-operator explicitly supplies `COREDOC_CAPTURE_ENDPOINT` and the independent
-`COREDOC_CAPTURE_HEADERS` credential; installation supplies neither. Claude
-receives managed capture variables in its managed environment.
-For Codex, Desktop writes one marker-owned `[otel]` block to the selected
-user-level base or named profile and one merge-preserving `SessionStart` handler
-to `~/.codex/hooks.json`. The OTLP block carries a machine-local
-`X-Coredoc-Relay-Ingress` token; the hook sends only Codex's session ID and `cwd`
-to the local relay. The relay canonicalizes the Git common directory and resolves
-that machine-local repository scope through its mode-0600 binding map. Explicit
-workflow commands register the same claim as a fallback and add the exact local
-binding ID to semantic capture. No repository file chooses a workspace, and an
-unmapped or missing claim is never routed to a default workspace.
+Managed capture is disabled until an operator creates a mode-0600
+`~/.coredoc/capture-agent-policy.json` and explicitly runs
+`coredoc-workflows capture setup`. The policy has exactly three fields: schema
+version 1, one canonical HTTPS server origin, and one workspace UUID. Neither a
+repository, current working directory, host payload, Coredoc MCP, nor Coredoc
+Desktop can select another destination. Coredoc Desktop is not required.
 
-Claude bindings continue to use a distinct random `X-Coredoc-Relay-Binding`
-nonce. Codex repository bindings share only the machine ingress token; each keeps
-its own binding ID, repository identity, workspace, and cloud destination. Both
-semantic capture and native Claude/Codex OTLP point to
-`http://127.0.0.1:43181`. The cloud bearer exists only in
-`~/.coredoc/capture-relay/relay.json`; it is never written to host settings or
-returned through renderer IPC.
+Setup requires macOS and system Node.js 22 or newer. It may open a browser for
+PKCE enrollment, mints one installation-scoped telemetry credential, copies the
+hash-verified runtime into the stable per-user `~/.coredoc/capture-agent`
+directory, installs a per-user LaunchAgent, and merge-writes marker-owned global
+Claude Code and Codex configuration. Marketplace installation alone performs
+none of those actions. Ordinary plugin commands continue to run through the
+bundled Bun runtime.
+
+The LaunchAgent and Codex claim hook record the selected external Node
+executable. After replacing or removing a version-managed Node installation,
+install Node.js 22 or newer, run `coredoc-workflows capture repair`, and restart
+Claude Code and Codex if the executable path changed. Identity and queued data
+remain recoverable while capture is unavailable.
+
+Claude Code and Codex receive different random loopback capabilities. Both
+semantic capture and native OTLP point to `http://127.0.0.1:43181`; host settings
+never contain the cloud bearer. A Codex `SessionStart` hook may provide optional
+repository attribution, but native and workspace-level delivery does not wait
+for that claim. A missing repository or unmapped remote remains workspace-scoped
+instead of being guessed. No repository-local capture file is created or
+required.
 
 Codex workflow boundary commands (`coredoc-workflows route-task`,
 `coredoc-workflows stage-run`, and `coredoc-workflows finish-run`) must run
@@ -376,29 +388,23 @@ those exact trusted plugin commands. A denied loopback preflight reports the
 sandbox restriction directly rather than presenting it as a capture-schema
 mismatch.
 
-On macOS, Desktop installs a per-user LaunchAgent with `KeepAlive` and force
-restarts it before writing host settings, so provisioning cannot leave an old
-running validator behind. The LaunchAgent runs this plugin's
-`managed-otel-relay.mjs` through the app-owned Electron runtime, so closing
-Desktop or the host session does not stop capture. The relay authenticates the
-incoming local capability, reloads the exact multi-binding config, sanitizes
-native logs, validates semantic events, and replaces local headers with the
-resolved binding's cloud authorization. Codex session claims persist across relay
-restarts with a seven-day TTL. The first live repository claim pins that session;
-matching retries refresh it, while a different repository is rejected and counted.
-OTLP that races ahead of a claim is held only in a
-bounded 30-second in-memory buffer; expired, overflowed, or restart-lost records
-are rejected and counted instead of being guessed into a workspace. `GET
-/health` is authenticated and returns only bounded binding/channel and
-attribution facts; `capture.acceptedSchemaVersions` is the exact sorted set
-`[1, 2, 3]`. Before any local state or outbox write, a V3 route requires that
-authenticated managed health capability. An absent field identifies an old
-relay and the route refuses work-item emission. Direct-cloud mode relies on the
-already-upgraded server validator. `SessionStart` performs a short authenticated
-ensure poll using the local capability without loading `relay.json` or its cloud
-bearer, before retrying pending semantic events; lifecycle ownership remains with
-launchd. A foreign listener or unavailable supervisor therefore fails closed
-before host settings are written.
+The LaunchAgent runs an immutable, digest-addressed runtime independently of the
+plugin cache and host sessions. The relay authenticates each incoming local
+capability, sanitizes native logs before persistence, validates semantic events,
+and replaces local headers with the installed workspace credential. Sanitized
+native, semantic, and artifact queues are separate, bounded, owner-only, and
+replay-safe. Authenticated `/health/v2` reports only version, protocol, channel,
+queue, and closed degradation state. A foreign listener, unmanaged host OTLP
+configuration, policy drift, unsafe state file, or unavailable supervisor fails
+closed before setup overwrites anything.
+
+Setup recognizes only the supported marker-owned Desktop relay and LaunchAgent
+layouts. During migration it stops only that recognized service, imports
+compatible pending state for the configured workspace, starts and probes the new
+agent, and then retires the old marker-owned service and matching legacy
+credential. An unknown listener is never killed. A failure before commit
+restores the prior service state, host files, runtime links, and queue placement;
+unsupported pending data is left for the old relay to drain.
 
 Only structured identity and usage fields can leave the machine: host/provider,
 session or conversation ID, model and supported host version, token/cache/
@@ -407,35 +413,30 @@ sanitizer rebuilds the OTLP request from that allowlist before its first remote
 request. Prompts, command/tool arguments, outputs, source, diffs, paths,
 transcripts, artifacts, account/email fields, and native cost estimates never
 leave through this path. Unsupported versions and unknown payloads are refused.
-The relay has no native outbox and never persists the unsanitized request. The
-older `native-otel:sanitize` command remains a development diagnostic, not the
-supported provisioning/lifecycle path.
+The native outbox receives only the reconstructed sanitized object; unsanitized
+requests are never queued. The older `native-otel:sanitize` command remains a
+development diagnostic, not the supported provisioning/lifecycle path.
 
 Accepted data goes only to the configured Coredoc workspace. Workspace admins
-can read workspace-wide pilot activity; members receive server-filtered rows for
-their own identity. Pending first-party workflow events and their
-`capture-health.json` remain binding-isolated. Managed relay capture uses the
-mode-0700 global directory
-`~/.coredoc/capture-relay/outbox/<bindingIdHash>` so Desktop can report a Codex
-repository/profile or Claude repository by its non-secret relay binding ID
-without a host cwd or plaintext local capability. Direct-cloud compatibility remains project-scoped,
-or uses `COREDOC_WORKFLOWS_CAPTURE_DIR` when explicitly set. Those files contain
-only the closed capture envelope and a strict mode-0600 bounded diagnostic, not
-native OTLP content.
+can read workspace-wide activity; members receive server-filtered rows for their
+own identity. Pending state remains binding-isolated below the mode-0700
+`~/.coredoc/capture-relay` directory. Files are mode 0600 and contain only
+validated capture envelopes, sanitized native records, or bounded diagnostics.
 
 `pnpm --dir plugins/coredoc-workflows capture-health:report` prints exactly one
 bounded JSON object with `pendingCount`, `errorCode`,
 `attributionPendingCount`, `attributionRejectedCount`, and
-`attributionLastClaimAt`. Desktop renders those attribution fields so a skipped,
-untrusted, or broken Codex hook is visible instead of looking like inactivity.
-Ordinary host execution reads the production capture environment and cwd.
-Desktop-owned managed reporting instead supplies only
-`COREDOC_RELAY_CONFIG_PATH` and `COREDOC_RELAY_BINDING_ID`; the report validates
-the existing relay config and never prints config paths, headers, nonces, cloud
-authorization, payloads, or raw errors.
-Without managed Coredoc configuration, workflow capture creates no backlog and
-the relay cannot route a request. Unsupported operating systems report
-provisioning unavailable rather than writing a direct-cloud fallback.
+`attributionLastClaimAt`; it never prints config paths, headers, nonces, cloud
+authorization, payloads, or raw errors. Without an explicitly configured
+managed agent or compatibility endpoint, workflow capture creates no opt-out
+backlog and ordinary workflows continue normally.
+
+The legacy direct-cloud compatibility path remains separate. It activates only
+when an operator explicitly supplies `COREDOC_CAPTURE_ENDPOINT` and an
+independent `COREDOC_CAPTURE_HEADERS` credential; plugin installation supplies
+neither, and this path never reuses the agent credential. See
+[`docs/plugin-managed-capture-agent.md`](../../docs/plugin-managed-capture-agent.md)
+for policy setup, lifecycle commands, migration, rollback, and purge behavior.
 
 ## Deliberate constraints
 

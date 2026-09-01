@@ -97,19 +97,49 @@ test("release tags must match the aligned committed version", async () => {
   await assert.rejects(verifyRelease("v0.11.1"), /tag does not match/);
 });
 
-test("documents both opt-in capture paths without implying installation enables them", async () => {
+test("documents opt-in plugin-managed capture without changing the core runtime contract", async () => {
   const documents = await Promise.all([
     readFile(join(root, "README.md"), "utf8"),
     readFile(join(root, "SECURITY.md"), "utf8"),
+    readFile(join(root, "CONTRIBUTING.md"), "utf8"),
     readFile(join(pluginRoot, "README.md"), "utf8"),
+    readFile(join(root, "docs", "plugin-managed-capture-agent.md"), "utf8"),
   ]);
 
   for (const document of documents) {
+    assert.match(document, /capture-agent-policy\.json/);
+    assert.match(document, /Node\.js 22/);
+  }
+  assert.match(documents[0], /does \*\*not\*\* register a LaunchAgent/);
+  assert.match(
+    documents[0],
+    /ordinary workflows continue to use the bundled Bun\s+runtime/i,
+  );
+  assert.match(documents[1], /disabled by default/i);
+  assert.match(documents[3], /Coredoc Desktop is not required/);
+  assert.match(documents[4], /"schemaVersion": 1/);
+  assert.match(documents[4], /"serverOrigin": "<https-origin>"/);
+  assert.match(documents[4], /"workspaceId": "<workspace-uuid>"/);
+  assert.match(documents[4], /chmod 600 ~\/\.coredoc\/capture-agent-policy\.json/);
+  assert.match(documents[4], /capture setup/);
+  assert.match(documents[4], /capture uninstall --purge/);
+
+  for (const document of [documents[0], documents[1], documents[3]]) {
     assert.match(document, /COREDOC_CAPTURE_ENDPOINT/);
     assert.match(document, /COREDOC_CAPTURE_HEADERS/);
   }
-  assert.match(documents[0], /Installation never creates or discovers/);
-  assert.match(documents[1], /installation supplies neither value/i);
+});
+
+test("advertises the optional capture agent without changing OSS release identity", async () => {
+  const codex = await json(join(pluginRoot, ".codex-plugin", "plugin.json"));
+  const claude = await json(join(pluginRoot, ".claude-plugin", "plugin.json"));
+
+  for (const manifest of [codex, claude]) {
+    assert.equal(manifest.version, "0.11.2");
+    assert.equal(manifest.repository, "https://github.com/yvp-core/coredoc-workflows");
+    assert.match(manifest.description, /capture agent/i);
+  }
+  assert.ok(codex.interface.capabilities.includes("Opt-in macOS capture agent"));
 });
 
 test("release checksums contain the downloadable asset name without a dist prefix", async () => {

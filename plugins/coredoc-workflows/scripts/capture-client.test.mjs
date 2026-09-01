@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,13 +12,17 @@ import {
   deliverCaptureEvent,
   preflightCaptureSchemaVersion,
   resolveWorkflowRuntime,
+  selectManagedCaptureBinding,
   workflowSessionId,
 } from "./capture-client.mjs";
 import {
   sha256BindingNonce,
   writeManagedRelayConfig,
 } from "./managed-otel-relay.mjs";
-import { resolveRepositoryScopeKey } from "./project-key.mjs";
+import {
+  resolveRepositoryIdentity,
+  resolveRepositoryScopeKey,
+} from "./project-key.mjs";
 
 const ENV = {
   COREDOC_CAPTURE_ENDPOINT:
@@ -37,6 +42,52 @@ const MANAGED_ENV = {
 const CODEX_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const CODEX_BINDING_NONCE =
   "local_binding_codex_abcdefghijklmnopqrstuvwxyz012345";
+
+function gitInit(dir) {
+  execFileSync("git", ["init", "-q"], {
+    cwd: dir,
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  return dir;
+}
+
+function workspaceBinding({
+  bindingId = "22222222-2222-4222-8222-222222222222",
+  host = "codex",
+  enabled,
+} = {}) {
+  // The relay schema persists workspaceMode, not enabled. `enabled: false` is
+  // used only to exercise the selector's tolerance for stale/injected values.
+  return {
+    schemaVersion: 1,
+    bindingId,
+    bindingNonceHash: sha256BindingNonce(CODEX_BINDING_NONCE),
+    host,
+    ...(enabled === undefined ? {} : { enabled }),
+    workspaceMode: true,
+    workspaceId: "ws-1",
+    nativeForwardEndpoint:
+      "https://capture.invalid/api/v1/workspaces/ws-1/otel/v1/logs",
+    captureForwardEndpoint:
+      "https://capture.invalid/api/v1/workspaces/ws-1/capture/v1/events",
+    cloudAuthorization: "Bearer must-not-escape",
+  };
+}
+
+function writeCodexIngress({ codexHome, stateHome }) {
+  mkdirSync(codexHome, { recursive: true });
+  writeFileSync(
+    join(codexHome, "config.toml"),
+    codexManagedConfig(CODEX_BINDING_NONCE),
+    "utf8",
+  );
+  mkdirSync(join(stateHome, "capture-relay"), { recursive: true });
+  writeFileSync(
+    join(stateHome, "capture-relay", "codex-ingress.json"),
+    `${JSON.stringify({ schemaVersion: 1, token: CODEX_BINDING_NONCE })}\n`,
+    { mode: 0o600 },
+  );
+}
 
 function codexManagedConfig(bindingNonce) {
   return [
@@ -213,6 +264,8 @@ test("routes managed Codex workflow capture by cwd across two repository binding
   mkdirSync(codexHome, { recursive: true });
   mkdirSync(repoOne, { recursive: true });
   mkdirSync(repoTwo, { recursive: true });
+  gitInit(repoOne);
+  gitInit(repoTwo);
   writeFileSync(join(codexHome, "config.toml"), codexManagedConfig(CODEX_BINDING_NONCE), "utf8");
   mkdirSync(join(stateHome, "capture-relay"), { recursive: true });
   writeFileSync(
@@ -254,7 +307,13 @@ test("routes managed Codex workflow capture by cwd across two repository binding
 
   const first = resolveWorkflowRuntime({
     cwd: repoOne,
-    env: { CODEX_HOME: codexHome, CODEX_SESSION_ID, COREDOC_WORKFLOWS_STATE_HOME: stateHome },
+    env: {
+      CODEX_HOME: codexHome,
+      CODEX_SESSION_ID,
+      COREDOC_WORKFLOWS_STATE_HOME: stateHome,
+      COREDOC_CAPTURE_WORKSPACE_MODE: "1",
+      COREDOC_CAPTURE_REPOSITORY_STATE: "none",
+    },
   });
   const second = resolveWorkflowRuntime({
     cwd: repoTwo,
@@ -263,6 +322,8 @@ test("routes managed Codex workflow capture by cwd across two repository binding
 
   assert.equal(first.env.COREDOC_CAPTURE_WORKSPACE_ID, "ws-1");
   assert.equal(first.env.COREDOC_WORKFLOWS_REPO_KEY, "acme/repo-one");
+  assert.equal(first.env.COREDOC_CAPTURE_WORKSPACE_MODE, undefined);
+  assert.equal(first.env.COREDOC_CAPTURE_REPOSITORY_STATE, undefined);
   assert.equal(second.env.COREDOC_CAPTURE_WORKSPACE_ID, "ws-2");
   assert.equal(second.env.COREDOC_WORKFLOWS_REPO_KEY, "acme/repo-two");
   assert.equal(
@@ -273,6 +334,308 @@ test("routes managed Codex workflow capture by cwd across two repository binding
     second.env.COREDOC_CAPTURE_HEADERS,
     `X-Coredoc-Relay-Ingress=${CODEX_BINDING_NONCE},X-Coredoc-Relay-Binding-Id=33333333-3333-4333-8333-333333333333`,
   );
+});
+
+test("selects exactly one persisted workspace binding and tolerates a stale disabled candidate", () => {
+  const selected = selectManagedCaptureBinding({
+    bindings: [
+      workspaceBinding({
+        bindingId: "11111111-1111-4111-8111-111111111111",
+        enabled: false,
+      }),
+      workspaceBinding(),
+      workspaceBinding({
+        bindingId: "33333333-3333-4333-8333-333333333333",
+        host: "claude-code",
+      }),
+    ],
+    host: "codex",
+    bindingNonceHash: sha256BindingNonce(CODEX_BINDING_NONCE),
+    repositoryIdentity: null,
+  });
+
+  assert.equal(selected.mode, "workspace");
+  assert.equal(
+    selected.binding.bindingId,
+    "22222222-2222-4222-8222-222222222222",
+  );
+});
+
+test("workspace binding resolution fails closed on ambiguity or no binding", () => {
+  const options = {
+    host: "codex",
+    bindingNonceHash: sha256BindingNonce(CODEX_BINDING_NONCE),
+    repositoryIdentity: null,
+  };
+
+  for (const bindings of [
+    [],
+    [
+      workspaceBinding(),
+      workspaceBinding({
+        bindingId: "33333333-3333-4333-8333-333333333333",
+      }),
+    ],
+  ]) {
+    assert.throws(
+      () => selectManagedCaptureBinding({ ...options, bindings }),
+      (error) => {
+        assert.equal(error.message, "managed Codex relay binding is unavailable");
+        assert.doesNotMatch(error.message, /must-not-escape|capture-client-workspace/);
+        return true;
+      },
+    );
+  }
+
+  assert.throws(
+    () =>
+      selectManagedCaptureBinding({
+        bindings: [
+          {
+            ...workspaceBinding(),
+            workspaceMode: false,
+            repositoryScopeKey: "repo-111111111111111111111111",
+          },
+        ],
+        host: options.host,
+        bindingNonceHash: options.bindingNonceHash,
+      }),
+    /managed Codex relay binding is unavailable/,
+  );
+});
+
+test("legacy repository binding remains selected by repository scope", () => {
+  const repo = gitInit(mkdtempSync(join(tmpdir(), "capture-client-legacy-repo-")));
+  const identity = resolveRepositoryIdentity(repo);
+  const binding = {
+    ...workspaceBinding(),
+    workspaceMode: false,
+    repositoryKey: "acme/legacy",
+    repositoryScopeKey: identity.repositoryScopeKey,
+  };
+
+  const selected = selectManagedCaptureBinding({
+    bindings: [binding],
+    host: "codex",
+    bindingNonceHash: binding.bindingNonceHash,
+    repositoryIdentity: identity,
+  });
+
+  assert.equal(selected.mode, "repository");
+  assert.equal(selected.binding, binding);
+});
+
+test("workspace-mode omits repository and cwd payloads outside Git or without a remote", async () => {
+  const root = mkdtempSync(join(tmpdir(), "capture-client-workspace-"));
+  const cwd = join(root, "plain-directory");
+  const codexHome = join(root, "codex");
+  const stateHome = join(root, "state");
+  mkdirSync(cwd);
+  writeCodexIngress({ codexHome, stateHome });
+
+  const runtime = resolveWorkflowRuntime({
+    cwd,
+    env: {
+      CODEX_HOME: codexHome,
+      CODEX_SESSION_ID,
+      COREDOC_WORKFLOWS_STATE_HOME: stateHome,
+      COREDOC_WORKFLOWS_REPO_KEY: "guessed/from-origin",
+      COREDOC_CAPTURE_REPOSITORY_CANDIDATE_KEY: "stale/candidate",
+      COREDOC_CAPTURE_REPOSITORY_SCOPE_KEY: "repo-ffffffffffffffffffffffff",
+    },
+    readRelayConfig: () => ({
+      schemaVersion: 1,
+      bindings: [workspaceBinding()],
+    }),
+  });
+
+  assert.equal(runtime.env.COREDOC_CAPTURE_WORKSPACE_ID, "ws-1");
+  assert.equal(runtime.env.COREDOC_CAPTURE_WORKSPACE_MODE, "1");
+  assert.equal(runtime.env.COREDOC_CAPTURE_REPOSITORY_STATE, "none");
+  assert.equal(
+    runtime.env.COREDOC_CAPTURE_REPOSITORY_CANDIDATE_KEY,
+    undefined,
+  );
+  assert.equal(runtime.env.COREDOC_WORKFLOWS_REPO_KEY, undefined);
+  assert.equal(runtime.env.COREDOC_CAPTURE_REPOSITORY_SCOPE_KEY, undefined);
+
+  let recorderOptions;
+  let claims = 0;
+  const result = await deliverCaptureEvent(
+    {
+      occurredAt: "2026-08-18T10:00:00.000Z",
+      type: "capability.used",
+      data: { kind: "skill", capabilityId: "coredoc-spec", outcome: "success" },
+    },
+    {
+      env: runtime.env,
+      cwd,
+      sessionId: CODEX_SESSION_ID,
+      fetchImpl: async () => {
+        claims += 1;
+        throw new Error("workspace mode must not send a cwd claim");
+      },
+      createRecorder: (options) => {
+        recorderOptions = options;
+        return {
+          record: () => ({ status: "queued", eventId: "current-event", pending: 1 }),
+          flush: async () => ({
+            pending: 0,
+            bindingRefused: 0,
+            unreadable: 0,
+            receipt: {
+              acceptedEventIds: ["current-event"],
+              duplicateEventIds: [],
+              rejected: [],
+            },
+          }),
+        };
+      },
+    },
+  );
+
+  assert.equal(result.status, "sent");
+  assert.equal(claims, 0);
+  assert.deepEqual(recorderOptions.context, {
+    host: "codex",
+    sessionId: CODEX_SESSION_ID,
+  });
+  const serialized = JSON.stringify(recorderOptions);
+  assert.doesNotMatch(serialized, /repositoryKey|origin/);
+  assert.doesNotMatch(serialized, new RegExp(cwd));
+
+  const noRemote = join(root, "git-without-remote");
+  mkdirSync(noRemote);
+  gitInit(noRemote);
+  const unmappedRuntime = resolveWorkflowRuntime({
+    cwd: noRemote,
+    env: {
+      CODEX_HOME: codexHome,
+      CODEX_SESSION_ID,
+      COREDOC_WORKFLOWS_STATE_HOME: stateHome,
+    },
+    readRelayConfig: () => ({
+      schemaVersion: 1,
+      bindings: [workspaceBinding()],
+    }),
+  });
+  assert.equal(unmappedRuntime.env.COREDOC_CAPTURE_REPOSITORY_STATE, "unmapped");
+  assert.equal(
+    unmappedRuntime.env.COREDOC_CAPTURE_REPOSITORY_CANDIDATE_KEY,
+    undefined,
+  );
+});
+
+test("workspace-mode keeps a normalized Git candidate local for relay-side resolution", () => {
+  const root = mkdtempSync(join(tmpdir(), "capture-client-workspace-candidate-"));
+  const repo = join(root, "repository");
+  const codexHome = join(root, "codex");
+  const stateHome = join(root, "state");
+  mkdirSync(repo, { recursive: true });
+  gitInit(repo);
+  execFileSync(
+    "git",
+    ["remote", "add", "origin", "https://github.com/acme/payments.git"],
+    { cwd: repo, stdio: ["ignore", "ignore", "ignore"] },
+  );
+  writeCodexIngress({ codexHome, stateHome });
+
+  const runtime = resolveWorkflowRuntime({
+    cwd: repo,
+    env: {
+      CODEX_HOME: codexHome,
+      CODEX_SESSION_ID,
+      COREDOC_WORKFLOWS_STATE_HOME: stateHome,
+    },
+    readRelayConfig: () => ({
+      schemaVersion: 1,
+      bindings: [workspaceBinding()],
+    }),
+  });
+
+  assert.equal(runtime.env.COREDOC_CAPTURE_REPOSITORY_STATE, "unmapped");
+  assert.equal(
+    runtime.env.COREDOC_CAPTURE_REPOSITORY_CANDIDATE_KEY,
+    "acme/payments",
+  );
+  assert.equal(runtime.env.COREDOC_WORKFLOWS_REPO_KEY, undefined);
+
+  const recorder = createConfiguredCaptureRecorder({
+    env: runtime.env,
+    cwd: repo,
+    sessionId: CODEX_SESSION_ID,
+    idFactory: () => "44444444-4444-4444-8444-444444444444",
+  });
+  recorder.record({
+    occurredAt: "2026-08-18T10:00:00.000Z",
+    type: "capability.used",
+    data: { kind: "skill", capabilityId: "coredoc-spec", outcome: "success" },
+  });
+
+  const [event] = recorder.pending();
+  assert.equal(event.repositoryKey, "acme/payments");
+  assert.equal(Object.hasOwn(event, "repositoryCandidate"), false);
+  assert.doesNotMatch(JSON.stringify(event), /github\.com|origin/);
+  assert.doesNotMatch(JSON.stringify(event), new RegExp(repo));
+});
+
+test("preconfigured workspace capture recomputes repository identity for runtime and direct recorder callers", () => {
+  const root = mkdtempSync(join(tmpdir(), "capture-client-claude-workspace-candidate-"));
+  const repo = join(root, "repository");
+  const noRemote = join(root, "no-remote");
+  const nonGit = join(root, "non-git");
+  for (const directory of [repo, noRemote, nonGit]) {
+    mkdirSync(directory, { recursive: true });
+  }
+  gitInit(repo);
+  gitInit(noRemote);
+  execFileSync(
+    "git",
+    ["remote", "add", "origin", "https://github.com/acme/payments.git"],
+    { cwd: repo, stdio: ["ignore", "ignore", "ignore"] },
+  );
+  const env = {
+    COREDOC_CAPTURE_ENDPOINT: MANAGED_ENV.COREDOC_CAPTURE_ENDPOINT,
+    COREDOC_CAPTURE_HEADERS: MANAGED_ENV.COREDOC_CAPTURE_HEADERS,
+    COREDOC_CAPTURE_BINDING_ID: "22222222-2222-4222-8222-222222222222",
+    COREDOC_CAPTURE_WORKSPACE_ID: "ws-1",
+    COREDOC_CAPTURE_HOST: "claude-code",
+    COREDOC_CAPTURE_WORKSPACE_MODE: "1",
+    COREDOC_CAPTURE_REPOSITORY_STATE: "known",
+    COREDOC_CAPTURE_REPOSITORY_CANDIDATE_KEY: "stale/injected",
+    COREDOC_CAPTURE_REPOSITORY_KEY: "stale/authority",
+    COREDOC_CAPTURE_REPOSITORY_SCOPE_KEY: "repo-stale",
+    COREDOC_WORKFLOWS_REPO_KEY: "stale/legacy",
+    COREDOC_WORKFLOWS_STATE_HOME: join(root, "state"),
+  };
+
+  const runtime = resolveWorkflowRuntime({ env, cwd: repo });
+  assert.equal(runtime.env.COREDOC_CAPTURE_REPOSITORY_STATE, "unmapped");
+  assert.equal(
+    runtime.env.COREDOC_CAPTURE_REPOSITORY_CANDIDATE_KEY,
+    "acme/payments",
+  );
+  assert.equal(runtime.env.COREDOC_WORKFLOWS_REPO_KEY, undefined);
+  assert.equal(runtime.env.COREDOC_CAPTURE_REPOSITORY_KEY, undefined);
+  assert.equal(runtime.env.COREDOC_CAPTURE_REPOSITORY_SCOPE_KEY, undefined);
+
+  const contexts = [];
+  for (const [cwd, expectedRepositoryKey] of [
+    [repo, "acme/payments"],
+    [noRemote, undefined],
+    [nonGit, undefined],
+  ]) {
+    createConfiguredCaptureRecorder({
+      env,
+      cwd,
+      sessionId: "claude-session",
+      createRecorder: (options) => {
+        contexts.push(options.context);
+        return { record() {}, flush() {} };
+      },
+    });
+    assert.equal(contexts.at(-1).repositoryKey, expectedRepositoryKey);
+  }
 });
 
 test("builds the configured recorder from capture-only identity", () => {

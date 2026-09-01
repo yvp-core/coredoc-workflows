@@ -18,11 +18,18 @@ import {
   artifactCheckpointDirectory,
   artifactCheckpointHealth,
 } from "./artifact-checkpoints.mjs";
-import { readManagedRelayConfig } from "./managed-otel-relay.mjs";
+import {
+  managedRelayBindingStorageHash,
+  readManagedRelayConfig,
+} from "./managed-otel-relay.mjs";
 import { codexAttributionHealth } from "./codex-attribution-state.mjs";
 
 const MANAGED_CAPTURE_ENDPOINT =
   "http://127.0.0.1:43181/capture/v1/events";
+const REPORT_ERROR_CODES = new Set([
+  ...CAPTURE_HEALTH_ERROR_CODES,
+  "REPOSITORY_UNAVAILABLE",
+]);
 
 function cleanReport(errorCode = null) {
   return {
@@ -45,7 +52,7 @@ function boundedReport(value) {
     value.pendingCount < 0 ||
     value.pendingCount > 1_000 ||
     (value.errorCode !== null &&
-      !CAPTURE_HEALTH_ERROR_CODES.includes(value.errorCode)) ||
+      !REPORT_ERROR_CODES.has(value.errorCode)) ||
     !Number.isInteger(attributionPendingCount) ||
     attributionPendingCount < 0 ||
     attributionPendingCount > 1_000_000 ||
@@ -83,10 +90,7 @@ function managedReport(env) {
     (candidate) => candidate.bindingId === bindingId,
   );
   if (!binding) throw new Error("managed capture binding is unavailable");
-  const localBindingHash =
-    binding.host === "codex"
-      ? createHash("sha256").update(binding.bindingId).digest("hex")
-      : binding.bindingNonceHash;
+  const localBindingHash = managedRelayBindingStorageHash(binding);
   const directory = managedCaptureDirectoryForConfig(localBindingHash, configPath);
   const credentialFingerprint =
     binding.host === "codex"
@@ -113,6 +117,7 @@ function managedReport(env) {
   const errorCode = [
     "CONFIG_CONFLICT",
     "AUTH_REJECTED",
+    "REPOSITORY_UNAVAILABLE",
     "UNSUPPORTED_SCHEMA_VERSION",
     "OUTBOX_OVERFLOW",
     "BINDING_MISMATCH",
