@@ -407,7 +407,6 @@ async function harness({
         lifecycle._setActive(false);
       }
     },
-    runtimeExecutablePath: process.execPath,
   });
   return {
     homeDir,
@@ -488,6 +487,10 @@ test("setup from a non-repository cwd writes one safe workspace agent and redact
   assert.equal(claude.env.COREDOC_CAPTURE_BINDING_ID, CLAUDE_BINDING_ID);
   assert.equal(claude.env.COREDOC_CAPTURE_WORKSPACE_ID, POLICY.workspaceId);
   assert.match(await readFile(paths.codexBaseConfigPath, "utf8"), /\[otel\]/);
+  const hooks = await readFile(paths.codexHooksPath, "utf8");
+  assert.equal(hooks.includes(paths.runtimeExecutablePath), true);
+  assert.equal(hooks.includes(paths.claimProgramPath), true);
+  assert.equal(hooks.includes(process.execPath), false);
 
   assert.deepEqual(
     JSON.parse(await readFile(paths.codexIngressPath, "utf8")),

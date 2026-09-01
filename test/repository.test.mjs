@@ -64,6 +64,17 @@ test("uses the bundled, pinned runtime instead of a global Node or Bun", async (
   assert.equal(provenance.platform, "darwin-arm64");
   assert.equal(bytes.byteLength, provenance.sizeBytes);
   assert.equal(createHash("sha256").update(bytes).digest("hex"), provenance.sha256);
+  const captureManifest = await json(
+    join(pluginRoot, "runtime", "capture-agent-manifest.json"),
+  );
+  assert.deepEqual(
+    captureManifest.files.find(
+      ({ path }) => path === `runtime/bun/${provenance.binary}`,
+    ),
+    { path: `runtime/bun/${provenance.binary}`, sha256: provenance.sha256 },
+  );
+  const installedRunner = await stat(join(pluginRoot, "runtime", "bun", "runner"));
+  assert.notEqual(installedRunner.mode & 0o111, 0, "runtime runner must be executable");
   const license = await readFile(join(pluginRoot, "runtime", "bun", provenance.license.path));
   assert.equal(
     createHash("sha256").update(license).digest("hex"),
@@ -108,15 +119,18 @@ test("documents opt-in plugin-managed capture without changing the core runtime 
 
   for (const document of documents) {
     assert.match(document, /capture-agent-policy\.json/);
-    assert.match(document, /Node\.js 22/);
   }
   assert.match(documents[0], /does \*\*not\*\* register a LaunchAgent/);
-  assert.match(
-    documents[0],
-    /ordinary workflows continue to use the bundled Bun\s+runtime/i,
-  );
+  assert.match(documents[0], /no system Node, Bun, or Python/i);
   assert.match(documents[1], /disabled by default/i);
+  assert.match(documents[1], /pinned Bun executable/i);
+  assert.match(documents[2], /contributor\/reference compatibility/i);
   assert.match(documents[3], /Coredoc Desktop is not required/);
+  assert.match(documents[3], /no system Node, Bun, or Python/i);
+  assert.match(documents[4], /No system Node, Bun, or Python/i);
+  for (const document of [documents[0], documents[1], documents[3], documents[4]]) {
+    assert.doesNotMatch(document, /system Node\.js 22|external Node/i);
+  }
   assert.match(documents[4], /"schemaVersion": 1/);
   assert.match(documents[4], /"serverOrigin": "<https-origin>"/);
   assert.match(documents[4], /"workspaceId": "<workspace-uuid>"/);

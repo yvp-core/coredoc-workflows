@@ -20,9 +20,9 @@ Thanks for improving Coredoc Workflows.
    git diff --check
    ```
 
-Node.js 22 or newer is required for the contributor/reference test path and for
-the optional plugin-managed capture agent. Installed plugins use the bundled
-Bun runtime for ordinary workflows.
+Node.js 22 or newer is used only for the contributor/reference compatibility
+test path. Installed plugins, including the optional capture agent, use the
+pinned bundled Bun runtime and require no system JavaScript runtime.
 
 ## Capture-agent changes
 
@@ -34,8 +34,9 @@ and owner-only permissions.
 
 When the installed capture runtime changes, update
 `runtime/capture-agent-manifest.json` with the exact closed file set and
-SHA-256 digests. Run the focused Node.js 22 lifecycle/setup tests and the bundled
-Bun suite. A lifecycle change that touches launchd, runtime activation, or
+SHA-256 digests. Run the focused lifecycle/setup tests under bundled Bun, the
+Node.js 22 compatibility suite, and the complete bundled-Bun suite. A lifecycle
+change that touches launchd, runtime activation, or
 rollback also needs an isolated macOS LaunchAgent smoke test before release.
 Do not use a live user profile, credential, relay, or queue as a test fixture.
 

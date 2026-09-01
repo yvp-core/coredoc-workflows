@@ -89,7 +89,6 @@ const SAFE_ERROR_CODES = new Set([
   "INSTALLATION_ROTATE_FAILED",
   "LOCKED",
   "MIGRATION_PENDING_UNSUPPORTED",
-  "NODE_UNAVAILABLE",
   "NOT_INSTALLED",
   "OAUTH_CALLBACK_FAILED",
   "OAUTH_CALLBACK_INVALID",
@@ -909,7 +908,7 @@ export function createCaptureAgentSetup({
   randomLockToken = () => randomBytes(32).toString("base64url"),
   processAlive = defaultProcessAlive,
   runCommand = defaultRunCommand,
-  runtimeExecutablePath = process.execPath,
+  runtimeExecutablePath,
 } = {}) {
   if (
     !Number.isSafeInteger(requestTimeoutMs) ||
@@ -920,6 +919,8 @@ export function createCaptureAgentSetup({
     fail("INVALID_ARGUMENTS");
   }
   const paths = captureAgentSetupPaths({ env, homeDir });
+  const activeRuntimeExecutablePath =
+    runtimeExecutablePath ?? paths.runtimeExecutablePath;
   const activeLoadPolicy =
     loadPolicy ??
     (() =>
@@ -1031,7 +1032,7 @@ export function createCaptureAgentSetup({
         hooksTx = await prepareHooksConfig({
           operation: "install",
           codexHooksPath: paths.codexHooksPath,
-          runtimeExecutablePath,
+          runtimeExecutablePath: activeRuntimeExecutablePath,
           claimProgramPath: paths.claimProgramPath,
         });
       } catch {

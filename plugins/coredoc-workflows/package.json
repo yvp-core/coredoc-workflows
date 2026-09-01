@@ -13,12 +13,9 @@
   "bugs": {
     "url": "https://github.com/yvp-core/coredoc-workflows/issues"
   },
-  "engines": {
-    "node": ">=22"
-  },
   "type": "module",
   "scripts": {
-    "test": "npm run test:node",
+    "test": "./bin/coredoc-workflows test",
     "test:node": "node --test scripts/*.test.mjs scripts/hosts/*.test.mjs runtime/browse/*.test.mjs runtime/capture/*.test.mjs runtime/desktop/*.test.mjs",
     "test:bun": "./bin/coredoc-workflows test",
     "build:skills": "./bin/coredoc-workflows build-skills",

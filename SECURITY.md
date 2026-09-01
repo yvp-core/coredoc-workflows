@@ -27,16 +27,20 @@ Coredoc workflow capture is disabled by default. Plugin installation does not
 start a process, enroll a user, create a credential, or change host settings.
 The optional plugin-managed path activates only after an operator creates an
 owner-readable `~/.coredoc/capture-agent-policy.json` and explicitly runs
-capture setup on macOS with system Node.js 22 or newer. The policy is not a
+capture setup on supported macOS. The policy is not a
 secret, but it is a trusted routing boundary: it contains exactly one canonical
 HTTPS server origin and one workspace UUID, and the agent refuses policy drift.
 Setup does not discover either value from a repository, Coredoc MCP, Coredoc
 Desktop, host telemetry, or environment variables.
 
-The installed agent copies a hash-verified runtime to a stable, per-user
-directory and runs it through a per-user LaunchAgent. Secret-bearing state and
+The installed agent copies the hash-verified relay and pinned Bun executable to
+a stable, per-user directory and runs them through a per-user LaunchAgent.
+Secret-bearing state and
 sanitized durable queues are owner-only; cloud authorization is stored only in
 the relay configuration and is never copied into Claude Code or Codex settings.
+The recorded Bun digest proves equality with the pinned upstream release; it is
+not an Apple trust or enterprise application-control attestation. Rollouts under
+MDM or allowlisting policy must validate that exact executable separately.
 The local relay authenticates distinct host capabilities and reconstructs
 native telemetry from a strict allowlist before persistence or network
 delivery. Prompts, command and tool payloads, source, diffs, raw paths,

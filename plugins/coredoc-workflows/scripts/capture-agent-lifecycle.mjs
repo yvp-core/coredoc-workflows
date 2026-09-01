@@ -15,7 +15,6 @@ import {
   readFileSync,
   readlinkSync,
   readdirSync,
-  realpathSync,
   renameSync,
   rmdirSync,
   rmSync,
@@ -56,7 +55,16 @@ const VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/;
 const HEALTH_TOKEN_RE = /^[A-Za-z0-9_-]{32,256}$/;
 const ISO_TIMESTAMP_RE =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
-const RUNTIME_PATH_RE = /^(?:scripts|runtime)\/[A-Za-z0-9._/-]+\.mjs$/;
+const RUNTIME_MODULE_PATH_RE = /^(?:scripts|runtime)\/[A-Za-z0-9._/-]+\.mjs$/;
+const BUNDLED_RUNTIME_CONFIG_PATH = "runtime/bun/bunfig.toml";
+const BUNDLED_RUNTIME_EXECUTABLE_PATH = "runtime/bun/darwin-arm64/bun";
+const BUNDLED_RUNTIME_RUNNER_PATH = "runtime/bun/runner";
+const BUNDLED_RUNTIME_PATHS = new Set([
+  BUNDLED_RUNTIME_CONFIG_PATH,
+  BUNDLED_RUNTIME_EXECUTABLE_PATH,
+  BUNDLED_RUNTIME_RUNNER_PATH,
+]);
+const BUNDLED_RUNTIME_FILE_COUNT = 16;
 const EVENT_ENTRY_RE = /^[0-9a-f-]{36}\.event\.json$/i;
 const ARTIFACT_ENTRY_RE = /^revision-\d{6}-cda_[0-9a-f-]+-[0-9a-f]{64}\.json$/;
 const ARTIFACT_QUARANTINE_ENTRY_RE =
@@ -95,7 +103,6 @@ const SAFE_ERROR_CODES = new Set([
   "INVALID_ARGUMENTS",
   "INVALID_RUNTIME_MANIFEST",
   "LOCKED",
-  "NODE_UNAVAILABLE",
   "NOT_INSTALLED",
   "NO_PREVIOUS_RUNTIME",
   "OWNERSHIP_CONFLICT",
@@ -146,14 +153,16 @@ export function captureAgentPaths({ env = process.env, homeDir = homedir() } = {
   const coredocHome = configured ? safeHome(configured) : join(resolvedHome, ".coredoc");
   const agentRoot = join(coredocHome, "capture-agent");
   const runtimeRoot = join(agentRoot, "runtime");
+  const currentPath = join(agentRoot, "current");
   return {
     homeDir: resolvedHome,
     coredocHome,
     agentRoot,
     runtimeRoot,
     runtimeVersionsDirectory: join(runtimeRoot, "versions"),
-    currentPath: join(agentRoot, "current"),
+    currentPath,
     previousPath: join(agentRoot, "previous"),
+    runtimeExecutablePath: join(currentPath, BUNDLED_RUNTIME_RUNNER_PATH),
     statePath: join(agentRoot, "state.json"),
     lockPath: join(coredocHome, ".capture-agent-lifecycle.lock"),
     relayRoot: join(coredocHome, "capture-relay"),
@@ -177,7 +186,7 @@ function validateManifest(value) {
     candidate.schemaVersion !== 1 ||
     typeof candidate.entry !== "string" ||
     !Array.isArray(candidate.files) ||
-    candidate.files.length !== 13
+    candidate.files.length !== BUNDLED_RUNTIME_FILE_COUNT
   ) {
     fail("INVALID_RUNTIME_MANIFEST");
   }
@@ -189,7 +198,8 @@ function validateManifest(value) {
     );
     if (
       typeof file.path !== "string" ||
-      !RUNTIME_PATH_RE.test(file.path) ||
+      (!RUNTIME_MODULE_PATH_RE.test(file.path) &&
+        !BUNDLED_RUNTIME_PATHS.has(file.path)) ||
       file.path.includes("//") ||
       file.path.split("/").some((segment) => segment === "." || segment === "..") ||
       typeof file.sha256 !== "string" ||
@@ -201,7 +211,10 @@ function validateManifest(value) {
   });
   if (
     new Set(files.map(({ path }) => path)).size !== files.length ||
-    !files.some(({ path }) => path === candidate.entry)
+    !files.some(({ path }) => path === candidate.entry) ||
+    [...BUNDLED_RUNTIME_PATHS].some(
+      (requiredPath) => !files.some(({ path }) => path === requiredPath),
+    )
   ) {
     fail("INVALID_RUNTIME_MANIFEST");
   }
@@ -446,6 +459,19 @@ function publicRuntime(record) {
   };
 }
 
+function runtimeFileMode(path) {
+  return new Set([
+    BUNDLED_RUNTIME_EXECUTABLE_PATH,
+    BUNDLED_RUNTIME_RUNNER_PATH,
+  ]).has(path)
+    ? 0o555
+    : 0o444;
+}
+
+function installedRuntimeExecutable(directory) {
+  return join(directory, BUNDLED_RUNTIME_RUNNER_PATH);
+}
+
 function immutableDirectoryEntries(root) {
   const entries = [];
   const visit = (directory) => {
@@ -481,7 +507,9 @@ function verifyInstalledRuntime(
     }
     const target = join(directory, file.path);
     if (sha256(readFileSync(target)) !== file.sha256) fail("UNSAFE_STATE");
-    if ((statSync(target).mode & 0o777) !== 0o444) fail("UNSAFE_STATE");
+    if ((statSync(target).mode & 0o777) !== runtimeFileMode(file.path)) {
+      fail("UNSAFE_STATE");
+    }
   }
   for (const entry of entries) {
     if (entry.directory) {
@@ -529,19 +557,17 @@ function removeStagedRuntime(directory) {
   rmSync(directory, { recursive: true, force: true });
 }
 
-async function defaultImportSmoke(entryPath, { nodePath }) {
+async function defaultImportSmoke(entryPath, { runtimeExecutablePath }) {
   try {
     await execFileAsync(
-      nodePath,
+      runtimeExecutablePath,
       [
-        "--input-type=module",
-        "-e",
+        "--eval",
         `await import(${JSON.stringify(pathToFileURL(entryPath).href)})`,
-        join(dirname(entryPath), ".capture-agent-import-smoke.mjs"),
       ],
       {
         timeout: 5_000,
-        env: { PATH: dirname(nodePath), DO_NOT_TRACK: "1" },
+        env: { PATH: "/usr/bin:/bin", DO_NOT_TRACK: "1" },
       },
     );
   } catch {
@@ -552,7 +578,6 @@ async function defaultImportSmoke(entryPath, { nodePath }) {
 async function stageRuntime({
   bundle,
   paths,
-  nodePath,
   importSmoke,
   renameRuntime,
 }) {
@@ -583,9 +608,11 @@ async function stageRuntime({
       const target = join(temporary, file.path);
       mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
       copyFileSync(source, target);
-      chmodSync(target, 0o444);
+      chmodSync(target, runtimeFileMode(file.path));
     }
-    await importSmoke(join(temporary, bundle.manifest.entry), { nodePath });
+    await importSmoke(join(temporary, bundle.manifest.entry), {
+      runtimeExecutablePath: installedRuntimeExecutable(temporary),
+    });
     chmodChildDirectoriesImmutable(temporary);
     renameRuntime(temporary, destination);
     cleanupPath = destination;
@@ -650,21 +677,21 @@ function xml(value) {
 }
 
 export function buildCaptureAgentLaunchAgentPlist({
-  nodePath,
+  runtimeExecutablePath,
   entryPath,
   configPath,
   statePath,
   runtimeVersion,
   runtimeDigest,
 } = {}) {
-  for (const value of [nodePath, entryPath, configPath, statePath]) {
+  for (const value of [runtimeExecutablePath, entryPath, configPath, statePath]) {
     if (typeof value !== "string" || !isAbsolute(value)) fail("UNSAFE_STATE");
   }
   if (!VERSION_RE.test(runtimeVersion) || !SHA256_RE.test(runtimeDigest)) {
     fail("UNSAFE_STATE");
   }
   const argumentsList = [
-    nodePath,
+    runtimeExecutablePath,
     entryPath,
     "serve",
     "--config",
@@ -684,7 +711,7 @@ export function buildCaptureAgentLaunchAgentPlist({
   <key>Label</key>
   <string>${CAPTURE_AGENT_LABEL}</string>
   <key>Program</key>
-  <string>${xml(nodePath)}</string>
+  <string>${xml(runtimeExecutablePath)}</string>
   <key>ProgramArguments</key>
   <array>
 ${argumentsList.map((value) => `    <string>${xml(value)}</string>`).join("\n")}
@@ -848,24 +875,8 @@ async function defaultProbeHealth(expected) {
   }
 }
 
-function validateEnvironment({ platform, nodePath, nodeVersion, runtimeName }) {
+function validateEnvironment({ platform }) {
   if (platform !== "darwin") fail("UNSUPPORTED_PLATFORM");
-  if (runtimeName !== "node") fail("NODE_UNAVAILABLE");
-  const major = Number.parseInt(String(nodeVersion).split(".")[0], 10);
-  if (!Number.isInteger(major) || major < 22) fail("NODE_UNAVAILABLE");
-  if (typeof nodePath !== "string" || !isAbsolute(nodePath)) {
-    fail("NODE_UNAVAILABLE");
-  }
-  let resolvedNode;
-  try {
-    resolvedNode = realpathSync(nodePath);
-    const metadata = statSync(resolvedNode);
-    if (!metadata.isFile() || (metadata.mode & 0o111) === 0) fail("NODE_UNAVAILABLE");
-  } catch (error) {
-    if (error instanceof CaptureAgentLifecycleError) throw error;
-    fail("NODE_UNAVAILABLE");
-  }
-  return resolvedNode;
 }
 
 function sameLockIdentity(left, right) {
@@ -1017,7 +1028,10 @@ function verifyPartiallyRemovedRuntime(directory, record) {
     fail("UNSAFE_STATE");
   }
   const expectedFiles = new Map(
-    record.files.map((file) => [file.path, file.sha256]),
+    record.files.map((file) => [
+      file.path,
+      { sha256: file.sha256, mode: runtimeFileMode(file.path) },
+    ]),
   );
   const expectedDirectories = new Set();
   for (const file of record.files) {
@@ -1035,8 +1049,12 @@ function verifyPartiallyRemovedRuntime(directory, record) {
           !new Set([0o555, 0o700]).has(metadata.mode & 0o777))) ||
       (!entry.directory &&
         (!expectedFiles.has(entry.relativePath) ||
-          !new Set([0o444, 0o600]).has(metadata.mode & 0o777) ||
-          sha256(readFileSync(entry.path)) !== expectedFiles.get(entry.relativePath)))
+          !new Set([
+            expectedFiles.get(entry.relativePath)?.mode,
+            0o600,
+          ]).has(metadata.mode & 0o777) ||
+          sha256(readFileSync(entry.path)) !==
+            expectedFiles.get(entry.relativePath)?.sha256))
     ) {
       fail("UNSAFE_STATE");
     }
@@ -1136,13 +1154,11 @@ async function waitForListenerDown({ probeListener, wait }) {
   fail("SUPERVISOR_UNAVAILABLE");
 }
 
-function desiredPlist({ paths, state, nodePath }) {
+function desiredPlist({ paths, state }) {
+  const installed = installedDirectory(paths, state.current);
   return buildCaptureAgentLaunchAgentPlist({
-    nodePath,
-    entryPath: join(
-      installedDirectory(paths, state.current),
-      state.current.entry,
-    ),
+    runtimeExecutablePath: installedRuntimeExecutable(installed),
+    entryPath: join(installed, state.current.entry),
     configPath: paths.relayConfigPath,
     statePath: paths.statePath,
     runtimeVersion: state.current.version,
@@ -1443,9 +1459,6 @@ export function createCaptureAgentLifecycle({
   homeDir = env.HOME && isAbsolute(env.HOME) ? env.HOME : homedir(),
   pluginRoot = dirname(dirname(fileURLToPath(import.meta.url))),
   platform = process.platform,
-  nodePath = process.execPath,
-  nodeVersion = process.versions.node,
-  runtimeName = process.versions.bun ? "bun" : "node",
   uid = typeof process.getuid === "function" ? process.getuid() : -1,
   loadRuntimeBundle: loadBundle = () => loadRuntimeBundle({ pluginRoot }),
   runCommand = defaultRunCommand,
@@ -1462,7 +1475,7 @@ export function createCaptureAgentLifecycle({
 
   function environment() {
     if (!Number.isInteger(uid) || uid < 0) fail("SUPERVISOR_UNAVAILABLE");
-    return validateEnvironment({ platform, nodePath, nodeVersion, runtimeName });
+    validateEnvironment({ platform });
   }
 
   async function withLock(operation) {
@@ -1482,7 +1495,7 @@ export function createCaptureAgentLifecycle({
   }
 
   async function activateBundle(action, { requireInstalled = false } = {}) {
-    const resolvedNode = environment();
+    environment();
     return withLock(async () => {
       const { content: oldPlist, ownership } = ownedPlist();
       const oldState = readAgentState(paths.statePath, { optional: true });
@@ -1501,7 +1514,6 @@ export function createCaptureAgentLifecycle({
       const staged = await stageRuntime({
         bundle,
         paths,
-        nodePath: resolvedNode,
         importSmoke,
         renameRuntime,
       });
@@ -1516,14 +1528,16 @@ export function createCaptureAgentLifecycle({
         marker: AGENT_STATE_MARKER,
         healthToken,
         current: staged.record,
-        previous: sameRuntime ? oldState.previous : oldState?.current ?? null,
+        previous: sameRuntime
+          ? oldState?.previous ?? null
+          : oldState?.current ?? null,
       });
       let mutated = false;
       try {
         mutated = true;
         writeRuntimeLinks(paths, nextState);
         writeAgentState(paths.statePath, nextState);
-        const plist = desiredPlist({ paths, state: nextState, nodePath: resolvedNode });
+        const plist = desiredPlist({ paths, state: nextState });
         await installAndStart({
           paths,
           uid,
@@ -1625,7 +1639,7 @@ export function createCaptureAgentLifecycle({
   }
 
   async function rollback() {
-    const resolvedNode = environment();
+    environment();
     return withLock(async () => {
       const { content: oldPlist, ownership } = ownedPlist();
       if (ownership !== "plugin-v1") fail("OWNERSHIP_CONFLICT");
@@ -1646,7 +1660,7 @@ export function createCaptureAgentLifecycle({
           uid,
           runCommand,
           wait,
-          plist: desiredPlist({ paths, state: nextState, nodePath: resolvedNode }),
+          plist: desiredPlist({ paths, state: nextState }),
           hadPlist: true,
         });
         await verifyHealthWithRetry({ state: nextState, probeHealth, wait });

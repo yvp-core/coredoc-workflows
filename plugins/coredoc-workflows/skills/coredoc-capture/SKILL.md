@@ -14,8 +14,8 @@ Resolve `<plugin-root>` as two directories above this file. The executable is:
 This is the supported entry point for an installed plugin; do not assume the
 executable is on `PATH`, and do not ask the user to locate a plugin cache.
 
-The optional agent supports macOS with Node.js 22 or newer. Ordinary workflow
-commands continue to use the plugin's bundled runtime. The agent writes only
+The optional agent supports macOS on Apple silicon and uses the plugin's pinned
+bundled Bun runtime. It does not require system Node, Bun, or Python. The agent writes only
 per-user state below `~/.coredoc`, a per-user LaunchAgent, and marker-owned global Claude
 Code/Codex settings. It must not create repository files, use Coredoc MCP for
 routing or credentials, read an MCP credential store, or require Coredoc
@@ -61,9 +61,11 @@ automatically. The executable returns one redacted JSON object and a non-zero
 status on failure; report its stable `code` and rollback state without reading
 or printing installation or relay credential files.
 
-If a version-managed Node executable was replaced or removed, install Node.js
-22 or newer and run an explicitly authorized `repair`; restart Claude Code and
-Codex if the executable location changed. `INSTALLATION_REVOKE_UNCONFIRMED`
+`repair` can reconcile marker-owned host configuration and restart an intact,
+verified installed runtime. If a command reports `UNSAFE_STATE`, do not delete,
+overwrite, or purge the untrusted runtime tree: preserve credentials and queues,
+report the bounded code, and escalate to the operator's recovery procedure.
+`INSTALLATION_REVOKE_UNCONFIRMED`
 means purge retained local recovery state but intentionally left capture
 disabled because the exact installation token was not authoritatively revoked.
 A rejected retained bearer or an empty token list for a different OAuth

@@ -7,6 +7,18 @@
       "sha256": "0ae032df1cc8d3cfd0a49421b36cea716b5f985ec970e8ea844ad913381ef69f"
     },
     {
+      "path": "runtime/bun/bunfig.toml",
+      "sha256": "66a3ca148c446bdb484b33815567ed0446ef9b24ab7507ca5c6d6d0b8840580a"
+    },
+    {
+      "path": "runtime/bun/darwin-arm64/bun",
+      "sha256": "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233"
+    },
+    {
+      "path": "runtime/bun/runner",
+      "sha256": "0fce5ff3f06ac5ba1e330fd2e4f71918cbf4a1a2550e9eb8f472c54e32fa207f"
+    },
+    {
       "path": "runtime/capture/contract.mjs",
       "sha256": "d4526dad70e757f6049e5f2f61e4d2dd79826f0489e475384518ce008e594d2c"
     },

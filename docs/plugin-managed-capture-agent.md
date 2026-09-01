@@ -15,23 +15,18 @@ bundled Bun runtime.
 ## Requirements
 
 - macOS on a host supported by the plugin;
-- system Node.js 22 or newer on `PATH`;
 - a compatible Coredoc server with browser enrollment and capture-agent routes;
 - one operator-selected HTTPS server origin and one workspace UUID;
 - permission to write per-user state, global Claude Code/Codex configuration,
   and a per-user LaunchAgent.
 
-Node is required only for the persistent agent and its lifecycle commands. The
-installer resolves an absolute system Node executable and records it in the
-LaunchAgent. It does not run the persistent service from the plugin cache or
-through the bundled Bun executable.
-
-That executable is an external runtime dependency. Replacing or removing an
-NVM, asdf, Volta, or Homebrew Node installation can leave the LaunchAgent and
-Codex claim hook pointing at the old executable. Install Node.js 22 or newer,
-run `capture repair`, and restart Claude Code and Codex if the Node location
-changes. Until repair, `status` or `doctor` reports degraded/unavailable capture;
-the installation identity and durable queues remain recoverable.
+The plugin ships a pinned Bun executable. Setup verifies its manifest digest and
+copies Bun, its locked configuration, a small environment-sanitizing runner,
+and the relay source into the same immutable version directory below
+`~/.coredoc/capture-agent`. The LaunchAgent uses that installed copy rather than
+the mutable plugin cache. The Codex claim hook follows the stable `current`
+runtime link, so plugin cache rotation cannot strand the persistent agent.
+No system Node, Bun, or Python installation is required.
 
 ## Destination policy
 
@@ -106,7 +101,7 @@ credential-bearing files to diagnose an error.
 | `status` | Reads local ownership, runtime, host configuration, listener, and bounded queue state. It does not enroll, contact the server, or require the policy file. |
 | `doctor` | Adds bounded policy and authenticated server checks to local status. It does not mutate state. |
 | `setup` | Enrolls if needed, migrates a recognized Desktop relay if present, installs and health-checks the immutable runtime, and merge-writes marker-owned host settings. It is safe to rerun. |
-| `repair` | Reconciles the same bounded marker-owned setup contract. It refuses unmanaged conflicts and unknown listeners. |
+| `repair` | Reconciles the same bounded marker-owned setup contract. It refuses unmanaged conflicts, unknown listeners, and unsafe installed state rather than deleting an untrusted runtime tree. |
 | `upgrade` | Activates the runtime shipped by the current plugin with the existing installation credential and restores the prior runtime if activation fails. |
 | `disable` | Stops the LaunchAgent and removes marker-owned host integration while retaining the runtime, identity, credential configuration, and queues. |
 | `uninstall` | Also removes the marker-owned LaunchAgent and installed runtime, while retaining recoverable identity, credential configuration, and queues. |
@@ -292,8 +287,8 @@ setup. It remains explicitly opt-in through `COREDOC_CAPTURE_ENDPOINT` and
 ## Release verification
 
 Changes to the capture agent require focused setup, lifecycle, migration, host
-configuration, policy, and enrollment tests under Node.js 22, plus the complete
-bundled-Bun plugin suite. Changes to runtime installation, launchd interaction,
+configuration, policy, and enrollment tests under bundled Bun, plus the Node.js
+22 compatibility suite. Changes to runtime installation, launchd interaction,
 or rollback also require an isolated macOS LaunchAgent smoke test. Tests must
 use disposable homes and fixture policies; never test with a developer's live
 profile, credential, relay, or pending queues.

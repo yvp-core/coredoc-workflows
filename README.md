@@ -42,16 +42,16 @@ path.
 | Claude/Codex peer review | The explicitly selected provider CLI |
 | Coredoc graph context | An available Coredoc MCP server |
 | Coredoc Desktop QA | An explicitly opted-in Coredoc development app |
-| Plugin-managed workflow and native telemetry capture | macOS, system Node.js 22 or newer, a compatible Coredoc server, and an operator-provisioned `~/.coredoc/capture-agent-policy.json` |
+| Plugin-managed workflow and native telemetry capture | macOS on Apple silicon, a compatible Coredoc server, and an operator-provisioned `~/.coredoc/capture-agent-policy.json` |
 
 Installing the plugin does **not** register a LaunchAgent, enable OpenTelemetry,
 create a cloud credential, or change Claude Code or Codex settings. Capture is
 an explicit, per-user setup step. It works without a repository, Coredoc MCP,
 or Coredoc Desktop and is fixed to the one server origin and workspace UUID in
-the mode-0600 user policy. Ordinary workflows continue to use the bundled Bun
-runtime; only the optional persistent capture agent requires system Node.js 22
-or newer. If that external Node installation is replaced, run `capture repair`
-to rewrite the LaunchAgent and Codex hook before relying on capture again.
+the mode-0600 user policy. Every plugin command uses the pinned bundled Bun;
+capture setup copies the verified Bun executable together with the relay into
+the immutable per-user runtime, so no system Node, Bun, or Python installation
+is required.
 
 From a source checkout, an operator can inspect or enable it with:
 

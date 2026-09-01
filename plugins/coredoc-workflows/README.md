@@ -8,9 +8,9 @@ The core workflows do not require globally installed workflow skills, an
 external review CLI, a browser plugin, Bun, or a separately downloaded
 Chromium. The opt-in cross-model workflows require the selected provider's CLI;
 browser workflows use the bundled `darwin-arm64` server and an installed
-Chrome-compatible browser. The optional plugin-managed capture agent requires
-macOS and system Node.js 22 or newer; ordinary workflows continue to use the
-bundled Bun runtime.
+Chrome-compatible browser. The optional plugin-managed capture agent uses the
+same pinned bundled Bun runtime; no system Node, Bun, or Python installation is
+required.
 
 ## Included workflows
 
@@ -357,19 +357,15 @@ version 1, one canonical HTTPS server origin, and one workspace UUID. Neither a
 repository, current working directory, host payload, Coredoc MCP, nor Coredoc
 Desktop can select another destination. Coredoc Desktop is not required.
 
-Setup requires macOS and system Node.js 22 or newer. It may open a browser for
-PKCE enrollment, mints one installation-scoped telemetry credential, copies the
-hash-verified runtime into the stable per-user `~/.coredoc/capture-agent`
+Setup requires supported macOS. It may open a browser for PKCE enrollment,
+mints one installation-scoped telemetry credential, copies the hash-verified
+relay and pinned Bun runtime into the stable per-user `~/.coredoc/capture-agent`
 directory, installs a per-user LaunchAgent, and merge-writes marker-owned global
 Claude Code and Codex configuration. Marketplace installation alone performs
-none of those actions. Ordinary plugin commands continue to run through the
-bundled Bun runtime.
-
-The LaunchAgent and Codex claim hook record the selected external Node
-executable. After replacing or removing a version-managed Node installation,
-install Node.js 22 or newer, run `coredoc-workflows capture repair`, and restart
-Claude Code and Codex if the executable path changed. Identity and queued data
-remain recoverable while capture is unavailable.
+none of those actions. The LaunchAgent runs the digest-addressed installed Bun
+through a small environment-sanitizing runner, while the Codex claim hook follows
+the stable `current` runtime link. Plugin cache rotation therefore cannot strand
+the agent.
 
 Claude Code and Codex receive different random loopback capabilities. Both
 semantic capture and native OTLP point to `http://127.0.0.1:43181`; host settings

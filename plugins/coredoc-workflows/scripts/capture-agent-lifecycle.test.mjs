@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import {
   chmodSync,
@@ -39,9 +39,7 @@ import {
 } from "./capture-agent-lifecycle.mjs";
 
 const run = promisify(execFile);
-const systemNode = process.versions.bun
-  ? execFileSync("/usr/bin/which", ["node"], { encoding: "utf8" }).trim()
-  : process.execPath;
+const testRuntime = process.execPath;
 const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const launcher = join(pluginRoot, "bin", "coredoc-workflows");
 const FIXTURE_UID =
@@ -56,6 +54,9 @@ const RUNTIME_FILES = [
   "scripts/capture-client.mjs",
   "scripts/project-key.mjs",
   "runtime/artifacts/contract.mjs",
+  "runtime/bun/bunfig.toml",
+  "runtime/bun/darwin-arm64/bun",
+  "runtime/bun/runner",
   "runtime/capture/contract.mjs",
   "runtime/capture/file-outbox.mjs",
   "runtime/capture/health.mjs",
@@ -105,9 +106,6 @@ function lifecycleHarness({
     homeDir,
     pluginRoot,
     platform: "darwin",
-    nodePath: systemNode,
-    nodeVersion: "22.14.0",
-    runtimeName: "node",
     uid: FIXTURE_UID,
     loadRuntimeBundle: () => activeBundle,
     runCommand: async (executable, args) => {
@@ -175,16 +173,18 @@ function waitForChildLine(child, expected) {
   });
 }
 
-test("the committed manifest is an exact verified 13-file importable runtime closure", async () => {
+test("the committed manifest is an exact verified self-contained runtime closure", async () => {
   const bundle = loadRuntimeBundle({ pluginRoot });
+  const canRunBundledRuntime =
+    process.platform === "darwin" && process.arch === "arm64";
   assert.deepEqual(
     bundle.manifest.files.map(({ path }) => path).sort(),
     RUNTIME_FILES,
   );
-  assert.equal(bundle.manifest.files.length, 13);
+  assert.equal(bundle.manifest.files.length, 16);
   const harness = lifecycleHarness({
     bundle,
-    importSmoke: null,
+    importSmoke: canRunBundledRuntime ? null : async () => undefined,
   });
   const result = await harness.lifecycle.setupRuntime();
   const installed = join(
@@ -196,9 +196,48 @@ test("the committed manifest is an exact verified 13-file importable runtime clo
       digest(readFileSync(join(installed, file.path))),
       file.sha256,
     );
-    assert.equal(statSync(join(installed, file.path)).mode & 0o777, 0o444);
+    assert.equal(
+      statSync(join(installed, file.path)).mode & 0o777,
+      new Set([
+        "runtime/bun/darwin-arm64/bun",
+        "runtime/bun/runner",
+      ]).has(file.path)
+        ? 0o555
+        : 0o444,
+    );
   }
   assert.equal(statSync(installed).mode & 0o777, 0o555);
+
+  if (canRunBundledRuntime) {
+    const runtimeHome = mkdtempSync(join(tmpdir(), "coredoc-installed-bun-home-"));
+    writeFileSync(
+      join(runtimeHome, ".env"),
+      "COREDOC_WORKFLOWS_REPO_KEY=must-not-load\n",
+    );
+    const { stdout } = await run(
+      join(installed, "runtime/bun/runner"),
+      [
+        "--eval",
+        'process.stdout.write(JSON.stringify(["COREDOC_WORKFLOWS_REPO_KEY", "BUN_INSPECT", "BUN_INSPECT_CONNECT_TO", "BUN_INSPECT_NOTIFY", "BUN_JS_DEBUG"].map((name) => process.env[name] ?? "unset")))',
+      ],
+      {
+        cwd: runtimeHome,
+        env: {
+          HOME: runtimeHome,
+          PATH: mkdtempSync(join(tmpdir(), "coredoc-installed-bun-path-")),
+          BUN_OPTIONS: "--preload=/definitely/not/present.mjs",
+          BUN_INSPECT: "1",
+          BUN_INSPECT_CONNECT_TO: "http://127.0.0.1:1",
+          BUN_INSPECT_NOTIFY: "1",
+          BUN_INSPECT_PRELOAD: "/definitely/not/present.mjs",
+          BUN_JS_DEBUG: "1",
+          NODE_OPTIONS: "--require=/definitely/not/present.cjs",
+        },
+      },
+    );
+    assert.deepEqual(JSON.parse(stdout), Array(5).fill("unset"));
+    assert.equal(existsSync(join(runtimeHome, "Library", "Caches", "bun")), false);
+  }
 });
 
 test("runtime identity covers the manifest entry as well as file contents", () => {
@@ -211,6 +250,22 @@ test("runtime identity covers the manifest entry as well as file contents", () =
     runtimeDigestForManifest(bundle.manifest),
     runtimeDigestForManifest(alternateEntry),
   );
+});
+
+test("a tampered bundled Bun is rejected before runtime activation", async () => {
+  const bundle = runtimeFixture("1.0.0", "tampered-bun");
+  writeFileSync(
+    join(bundle.sourceRoot, "runtime/bun/darwin-arm64/bun"),
+    "tampered\n",
+  );
+  const harness = lifecycleHarness({ bundle });
+
+  await assert.rejects(
+    harness.lifecycle.setupRuntime(),
+    expectCode("INVALID_RUNTIME_MANIFEST"),
+  );
+  assert.equal(existsSync(harness.paths.statePath), false);
+  assert.equal(existsSync(harness.paths.launchAgentPath), false);
 });
 
 test("setup-runtime atomically installs one immutable runtime and plugin-owned LaunchAgent", async () => {
@@ -231,7 +286,17 @@ test("setup-runtime atomically installs one immutable runtime and plugin-owned L
   const plist = readFileSync(harness.paths.launchAgentPath, "utf8");
   assert.match(plist, new RegExp(PLUGIN_LAUNCH_AGENT_MARKER));
   assert.match(plist, new RegExp(`<string>${CAPTURE_AGENT_LABEL}</string>`));
-  assert.match(plist, new RegExp(systemNode.replaceAll("/", "\\/")));
+  assert.equal(
+    plist.includes(
+      join(
+        harness.paths.runtimeVersionsDirectory,
+        result.current.directoryName,
+        "runtime/bun/runner",
+      ),
+    ),
+    true,
+  );
+  assert.equal(plist.includes(pluginRoot), false);
   assert.match(plist, new RegExp(result.current.directoryName));
   assert.match(plist, /capture-relay\/relay\.json/);
   assert.equal(plist.match(/<key>Program<\/key>/g)?.length, 1);
@@ -433,7 +498,7 @@ test(
       join(pluginRoot, "scripts", "capture-agent-lifecycle.mjs"),
     ).href;
     const child = spawn(
-      systemNode,
+      testRuntime,
       [
         "--input-type=module",
         "-e",
@@ -1242,38 +1307,16 @@ test("capture-agent CLI passes explicit discard intent and emits queue dispositi
   ]);
 });
 
-test("lifecycle core enforces macOS and Node 22 before mutation", async () => {
+test("lifecycle core enforces macOS before mutation without requiring Node", async () => {
   const base = lifecycleHarness();
   const linux = createCaptureAgentLifecycle({
     env: { COREDOC_HOME: join(base.homeDir, "linux") },
     homeDir: base.homeDir,
     pluginRoot,
     platform: "linux",
-    nodePath: process.execPath,
-    nodeVersion: "22.0.0",
-    runtimeName: "node",
   });
   await assert.rejects(linux.setupRuntime(), expectCode("UNSUPPORTED_PLATFORM"));
-  const oldNode = createCaptureAgentLifecycle({
-    env: { COREDOC_HOME: join(base.homeDir, "old-node") },
-    homeDir: base.homeDir,
-    pluginRoot,
-    platform: "darwin",
-    nodePath: process.execPath,
-    nodeVersion: "20.0.0",
-    runtimeName: "node",
-  });
-  await assert.rejects(oldNode.setupRuntime(), expectCode("NODE_UNAVAILABLE"));
-  const bunRuntime = createCaptureAgentLifecycle({
-    env: { COREDOC_HOME: join(base.homeDir, "bun-runtime") },
-    homeDir: base.homeDir,
-    pluginRoot,
-    platform: "darwin",
-    nodePath: process.execPath,
-    nodeVersion: "24.0.0",
-    runtimeName: "bun",
-  });
-  await assert.rejects(bunRuntime.setupRuntime(), expectCode("NODE_UNAVAILABLE"));
+  assert.equal(existsSync(join(base.homeDir, "linux")), false);
 });
 
 test(
@@ -1285,7 +1328,7 @@ test(
       await assert.rejects(
         run(launcher, [command, "status"], {
           env: {
-            PATH: dirname(systemNode),
+            PATH: mkdtempSync(join(tmpdir(), "coredoc-empty-path-")),
             HOME: root,
             COREDOC_HOME: join(root, ".coredoc"),
           },
