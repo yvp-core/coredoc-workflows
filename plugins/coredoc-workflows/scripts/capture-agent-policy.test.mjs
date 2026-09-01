@@ -80,6 +80,7 @@ for (const [name, value] of [
   ["origin path", { ...POLICY, serverOrigin: "https://coredoc.example.com/api" }],
   ["origin credentials", { ...POLICY, serverOrigin: "https://user@coredoc.example.com" }],
   ["invalid UUID", { ...POLICY, workspaceId: "workspace" }],
+  ["non-v4 UUID", { ...POLICY, workspaceId: "11111111-1111-1111-8111-111111111111" }],
 ]) {
   test(`rejects ${name}`, () => {
     assert.throws(() => validateCaptureAgentPolicy(value), { code: "POLICY_INVALID" });

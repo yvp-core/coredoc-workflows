@@ -47,7 +47,7 @@ The JSON object must contain exactly these fields:
 
 Replace both placeholders before setup. `serverOrigin` must be a canonical
 HTTPS origin with no credentials, path, query, fragment, or trailing slash.
-`workspaceId` must be an RFC-4122 UUID. Extra fields are rejected.
+`workspaceId` must be an RFC-4122 version 4 UUID. Extra fields are rejected.
 
 Protect the directory and file before invoking setup:
 
@@ -93,7 +93,10 @@ plugins/coredoc-workflows/bin/coredoc-workflows capture <command>
 
 Every command emits one versioned, redacted JSON object. Failures return a
 non-zero status and a stable error code; a mutating transaction also reports
-whether rollback restored the previous state. Do not inspect or print
+whether rollback restored the previous state. Launcher-level failures that
+happen before any script runs (unsupported platform, missing bundled runtime,
+unknown command) are the exception: they print one plain-text line to stderr
+and exit 69, 70, or 64 without a JSON envelope. Do not inspect or print
 credential-bearing files to diagnose an error.
 
 | Command | Behavior |
@@ -125,7 +128,10 @@ repository sandbox. Do not retry a failed mutating command automatically.
 5. Copy the closed, hash-verified runtime into a digest-addressed directory
    below `~/.coredoc/capture-agent/runtime/versions`.
 6. Point the stable `current` link at that runtime, install the per-user
-   LaunchAgent, and prove authenticated local `/health/v2`.
+   LaunchAgent, and prove authenticated local `/health/v2`. The relay also
+   serves a binding-authenticated `GET /native-outbox/v1` diagnostic (pending
+   count, pending bytes, and eviction counters for that binding); it is a
+   local troubleshooting aid, not a stable contract for other tooling.
 7. Merge marker-owned native OTLP settings into global Claude Code and Codex
    files. Unrelated settings are preserved.
 8. Probe the configured server with the installation credential before
