@@ -6,7 +6,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "../test/test-api.mjs";
 
-import { createConfiguredCaptureRecorder } from "./capture-client.mjs";
+import { persistCaptureHealth } from "../runtime/capture/health.mjs";
+import {
+  createConfiguredCaptureRecorder,
+  managedCaptureDirectoryForConfig,
+} from "./capture-client.mjs";
 import {
   artifactCheckpointDirectory,
   createArtifactCheckpointStore,
@@ -14,6 +18,7 @@ import {
 import { captureHealthReport } from "./capture-health-report.mjs";
 import { renderClaudeGlobalSettings } from "./host-global-config.mjs";
 import {
+  managedRelayBindingStorageHash,
   sha256BindingNonce,
   writeManagedRelayConfig,
 } from "./managed-otel-relay.mjs";
@@ -169,6 +174,35 @@ test("managed reporting resolves exact global binding health without cwd or plai
       schemaVersion: 1,
       pendingCount: 0,
       errorCode: "CONFIG_CONFLICT",
+      ...EMPTY_ATTRIBUTION,
+    },
+  );
+});
+
+test("managed reporting preserves repository-attribution degradation", () => {
+  const { configPath, first } = managedFixture();
+  const directory = managedCaptureDirectoryForConfig(
+    managedRelayBindingStorageHash(first),
+    configPath,
+  );
+  persistCaptureHealth({
+    directory,
+    status: { pending: 0 },
+    errorCode: "REPOSITORY_ATTRIBUTION_DEGRADED",
+    now: () => "2026-09-01T12:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    captureHealthReport({
+      env: {
+        COREDOC_RELAY_CONFIG_PATH: configPath,
+        COREDOC_RELAY_BINDING_ID: BINDING_ONE_ID,
+      },
+    }),
+    {
+      schemaVersion: 1,
+      pendingCount: 0,
+      errorCode: "REPOSITORY_ATTRIBUTION_DEGRADED",
       ...EMPTY_ATTRIBUTION,
     },
   );

@@ -879,11 +879,12 @@ function acquireLifecycleLock(paths, { processAlive }) {
     } catch (error) {
       if (descriptor !== undefined) closeSync(descriptor);
       if (error?.code !== "EEXIST") fail("LOCKED");
-      let stale = false;
+      let staleContent;
       try {
         const metadata = lstatSync(paths.lockPath);
-        const owner = JSON.parse(readFileSync(paths.lockPath, "utf8"));
-        stale =
+        const observed = readFileSync(paths.lockPath, "utf8");
+        const owner = JSON.parse(observed);
+        if (
           metadata.isFile() &&
           !metadata.isSymbolicLink() &&
           metadata.nlink === 1 &&
@@ -892,12 +893,42 @@ function acquireLifecycleLock(paths, { processAlive }) {
           Number.isInteger(owner.pid) &&
           owner.pid > 0 &&
           typeof owner.token === "string" &&
-          !processAlive(owner.pid);
+          !processAlive(owner.pid)
+        ) {
+          staleContent = observed;
+        }
       } catch {
-        stale = false;
+        staleContent = undefined;
       }
-      if (!stale || attempt > 0) fail("LOCKED");
-      unlinkSync(paths.lockPath);
+      if (staleContent === undefined || attempt > 0) fail("LOCKED");
+      // Stale-lock removal is serialized through a takeover file so two racing
+      // takeovers cannot both judge the same lock stale and have the loser
+      // delete the winner's freshly acquired lock. Only the takeover holder
+      // unlinks, and only after re-verifying the lock still holds the exact
+      // bytes it judged stale. A crash while holding the takeover file fails
+      // closed as LOCKED until the takeover file is removed by hand.
+      let takeover;
+      try {
+        takeover = openSync(`${paths.lockPath}.takeover`, "wx", 0o600);
+      } catch {
+        fail("LOCKED");
+      }
+      try {
+        let current;
+        try {
+          current = readFileSync(paths.lockPath, "utf8");
+        } catch (readError) {
+          if (readError?.code !== "ENOENT") throw readError;
+          current = undefined;
+        }
+        if (current !== undefined) {
+          if (current !== staleContent) fail("LOCKED");
+          unlinkSync(paths.lockPath);
+        }
+      } finally {
+        closeSync(takeover);
+        rmSync(`${paths.lockPath}.takeover`, { force: true });
+      }
     }
   }
   fail("LOCKED");
@@ -1483,7 +1514,13 @@ export function createCaptureAgentLifecycle({
           oldState.previous.directoryName !== nextState.current.directoryName &&
           oldState.previous.directoryName !== nextState.previous?.directoryName
         ) {
-          removeInstalledRuntime(paths, oldState.previous);
+          try {
+            removeInstalledRuntime(paths, oldState.previous);
+          } catch {
+            // The activation is already committed and healthy; the retired
+            // runtime is unreferenced, so a failed cleanup must not roll the
+            // upgrade back. The leftover directory is inert and harmless.
+          }
         }
         return {
           schemaVersion: 1,
@@ -1751,8 +1788,14 @@ export function createCaptureAgentLifecycle({
           fail("OWNERSHIP_CONFLICT");
         }
         resolvedProof = currentProof;
-      } else if (ownership === "absent" && discardPending && proof !== null) {
-        if (sha256(stateRaw) !== proof.stateSha256) fail("OWNERSHIP_CONFLICT");
+      } else if (ownership === "absent" && (!discardPending || proof !== null)) {
+        // A prior uninstall removed the plist but failed before deleting
+        // state.json. The documented recovery is retrying the default
+        // uninstall, so a preserve-mode retry resumes from partially
+        // uninstalled state; discarding pending data still requires a proof.
+        if (proof !== null && sha256(stateRaw) !== proof.stateSha256) {
+          fail("OWNERSHIP_CONFLICT");
+        }
         validatePartiallyUninstalledState(paths, state);
       } else {
         fail("OWNERSHIP_CONFLICT");
@@ -1768,6 +1811,7 @@ export function createCaptureAgentLifecycle({
       discardPending,
       purgeProof: resolvedProof,
       resumePurge: proof !== null,
+      resumePartial: state !== null && ownership === "absent",
     };
   }
 
@@ -1818,14 +1862,14 @@ export function createCaptureAgentLifecycle({
       removeLink(paths.currentPath);
       removeLink(paths.previousPath);
       removeInstalledRuntime(paths, state.current, {
-        allowPartial: plan.resumePurge,
+        allowPartial: plan.resumePurge || plan.resumePartial,
       });
       if (
         state.previous !== null &&
         state.previous.directoryName !== state.current.directoryName
       ) {
         removeInstalledRuntime(paths, state.previous, {
-          allowPartial: plan.resumePurge,
+          allowPartial: plan.resumePurge || plan.resumePartial,
         });
       }
       removeEmptyDirectory(paths.runtimeVersionsDirectory);

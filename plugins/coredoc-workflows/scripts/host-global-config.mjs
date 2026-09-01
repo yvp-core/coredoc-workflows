@@ -371,7 +371,13 @@ export function renderCodexOtelConfig(content, options) {
   const token = ingressToken(options.ingressToken, "codexIngressToken");
   const endedWithNewline =
     removed.content.length === 0 || removed.content.endsWith("\n");
-  const rendered = codexManagedBlock(token, endedWithNewline) + removed.content;
+  // The managed block opens an [otel] table that only a later table header
+  // would close, so it must follow the user's root-level keys, never precede
+  // them; prepending would reparent those keys into [otel].
+  const rendered =
+    removed.content +
+    (endedWithNewline ? "" : "\n") +
+    codexManagedBlock(token, endedWithNewline);
   return rendered === content ? content : rendered;
 }
 

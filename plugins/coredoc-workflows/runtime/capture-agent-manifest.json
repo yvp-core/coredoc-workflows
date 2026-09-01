@@ -16,7 +16,7 @@
     },
     {
       "path": "runtime/capture/health.mjs",
-      "sha256": "68b87283c05022624794bcf03b578bb913078410ba67962387986ca139d45f5f"
+      "sha256": "015e9ce7fea29aeef10becd19f62a7772b36d2a7aad8f8f2e0cd1faba8442451"
     },
     {
       "path": "runtime/capture/index.mjs",
@@ -28,11 +28,11 @@
     },
     {
       "path": "scripts/capture-client.mjs",
-      "sha256": "8864cafefb720e3545419e523bd2726e804bea5528ae868fcdc227a83e9f1e64"
+      "sha256": "3ef6cf368b913760494e08c6f5584816ecaa9e921825fb8a1143ea3a751a8dce"
     },
     {
       "path": "scripts/capture-health-report.mjs",
-      "sha256": "da7af7f0cc2d66e25850b6f08c8a470b86b7d148dbc71cdbe2c8aa4ab54cbceb"
+      "sha256": "2247134184b89ab2ce3fff4732f839d4eed1b291c0ae61f5f6871dc76f1274b3"
     },
     {
       "path": "scripts/codex-attribution-state.mjs",

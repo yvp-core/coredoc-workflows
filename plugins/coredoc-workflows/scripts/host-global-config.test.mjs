@@ -238,7 +238,13 @@ test("Codex preserves trust tables inserted inside exact Desktop markers across 
   });
   await transaction.apply();
   const installed = await readFile(paths.codexConfigPaths[0], "utf8");
-  assert.equal(installed.startsWith("# >>> coredoc capture-agent managed otel v1"), true);
+  // The managed [otel] block must follow the user's root-level keys;
+  // prepending it would reparent those keys into the otel table.
+  assert.equal(installed.startsWith('model = "gpt-5.6-sol"'), true);
+  assert.equal(
+    installed.includes("\n# >>> coredoc capture-agent managed otel v1"),
+    true,
+  );
   assert.match(installed, /\[hooks\.state\]/);
   assert.match(installed, /"\/private\/workspace" = "trusted"/);
   assert.doesNotMatch(installed, /coredoc managed otel v1/);

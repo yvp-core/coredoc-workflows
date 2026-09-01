@@ -179,7 +179,15 @@ export function resolveWorkflowRuntime({
   ) {
     return { env: workspaceEnv, sessionId };
   }
-  const managed = managedCodexBinding(env, cwd, readRelayConfig);
+  let managed;
+  try {
+    managed = managedCodexBinding(env, cwd, readRelayConfig);
+  } catch {
+    // Capture fails closed (no managed endpoint is configured), but ordinary
+    // workflow execution stays fail-open: a corrupt ingress file, unreadable
+    // relay config, or unmatched binding must not break route/stage/finish.
+    return { env: resolvedEnv, sessionId };
+  }
   if (managed === undefined) return { env: resolvedEnv, sessionId };
   const captureEnv = { ...resolvedEnv };
   if (managed.mode === "workspace") {

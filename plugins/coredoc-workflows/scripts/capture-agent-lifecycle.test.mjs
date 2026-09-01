@@ -88,6 +88,7 @@ function lifecycleHarness({
   probeHealth = async () => undefined,
   importSmoke = async () => undefined,
   runCommand = async () => undefined,
+  processAlive,
 } = {}) {
   const homeDir = mkdtempSync(join(tmpdir(), "coredoc-agent-home-"));
   const coredocHome = join(homeDir, ".coredoc-test");
@@ -113,6 +114,7 @@ function lifecycleHarness({
     wait: async () => undefined,
   };
   if (importSmoke !== null) dependencies.importSmoke = importSmoke;
+  if (processAlive !== undefined) dependencies.processAlive = processAlive;
   const lifecycle = createCaptureAgentLifecycle(dependencies);
   return {
     homeDir,
@@ -250,6 +252,33 @@ test("explicit rollback swaps current and previous runtimes after authenticated 
   );
 });
 
+test("retired-runtime cleanup failure does not roll back a healthy upgrade", async () => {
+  let retiredDirectory;
+  const harness = lifecycleHarness({
+    probeHealth: async ({ runtimeVersion }) => {
+      if (runtimeVersion === "3.0.0") chmodSync(retiredDirectory, 0o700);
+    },
+  });
+  const first = await harness.lifecycle.setupRuntime();
+  harness.setBundle(runtimeFixture("2.0.0", "two"));
+  await harness.lifecycle.upgrade();
+  retiredDirectory = join(
+    harness.paths.runtimeVersionsDirectory,
+    first.current.directoryName,
+  );
+  harness.setBundle(runtimeFixture("3.0.0", "three"));
+
+  const result = await harness.lifecycle.upgrade();
+
+  assert.equal(result.status, "ready");
+  assert.equal(result.current.version, "3.0.0");
+  assert.equal(existsSync(retiredDirectory), true);
+  assert.equal(
+    JSON.parse(readFileSync(harness.paths.statePath, "utf8")).current.version,
+    "3.0.0",
+  );
+});
+
 test("lifecycle refuses foreign and Desktop-v1 ownership before mutation", async () => {
   const unknown = lifecycleHarness();
   mkdirSync(dirname(unknown.paths.launchAgentPath), { recursive: true });
@@ -283,6 +312,25 @@ test("cross-process lifecycle lock fails closed without replacing an active owne
   writeFileSync(harness.paths.lockPath, locked, { mode: 0o600 });
   await assert.rejects(harness.lifecycle.setupRuntime(), expectCode("LOCKED"));
   assert.equal(readFileSync(harness.paths.lockPath, "utf8"), locked);
+});
+
+test("stale-lock takeover never deletes a newer contender lock", async () => {
+  let harness;
+  const replacement = `${JSON.stringify({ schemaVersion: 1, pid: process.pid, token: "replacement_lock_token_1234567890" })}\n`;
+  harness = lifecycleHarness({
+    processAlive: () => {
+      writeFileSync(harness.paths.lockPath, replacement);
+      return false;
+    },
+  });
+  mkdirSync(dirname(harness.paths.lockPath), { recursive: true });
+  const stale = `${JSON.stringify({ schemaVersion: 1, pid: 999999, token: "stale_lock_token_1234567890" })}\n`;
+  writeFileSync(harness.paths.lockPath, stale, { mode: 0o600 });
+
+  await assert.rejects(harness.lifecycle.setupRuntime(), expectCode("LOCKED"));
+  assert.equal(readFileSync(harness.paths.lockPath, "utf8"), replacement);
+  assert.equal(existsSync(`${harness.paths.lockPath}.takeover`), false);
+  assert.equal(existsSync(harness.paths.statePath), false);
 });
 
 test("status is read-only and redacted for both absent and installed agents", async () => {
@@ -734,6 +782,39 @@ test("default uninstall removes the agent while preserving recognized pending qu
   for (const path of pending.records) assert.equal(existsSync(path), false);
   for (const path of pending.retainedState) assert.equal(existsSync(path), false);
   assert.equal(existsSync(pending.agentOutbox), false);
+});
+
+test("default uninstall resumes after a prior attempt removed the plist but left state", async () => {
+  const harness = lifecycleHarness();
+  await harness.lifecycle.setupRuntime();
+  const state = JSON.parse(readFileSync(harness.paths.statePath, "utf8"));
+  const runtimeDirectory = join(
+    harness.paths.runtimeVersionsDirectory,
+    state.current.directoryName,
+  );
+  const removedFile = join(runtimeDirectory, state.current.files[0].path);
+  // A prior uninstall failed after deleting the LaunchAgent but before
+  // deleting state.json, after a runtime file was already removed.
+  unlinkSync(harness.paths.launchAgentPath);
+  unlinkSync(harness.paths.currentPath);
+  chmodSync(dirname(removedFile), 0o700);
+  unlinkSync(removedFile);
+
+  const result = await harness.lifecycle.uninstall();
+  assert.equal(result.status, "uninstalled");
+  assert.equal(existsSync(harness.paths.statePath), false);
+  assert.equal(existsSync(harness.paths.runtimeRoot), false);
+});
+
+test("discarding pending data from partially uninstalled state still requires a proof", async () => {
+  const harness = lifecycleHarness();
+  await harness.lifecycle.setupRuntime();
+  unlinkSync(harness.paths.launchAgentPath);
+
+  await assert.rejects(
+    harness.lifecycle.uninstall({ discardPending: true }),
+    expectCode("OWNERSHIP_CONFLICT"),
+  );
 });
 
 test("purge validates auxiliary state before deleting any queued record", async () => {

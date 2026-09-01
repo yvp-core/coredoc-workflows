@@ -425,6 +425,39 @@ test("legacy repository binding remains selected by repository scope", () => {
   assert.equal(selected.binding, binding);
 });
 
+test("workflow runtime stays fail-open when the managed binding is unavailable", () => {
+  const root = mkdtempSync(join(tmpdir(), "capture-client-failopen-"));
+  const cwd = join(root, "plain-directory");
+  const codexHome = join(root, "codex");
+  const stateHome = join(root, "state");
+  mkdirSync(cwd);
+  writeCodexIngress({ codexHome, stateHome });
+  const env = {
+    CODEX_HOME: codexHome,
+    CODEX_SESSION_ID,
+    COREDOC_WORKFLOWS_STATE_HOME: stateHome,
+  };
+
+  // An unreadable relay config must not break ordinary workflow execution.
+  const unreadable = resolveWorkflowRuntime({
+    cwd,
+    env,
+    readRelayConfig: () => {
+      throw new Error("boom");
+    },
+  });
+  assert.equal(unreadable.env.COREDOC_CAPTURE_ENDPOINT, undefined);
+
+  // A binding set matching neither workspace nor repository scope likewise
+  // resolves without capture instead of throwing.
+  const unmatched = resolveWorkflowRuntime({
+    cwd,
+    env,
+    readRelayConfig: () => ({ schemaVersion: 1, bindings: [] }),
+  });
+  assert.equal(unmatched.env.COREDOC_CAPTURE_ENDPOINT, undefined);
+});
+
 test("workspace-mode omits repository and cwd payloads outside Git or without a remote", async () => {
   const root = mkdtempSync(join(tmpdir(), "capture-client-workspace-"));
   const cwd = join(root, "plain-directory");
