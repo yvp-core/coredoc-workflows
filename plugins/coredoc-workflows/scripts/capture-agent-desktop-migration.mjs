@@ -14,7 +14,10 @@ import {
   DESKTOP_LAUNCH_AGENT_MARKER,
   PLUGIN_LAUNCH_AGENT_MARKER,
 } from "./capture-agent-lifecycle.mjs";
-import { managedRelayConfig } from "./managed-otel-relay.mjs";
+import {
+  managedCaptureBindingStorageHash,
+  managedRelayConfig,
+} from "./managed-otel-relay.mjs";
 
 const runFile = promisify(execFile);
 const BASE_LABEL = "ai.coredoc.capture-relay";
@@ -604,9 +607,7 @@ export async function prepareDesktopQueueImport({
     const workspaceByHash = new Map();
     for (const binding of relayConfig.bindings) {
       workspaceByHash.set(
-        binding.host === "codex"
-          ? createHash("sha256").update(binding.bindingId).digest("hex")
-          : binding.bindingNonceHash,
+        managedCaptureBindingStorageHash(binding),
         { workspaceId: binding.workspaceId, host: binding.host },
       );
     }
