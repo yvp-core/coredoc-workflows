@@ -24,6 +24,8 @@ import { createArtifactCheckpointStore } from "./artifact-checkpoints.mjs";
 const WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
 const SERVER_ORIGIN = "https://coredoc.example.com";
 const DESKTOP_MARKER = "<!-- Coredoc managed relay LaunchAgent v1 -->";
+const FIXTURE_UID =
+  typeof process.getuid === "function" ? process.getuid() : 501;
 
 function oldRelayConfig() {
   return {
@@ -129,7 +131,7 @@ test("migrates the exact coredoc-dev Desktop suffix and restores it on rollback"
   };
   const migration = await prepareDesktopRelayMigration({
     homeDir: fixture.homeDir,
-    uid: 501,
+    uid: FIXTURE_UID,
     runCommand,
   });
   assert.equal(migration.status, "desktop-v1");
@@ -140,7 +142,7 @@ test("migrates the exact coredoc-dev Desktop suffix and restores it on rollback"
   await migration.stop();
   assert.deepEqual(calls.at(-1), [
     "/bin/launchctl",
-    ["bootout", `gui/501/${fixture.label}`],
+    ["bootout", `gui/${FIXTURE_UID}/${fixture.label}`],
   ]);
 
   await writeFile(
@@ -152,7 +154,7 @@ test("migrates the exact coredoc-dev Desktop suffix and restores it on rollback"
   assert.equal(await readFile(fixture.plistPath, "utf8"), fixture.plist);
   assert.deepEqual(calls.at(-1), [
     "/bin/launchctl",
-    ["bootstrap", "gui/501", fixture.plistPath],
+    ["bootstrap", `gui/${FIXTURE_UID}`, fixture.plistPath],
   ]);
 
   await migration.stop();
@@ -177,7 +179,7 @@ test("refuses foreign, ambiguous, and unsafe Desktop migration state", async () 
   await assert.rejects(
     prepareDesktopRelayMigration({
       homeDir: foreign.homeDir,
-      uid: 501,
+      uid: FIXTURE_UID,
       runCommand: async () => undefined,
     }),
     (error) => error instanceof DesktopMigrationError && error.code === "DESKTOP_CONFLICT",
@@ -202,7 +204,7 @@ test("refuses foreign, ambiguous, and unsafe Desktop migration state", async () 
   await assert.rejects(
     prepareDesktopRelayMigration({
       homeDir: ambiguous.homeDir,
-      uid: 501,
+      uid: FIXTURE_UID,
       runCommand: async () => undefined,
     }),
     (error) => error instanceof DesktopMigrationError && error.code === "DESKTOP_AMBIGUOUS",
@@ -213,7 +215,7 @@ test("refuses foreign, ambiguous, and unsafe Desktop migration state", async () 
   await assert.rejects(
     prepareDesktopRelayMigration({
       homeDir: unsafe.homeDir,
-      uid: 501,
+      uid: FIXTURE_UID,
       runCommand: async () => undefined,
     }),
     (error) => error instanceof DesktopMigrationError && error.code === "UNSAFE_DESKTOP_STATE",
@@ -228,7 +230,7 @@ test("refuses a loaded Desktop relay whose exact restart target disappeared befo
   await assert.rejects(
     prepareDesktopRelayMigration({
       homeDir: fixture.homeDir,
-      uid: 501,
+      uid: FIXTURE_UID,
       runCommand: async (executable, args) => calls.push([executable, args]),
     }),
     (error) =>
@@ -251,7 +253,7 @@ for (const initiallyLoaded of [true, false]) {
     };
     const migration = await prepareDesktopRelayMigration({
       homeDir: fixture.homeDir,
-      uid: 501,
+      uid: FIXTURE_UID,
       runCommand,
     });
 
@@ -288,7 +290,7 @@ test("restores a loaded standard Desktop service when plist vacating fails after
   };
   const migration = await prepareDesktopRelayMigration({
     homeDir: fixture.homeDir,
-    uid: 501,
+    uid: FIXTURE_UID,
     fileSystem,
     runCommand: async (executable, args) => {
       calls.push([executable, args]);
@@ -305,11 +307,11 @@ test("restores a loaded standard Desktop service when plist vacating fails after
   assert.equal(await readFile(fixture.plistPath, "utf8"), fixture.plist);
   assert.deepEqual(
     calls.filter(([, args]) => args[0] === "bootout").at(-1),
-    ["/bin/launchctl", ["bootout", `gui/501/${fixture.label}`]],
+    ["/bin/launchctl", ["bootout", `gui/${FIXTURE_UID}/${fixture.label}`]],
   );
   assert.deepEqual(calls.at(-1), [
     "/bin/launchctl",
-    ["bootstrap", "gui/501", fixture.plistPath],
+    ["bootstrap", `gui/${FIXTURE_UID}`, fixture.plistPath],
   ]);
 });
 

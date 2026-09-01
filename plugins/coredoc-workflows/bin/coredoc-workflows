@@ -40,6 +40,37 @@ unset NODE_OPTIONS
 export DO_NOT_TRACK=1
 export BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 
+resolve_capture_node() {
+  node_bin=$(command -v node 2>/dev/null || true)
+  case "$node_bin" in
+    /*) ;;
+    *)
+      echo "coredoc-workflows: capture agent requires Node.js 22 or newer on PATH" >&2
+      exit 69
+      ;;
+  esac
+  if [ ! -x "$node_bin" ]; then
+    echo "coredoc-workflows: capture agent requires Node.js 22 or newer on PATH" >&2
+    exit 69
+  fi
+  node_major=$("$node_bin" -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)
+  node_runtime=$("$node_bin" -p 'process.versions.bun ? "bun" : "node"' 2>/dev/null || true)
+  case "$node_major" in
+    ''|*[!0-9]*)
+      echo "coredoc-workflows: unable to determine the installed Node.js version" >&2
+      exit 69
+      ;;
+  esac
+  if [ "$node_major" -lt 22 ]; then
+    echo "coredoc-workflows: capture agent requires Node.js 22 or newer (found $node_major)" >&2
+    exit 69
+  fi
+  if [ "$node_runtime" != "node" ]; then
+    echo "coredoc-workflows: capture agent requires Node.js 22 or newer; Bun cannot own the persistent LaunchAgent" >&2
+    exit 69
+  fi
+}
+
 case "$command_name" in
   artifact-checkpoints) target=scripts/artifact-checkpoints.mjs ;;
   browse) target=runtime/browse/browse.mjs ;;
@@ -72,11 +103,16 @@ case "$command_name" in
   stage-run) target=scripts/stage-run.mjs ;;
   workflow-observer) target=scripts/workflow-observer.mjs ;;
   test)
-    exec "$bun" --no-env-file --no-install --config="$config" test \
+    # Capture-agent commands are executed by system Node.js 22+, not Bun. The
+    # Bun half excludes their tests; the Node half below runs them explicitly.
+    "$bun" --no-env-file --no-install --config="$config" test \
+      --path-ignore-patterns='**/capture-agent-*.test.mjs' \
       "$plugin_root/scripts" \
       "$plugin_root/runtime/browse" \
       "$plugin_root/runtime/capture" \
       "$plugin_root/runtime/desktop" "$@"
+    resolve_capture_node
+    exec "$node_bin" --test "$plugin_root"/scripts/capture-agent-*.test.mjs
     ;;
   version)
     exec "$bun" --version
@@ -88,34 +124,7 @@ case "$command_name" in
 esac
 
 if [ "${capture_node_required:-0}" -eq 1 ]; then
-  node_bin=$(command -v node 2>/dev/null || true)
-  case "$node_bin" in
-    /*) ;;
-    *)
-      echo "coredoc-workflows: capture agent requires Node.js 22 or newer on PATH" >&2
-      exit 69
-      ;;
-  esac
-  if [ ! -x "$node_bin" ]; then
-    echo "coredoc-workflows: capture agent requires Node.js 22 or newer on PATH" >&2
-    exit 69
-  fi
-  node_major=$("$node_bin" -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)
-  node_runtime=$("$node_bin" -p 'process.versions.bun ? "bun" : "node"' 2>/dev/null || true)
-  case "$node_major" in
-    ''|*[!0-9]*)
-      echo "coredoc-workflows: unable to determine the installed Node.js version" >&2
-      exit 69
-      ;;
-  esac
-  if [ "$node_major" -lt 22 ]; then
-    echo "coredoc-workflows: capture agent requires Node.js 22 or newer (found $node_major)" >&2
-    exit 69
-  fi
-  if [ "$node_runtime" != "node" ]; then
-    echo "coredoc-workflows: capture agent requires Node.js 22 or newer; Bun cannot own the persistent LaunchAgent" >&2
-    exit 69
-  fi
+  resolve_capture_node
   exec "$node_bin" "$plugin_root/$target" "$@"
 fi
 

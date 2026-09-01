@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import {
   chmodSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -17,7 +19,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import test from "../test/test-api.mjs";
 
@@ -26,6 +28,7 @@ import {
   DESKTOP_LAUNCH_AGENT_MARKER,
   PLUGIN_LAUNCH_AGENT_MARKER,
   CaptureAgentLifecycleError,
+  acquireCaptureAgentFileLock,
   captureAgentPaths,
   createCaptureAgentLifecycle,
   loadRuntimeBundle,
@@ -40,6 +43,8 @@ const systemNode = process.versions.bun
   : process.execPath;
 const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const launcher = join(pluginRoot, "bin", "coredoc-workflows");
+const FIXTURE_UID =
+  typeof process.getuid === "function" ? process.getuid() : 501;
 const RUNTIME_FILES = [
   "scripts/managed-otel-relay.mjs",
   "scripts/native-otel-sanitizer.mjs",
@@ -88,7 +93,6 @@ function lifecycleHarness({
   probeHealth = async () => undefined,
   importSmoke = async () => undefined,
   runCommand = async () => undefined,
-  processAlive,
 } = {}) {
   const homeDir = mkdtempSync(join(tmpdir(), "coredoc-agent-home-"));
   const coredocHome = join(homeDir, ".coredoc-test");
@@ -102,7 +106,7 @@ function lifecycleHarness({
     nodePath: systemNode,
     nodeVersion: "22.14.0",
     runtimeName: "node",
-    uid: 501,
+    uid: FIXTURE_UID,
     loadRuntimeBundle: () => activeBundle,
     runCommand: async (executable, args) => {
       calls.push([executable, args]);
@@ -114,7 +118,6 @@ function lifecycleHarness({
     wait: async () => undefined,
   };
   if (importSmoke !== null) dependencies.importSmoke = importSmoke;
-  if (processAlive !== undefined) dependencies.processAlive = processAlive;
   const lifecycle = createCaptureAgentLifecycle(dependencies);
   return {
     homeDir,
@@ -131,6 +134,42 @@ function lifecycleHarness({
 function expectCode(code) {
   return (error) =>
     error instanceof CaptureAgentLifecycleError && error.code === code;
+}
+
+function waitForChildLine(child, expected) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let output = "";
+    const timeout = setTimeout(() => {
+      cleanup();
+      rejectPromise(new Error(`timed out waiting for child output: ${expected}`));
+    }, 5_000);
+    const onData = (chunk) => {
+      output += chunk;
+      if (!output.includes(expected)) return;
+      cleanup();
+      resolvePromise();
+    };
+    const onError = (error) => {
+      cleanup();
+      rejectPromise(error);
+    };
+    const onExit = (code, signal) => {
+      cleanup();
+      rejectPromise(
+        new Error(`lock holder exited before readiness: ${code ?? signal}`),
+      );
+    };
+    function cleanup() {
+      clearTimeout(timeout);
+      child.stdout.off("data", onData);
+      child.off("error", onError);
+      child.off("exit", onExit);
+    }
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", onData);
+    child.once("error", onError);
+    child.once("exit", onExit);
+  });
 }
 
 test("the committed manifest is an exact verified 13-file importable runtime closure", async () => {
@@ -305,32 +344,117 @@ test("lifecycle refuses foreign and Desktop-v1 ownership before mutation", async
   assert.deepEqual(desktop.calls, []);
 });
 
-test("cross-process lifecycle lock fails closed without replacing an active owner", async () => {
-  const harness = lifecycleHarness();
-  mkdirSync(dirname(harness.paths.lockPath), { recursive: true });
-  const locked = `${JSON.stringify({ schemaVersion: 1, pid: process.pid, token: "active_lock_token_1234567890" })}\n`;
-  writeFileSync(harness.paths.lockPath, locked, { mode: 0o600 });
-  await assert.rejects(harness.lifecycle.setupRuntime(), expectCode("LOCKED"));
-  assert.equal(readFileSync(harness.paths.lockPath, "utf8"), locked);
+test("kernel lifecycle lock serializes contenders and ignores orphaned takeover state", () => {
+  const root = mkdtempSync(join(tmpdir(), "coredoc-agent-lock-"));
+  const lockPath = join(root, ".capture-agent-lifecycle.lock");
+  const takeoverPath = `${lockPath}.takeover`;
+  writeFileSync(takeoverPath, "orphaned legacy takeover\n", { mode: 0o600 });
+
+  const release = acquireCaptureAgentFileLock(lockPath, { uid: FIXTURE_UID });
+  const metadata = lstatSync(lockPath);
+  assert.equal(metadata.isFile(), true);
+  assert.equal(metadata.isSymbolicLink(), false);
+  assert.equal(metadata.nlink, 1);
+  assert.equal(metadata.uid, FIXTURE_UID);
+  assert.equal(metadata.mode & 0o777, 0o600);
+  assert.throws(
+    () => acquireCaptureAgentFileLock(lockPath, { uid: FIXTURE_UID }),
+    expectCode("LOCKED"),
+  );
+
+  release();
+  release();
+  const reacquired = acquireCaptureAgentFileLock(lockPath, {
+    uid: FIXTURE_UID,
+  });
+  reacquired();
+
+  assert.equal(lstatSync(lockPath).isFile(), true);
+  assert.equal(
+    readFileSync(takeoverPath, "utf8"),
+    "orphaned legacy takeover\n",
+  );
 });
 
-test("stale-lock takeover never deletes a newer contender lock", async () => {
-  let harness;
-  const replacement = `${JSON.stringify({ schemaVersion: 1, pid: process.pid, token: "replacement_lock_token_1234567890" })}\n`;
-  harness = lifecycleHarness({
-    processAlive: () => {
-      writeFileSync(harness.paths.lockPath, replacement);
-      return false;
-    },
-  });
-  mkdirSync(dirname(harness.paths.lockPath), { recursive: true });
-  const stale = `${JSON.stringify({ schemaVersion: 1, pid: 999999, token: "stale_lock_token_1234567890" })}\n`;
-  writeFileSync(harness.paths.lockPath, stale, { mode: 0o600 });
+test(
+  "kernel lifecycle lock is released automatically when its owner crashes",
+  { skip: !new Set(["darwin", "linux"]).has(process.platform) },
+  async (context) => {
+    const root = mkdtempSync(join(tmpdir(), "coredoc-agent-lock-crash-"));
+    const lockPath = join(root, ".capture-agent-lifecycle.lock");
+    const lifecycleUrl = pathToFileURL(
+      join(pluginRoot, "scripts", "capture-agent-lifecycle.mjs"),
+    ).href;
+    const child = spawn(
+      systemNode,
+      [
+        "--input-type=module",
+        "-e",
+        `import { acquireCaptureAgentFileLock } from ${JSON.stringify(lifecycleUrl)};
+const release = acquireCaptureAgentFileLock(${JSON.stringify(lockPath)}, { uid: ${FIXTURE_UID} });
+process.stdout.write("locked\\n");
+setInterval(() => {}, 1_000);
+void release;`,
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    context.after(async () => {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+        await once(child, "exit");
+      }
+    });
+    await waitForChildLine(child, "locked\n");
 
-  await assert.rejects(harness.lifecycle.setupRuntime(), expectCode("LOCKED"));
-  assert.equal(readFileSync(harness.paths.lockPath, "utf8"), replacement);
-  assert.equal(existsSync(`${harness.paths.lockPath}.takeover`), false);
-  assert.equal(existsSync(harness.paths.statePath), false);
+    assert.throws(
+      () => acquireCaptureAgentFileLock(lockPath, { uid: FIXTURE_UID }),
+      expectCode("LOCKED"),
+    );
+    child.kill("SIGKILL");
+    await once(child, "exit");
+
+    const release = acquireCaptureAgentFileLock(lockPath, {
+      uid: FIXTURE_UID,
+    });
+    release();
+    assert.equal(lstatSync(lockPath).isFile(), true);
+  },
+);
+
+test("kernel lifecycle lock fails closed for unsafe filesystem entries", () => {
+  const symlinkRoot = mkdtempSync(join(tmpdir(), "coredoc-agent-lock-link-"));
+  const symlinkTarget = join(symlinkRoot, "target");
+  const symlinkPath = join(symlinkRoot, "lock");
+  writeFileSync(symlinkTarget, "foreign\n", { mode: 0o600 });
+  symlinkSync(symlinkTarget, symlinkPath);
+  assert.throws(
+    () => acquireCaptureAgentFileLock(symlinkPath, { uid: FIXTURE_UID }),
+    expectCode("LOCKED"),
+  );
+  assert.equal(lstatSync(symlinkPath).isSymbolicLink(), true);
+  assert.equal(readFileSync(symlinkTarget, "utf8"), "foreign\n");
+
+  const hardlinkRoot = mkdtempSync(join(tmpdir(), "coredoc-agent-lock-hardlink-"));
+  const hardlinkTarget = join(hardlinkRoot, "target");
+  const hardlinkPath = join(hardlinkRoot, "lock");
+  writeFileSync(hardlinkTarget, "foreign\n", { mode: 0o600 });
+  linkSync(hardlinkTarget, hardlinkPath);
+  assert.throws(
+    () => acquireCaptureAgentFileLock(hardlinkPath, { uid: FIXTURE_UID }),
+    expectCode("LOCKED"),
+  );
+  assert.equal(lstatSync(hardlinkTarget).nlink, 2);
+  assert.equal(readFileSync(hardlinkTarget, "utf8"), "foreign\n");
+
+  const modeRoot = mkdtempSync(join(tmpdir(), "coredoc-agent-lock-mode-"));
+  const modePath = join(modeRoot, "lock");
+  writeFileSync(modePath, "foreign\n", { mode: 0o644 });
+  assert.throws(
+    () => acquireCaptureAgentFileLock(modePath, { uid: FIXTURE_UID }),
+    expectCode("LOCKED"),
+  );
+  assert.equal(lstatSync(modePath).mode & 0o777, 0o644);
+  assert.equal(readFileSync(modePath, "utf8"), "foreign\n");
 });
 
 test("status is read-only and redacted for both absent and installed agents", async () => {

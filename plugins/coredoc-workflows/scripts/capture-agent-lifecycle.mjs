@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
 import { createHash, randomBytes } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import {
   chmodSync,
   closeSync,
+  constants as fsConstants,
   copyFileSync,
   existsSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
   openSync,
@@ -844,94 +846,92 @@ function validateEnvironment({ platform, nodePath, nodeVersion, runtimeName }) {
   return resolvedNode;
 }
 
-function defaultProcessAlive(pid) {
+function sameLockIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function validateLifecycleLockFile(path, descriptor, uid) {
+  let opened;
+  let visible;
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error?.code !== "ESRCH";
+    opened = fstatSync(descriptor);
+    visible = lstatSync(path);
+  } catch {
+    fail("LOCKED");
+  }
+  if (
+    !opened.isFile() ||
+    !visible.isFile() ||
+    visible.isSymbolicLink() ||
+    opened.nlink !== 1 ||
+    visible.nlink !== 1 ||
+    (opened.mode & 0o777) !== 0o600 ||
+    (visible.mode & 0o777) !== 0o600 ||
+    opened.uid !== uid ||
+    visible.uid !== uid ||
+    !sameLockIdentity(opened, visible)
+  ) {
+    fail("LOCKED");
   }
 }
 
-function acquireLifecycleLock(paths, { processAlive }) {
-  ensureDirectory(paths.coredocHome);
-  const token = randomBytes(18).toString("base64url");
-  const content = `${JSON.stringify({
-    schemaVersion: 1,
-    pid: process.pid,
-    token,
-  })}\n`;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    let descriptor;
-    try {
-      descriptor = openSync(paths.lockPath, "wx", 0o600);
-      writeFileSync(descriptor, content);
-      closeSync(descriptor);
-      descriptor = undefined;
-      chmodSync(paths.lockPath, 0o600);
-      return () => {
-        try {
-          if (readFileSync(paths.lockPath, "utf8") === content) unlinkSync(paths.lockPath);
-        } catch {
-          // A replaced or already-released lock never authorizes another deletion.
-        }
-      };
-    } catch (error) {
-      if (descriptor !== undefined) closeSync(descriptor);
-      if (error?.code !== "EEXIST") fail("LOCKED");
-      let staleContent;
+function lockCommand() {
+  if (process.platform === "darwin") {
+    return { executable: "/usr/bin/lockf", args: ["-s", "-t", "0", "3"] };
+  }
+  if (process.platform === "linux") {
+    return { executable: "/usr/bin/flock", args: ["-n", "3"] };
+  }
+  fail("LOCKED");
+}
+
+export function acquireCaptureAgentFileLock(
+  path,
+  { uid = typeof process.getuid === "function" ? process.getuid() : -1 } = {},
+) {
+  if (!Number.isInteger(uid) || uid < 0) fail("LOCKED");
+  let descriptor;
+  let acquired = false;
+  ensureDirectory(dirname(path));
+  try {
+    descriptor = openSync(
+      path,
+      fsConstants.O_CREAT | fsConstants.O_RDWR | fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+    validateLifecycleLockFile(path, descriptor, uid);
+    const command = lockCommand();
+    const result = spawnSync(command.executable, command.args, {
+      stdio: ["ignore", "ignore", "ignore", descriptor],
+      timeout: 2_000,
+    });
+    if (result.error || result.signal !== null || result.status !== 0) {
+      fail("LOCKED");
+    }
+    validateLifecycleLockFile(path, descriptor, uid);
+    acquired = true;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
       try {
-        const metadata = lstatSync(paths.lockPath);
-        const observed = readFileSync(paths.lockPath, "utf8");
-        const owner = JSON.parse(observed);
-        if (
-          metadata.isFile() &&
-          !metadata.isSymbolicLink() &&
-          metadata.nlink === 1 &&
-          (metadata.mode & 0o777) === 0o600 &&
-          owner?.schemaVersion === 1 &&
-          Number.isInteger(owner.pid) &&
-          owner.pid > 0 &&
-          typeof owner.token === "string" &&
-          !processAlive(owner.pid)
-        ) {
-          staleContent = observed;
-        }
+        closeSync(descriptor);
       } catch {
-        staleContent = undefined;
+        // Closing an already invalidated descriptor cannot authorize mutation.
       }
-      if (staleContent === undefined || attempt > 0) fail("LOCKED");
-      // Stale-lock removal is serialized through a takeover file so two racing
-      // takeovers cannot both judge the same lock stale and have the loser
-      // delete the winner's freshly acquired lock. Only the takeover holder
-      // unlinks, and only after re-verifying the lock still holds the exact
-      // bytes it judged stale. A crash while holding the takeover file fails
-      // closed as LOCKED until the takeover file is removed by hand.
-      let takeover;
+    };
+  } catch (error) {
+    if (error instanceof CaptureAgentLifecycleError) throw error;
+    fail("LOCKED");
+  } finally {
+    if (!acquired && descriptor !== undefined) {
       try {
-        takeover = openSync(`${paths.lockPath}.takeover`, "wx", 0o600);
+        closeSync(descriptor);
       } catch {
-        fail("LOCKED");
-      }
-      try {
-        let current;
-        try {
-          current = readFileSync(paths.lockPath, "utf8");
-        } catch (readError) {
-          if (readError?.code !== "ENOENT") throw readError;
-          current = undefined;
-        }
-        if (current !== undefined) {
-          if (current !== staleContent) fail("LOCKED");
-          unlinkSync(paths.lockPath);
-        }
-      } finally {
-        closeSync(takeover);
-        rmSync(`${paths.lockPath}.takeover`, { force: true });
+        // The bounded LOCKED result remains authoritative.
       }
     }
   }
-  fail("LOCKED");
 }
 
 function installedDirectory(paths, record) {
@@ -1430,8 +1430,8 @@ export function createCaptureAgentLifecycle({
   probeListener = defaultProbeListener,
   probeHealth = defaultProbeHealth,
   importSmoke = defaultImportSmoke,
+  acquireFileLock = acquireCaptureAgentFileLock,
   randomToken = () => randomBytes(32).toString("base64url"),
-  processAlive = defaultProcessAlive,
   wait = (milliseconds) =>
     new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
 } = {}) {
@@ -1443,7 +1443,7 @@ export function createCaptureAgentLifecycle({
   }
 
   async function withLock(operation) {
-    const release = acquireLifecycleLock(paths, { processAlive });
+    const release = acquireFileLock(paths.lockPath, { uid });
     try {
       return await operation();
     } finally {
