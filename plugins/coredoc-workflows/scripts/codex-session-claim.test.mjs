@@ -8,7 +8,7 @@ import { claimCodexSession } from "./codex-session-claim.mjs";
 
 test("posts only session id and cwd with the machine-local ingress token", async () => {
   const root = mkdtempSync(join(tmpdir(), "coredoc-codex-claim-"));
-  const relayRoot = join(root, "capture-relay");
+  const relayRoot = join(root, "capture-agent", "capture-relay");
   mkdirSync(relayRoot, { recursive: true });
   const token = "machine_ingress_abcdefghijklmnopqrstuvwxyz012345";
   writeFileSync(

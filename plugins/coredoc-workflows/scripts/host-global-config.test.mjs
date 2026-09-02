@@ -170,7 +170,7 @@ test("Codex status does not hide unmanaged OTEL appended beside an owned block",
   assert.deepEqual(status.codex, ["partial"]);
 });
 
-test("Codex install replaces only an exact Desktop-owned OTEL block", () => {
+test("Codex rejects and reports an exact Desktop OTEL block without changing it", async () => {
   const legacyToken = "l".repeat(48);
   const before = [
     'model = "gpt-5.6-sol"',
@@ -184,29 +184,66 @@ test("Codex install replaces only an exact Desktop-owned OTEL block", () => {
     "",
   ].join("\n");
 
-  const installed = renderCodexOtelConfig(before, {
-    operation: "install",
-    ingressToken: CODEX_TOKEN,
-  });
-  assert.match(installed, /coredoc capture-agent managed otel v1/);
-  assert.doesNotMatch(installed, /coredoc managed otel v1/);
-  assert.doesNotMatch(installed, new RegExp(legacyToken));
-  assert.equal(
-    renderCodexOtelConfig(installed, { operation: "uninstall" }),
-    'model = "gpt-5.6-sol"\n',
-  );
-
   assert.throws(
     () =>
-      renderCodexOtelConfig(
-        "# >>> coredoc managed otel v1 eof-newline=1\n[otel]\n# <<< coredoc managed otel v1\n",
-        { operation: "install", ingressToken: CODEX_TOKEN },
-      ),
+      renderCodexOtelConfig(before, {
+        operation: "install",
+        ingressToken: CODEX_TOKEN,
+      }),
     (error) => error instanceof HostConfigError && error.code === "CONFIG_CONFLICT",
+  );
+  assert.equal(renderCodexOtelConfig(before, { operation: "uninstall" }), before);
+
+  const root = await mkdtemp(join(tmpdir(), "host-global-desktop-status-"));
+  const paths = configPaths(root);
+  await mkdir(join(root, ".codex"), { recursive: true, mode: 0o700 });
+  await writeFile(paths.codexConfigPaths[0], before, { mode: 0o600 });
+  const status = await inspectHostGlobalConfig(paths);
+  assert.deepEqual(status.codex, ["legacy", "absent"]);
+});
+
+test("Codex rejects malformed Desktop markers on install but uninstall preserves them", () => {
+  const malformed =
+    "# >>> coredoc managed otel v1 eof-newline=1\n[otel]\n# <<< coredoc managed otel v1\n";
+  assert.throws(
+    () =>
+      renderCodexOtelConfig(malformed, {
+        operation: "install",
+        ingressToken: CODEX_TOKEN,
+      }),
+    (error) => error instanceof HostConfigError && error.code === "CONFIG_CONFLICT",
+  );
+  assert.equal(
+    renderCodexOtelConfig(malformed, { operation: "uninstall" }),
+    malformed,
   );
 });
 
-test("Codex preserves trust tables inserted inside exact Desktop markers across install, rollback, and uninstall", async () => {
+test("Codex uninstall removes only its own block and preserves Desktop bytes", () => {
+  const rootContent = 'model = "gpt-5.6-sol"\n';
+  const plugin = renderCodexOtelConfig(rootContent, {
+    operation: "install",
+    ingressToken: CODEX_TOKEN,
+  });
+  const legacyToken = "l".repeat(48);
+  const desktop = [
+    "# >>> coredoc managed otel v1 eof-newline=1",
+    "[otel]",
+    "log_user_prompt = false",
+    'exporter = { otlp-http = { endpoint = "http://127.0.0.1:43181/v1/logs", protocol = "json", headers = { "X-Coredoc-Relay-Ingress" = "' +
+      legacyToken +
+      '" } } }',
+    "# <<< coredoc managed otel v1",
+    "",
+  ].join("\n");
+
+  assert.equal(
+    renderCodexOtelConfig(`${plugin}${desktop}`, { operation: "uninstall" }),
+    `${rootContent}${desktop}`,
+  );
+});
+
+test("Codex refuses Desktop blocks containing retained trust tables without mutation", async () => {
   const root = await mkdtemp(join(tmpdir(), "host-global-codex-trust-"));
   const paths = configPaths(root);
   await mkdir(join(root, ".codex"), { recursive: true, mode: 0o700 });
@@ -232,30 +269,15 @@ test("Codex preserves trust tables inserted inside exact Desktop markers across 
   ].join("\n");
   await writeFile(paths.codexConfigPaths[0], before, { mode: 0o600 });
 
-  const transaction = await prepareHostGlobalConfigTransaction({
-    ...installInput(root),
-    includeCodexHooks: false,
-  });
-  await transaction.apply();
-  const installed = await readFile(paths.codexConfigPaths[0], "utf8");
-  // The managed [otel] block must follow the user's root-level keys;
-  // prepending it would reparent those keys into the otel table.
-  assert.equal(installed.startsWith('model = "gpt-5.6-sol"'), true);
-  assert.equal(
-    installed.includes("\n# >>> coredoc capture-agent managed otel v1"),
-    true,
+  await assert.rejects(
+    prepareHostGlobalConfigTransaction({
+      ...installInput(root),
+      includeCodexHooks: false,
+    }),
+    (error) => error instanceof HostConfigError && error.code === "CONFIG_CONFLICT",
   );
-  assert.match(installed, /\[hooks\.state\]/);
-  assert.match(installed, /"\/private\/workspace" = "trusted"/);
-  assert.doesNotMatch(installed, /coredoc managed otel v1/);
-
-  const withoutPlugin = renderCodexOtelConfig(installed, {
-    operation: "uninstall",
-  });
-  assert.equal(withoutPlugin, `model = "gpt-5.6-sol"\n${trustState}`);
-
-  await transaction.rollback();
   assert.equal(await readFile(paths.codexConfigPaths[0], "utf8"), before);
+  assert.equal(renderCodexOtelConfig(before, { operation: "uninstall" }), before);
 });
 
 test("Codex hook install is idempotent and removal keeps unrelated handlers", () => {
@@ -291,7 +313,7 @@ test("Codex hook install is idempotent and removal keeps unrelated handlers", ()
   );
 });
 
-test("Codex hook install replaces exact Desktop claim commands and preserves user hooks", () => {
+test("Codex hook install rejects Desktop claims while status and uninstall preserve them", async () => {
   const desktopCommand =
     "COREDOC_CODEX_SESSION_CLAIM=1 ELECTRON_RUN_AS_NODE=1 '/Applications/Coredoc.app/Contents/MacOS/Coredoc' '/Users/test/.coredoc/capture-relay/codex-session-claim.mjs'";
   const before = JSON.stringify({
@@ -307,17 +329,22 @@ test("Codex hook install replaces exact Desktop claim commands and preserves use
       ],
     },
   });
-  const installed = renderCodexHooks(before, {
-    operation: "install",
-    runtimeExecutablePath: "/opt/coredoc/runtime/node",
-    claimProgramPath: "/opt/coredoc/capture-agent/session-claim.mjs",
-  });
-  assert.doesNotMatch(installed, /COREDOC_CODEX_SESSION_CLAIM/);
-  assert.match(installed, /COREDOC_CAPTURE_AGENT_SESSION_CLAIM/);
-  assert.match(installed, /\/usr\/bin\/user-hook/);
-  const removed = renderCodexHooks(before, { operation: "uninstall" });
-  assert.doesNotMatch(removed, /COREDOC_CODEX_SESSION_CLAIM/);
-  assert.match(removed, /\/usr\/bin\/user-hook/);
+  assert.throws(
+    () =>
+      renderCodexHooks(before, {
+        operation: "install",
+        runtimeExecutablePath: "/opt/coredoc/runtime/node",
+        claimProgramPath: "/opt/coredoc/capture-agent/session-claim.mjs",
+      }),
+    (error) => error instanceof HostConfigError && error.code === "CONFIG_CONFLICT",
+  );
+  assert.equal(renderCodexHooks(before, { operation: "uninstall" }), before);
+
+  const root = await mkdtemp(join(tmpdir(), "host-global-desktop-hook-"));
+  const paths = configPaths(root);
+  await mkdir(join(root, ".codex"), { recursive: true, mode: 0o700 });
+  await writeFile(paths.codexHooksPath, before, { mode: 0o600 });
+  assert.equal((await inspectHostGlobalConfig(paths)).codexHooks, "legacy");
 });
 
 test("native host configuration can commit independently from optional Codex claims", async () => {

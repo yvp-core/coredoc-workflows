@@ -342,9 +342,8 @@ function codexStatus(content) {
     const plugin = removeCodexManagedBlock(content);
     const desktop = removeDesktopCodexManagedBlock(plugin.content);
     const unmanaged = hasUnmanagedCodexOtel(desktop.content);
-    if (plugin.changed || desktop.changed) {
-      return unmanaged ? "partial" : "managed";
-    }
+    if (plugin.changed) return desktop.changed || unmanaged ? "partial" : "managed";
+    if (desktop.changed) return unmanaged ? "partial" : "legacy";
     return unmanaged ? "unmanaged" : "unconfigured";
   } catch {
     return "invalid";
@@ -363,19 +362,25 @@ function codexManagedBlock(token, originalEndedWithNewline) {
 export function renderCodexOtelConfig(content, options) {
   const requested = operation(options?.operation);
   const plugin = removeCodexManagedBlock(content);
-  const removed = removeDesktopCodexManagedBlock(plugin.content);
-  if (requested === "uninstall") return removed.content;
-  if (hasUnmanagedCodexOtel(removed.content)) {
+  if (requested === "uninstall") return plugin.content;
+  const desktop = removeDesktopCodexManagedBlock(plugin.content);
+  if (desktop.changed) {
+    fail(
+      "CONFIG_CONFLICT",
+      "Codex still contains legacy Desktop-managed OpenTelemetry settings.",
+    );
+  }
+  if (hasUnmanagedCodexOtel(plugin.content)) {
     fail("CONFIG_CONFLICT", "Codex already has an unmanaged [otel] configuration.");
   }
   const token = ingressToken(options.ingressToken, "codexIngressToken");
   const endedWithNewline =
-    removed.content.length === 0 || removed.content.endsWith("\n");
+    plugin.content.length === 0 || plugin.content.endsWith("\n");
   // The managed block opens an [otel] table that only a later table header
   // would close, so it must follow the user's root-level keys, never precede
   // them; prepending would reparent those keys into [otel].
   const rendered =
-    removed.content +
+    plugin.content +
     (endedWithNewline ? "" : "\n") +
     codexManagedBlock(token, endedWithNewline);
   return rendered === content ? content : rendered;
@@ -410,23 +415,34 @@ function managedCodexHandler(runtimeExecutablePath, claimProgramPath) {
   };
 }
 
-function isManagedCodexHandler(value) {
+function codexHandlerOwnership(value) {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    typeof value.command !== "string"
+  ) {
+    return undefined;
+  }
+  if (value.command.startsWith(CODEX_MANAGED_COMMAND_PREFIX)) return "plugin";
+  if (value.command.startsWith(DESKTOP_CODEX_MANAGED_COMMAND_PREFIX)) {
+    return "desktop";
+  }
+  return undefined;
+}
+
+function isPluginCodexHandler(value) {
   return (
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    typeof value.command === "string" &&
-    (value.command.startsWith(CODEX_MANAGED_COMMAND_PREFIX) ||
-      value.command.startsWith(DESKTOP_CODEX_MANAGED_COMMAND_PREFIX))
+    codexHandlerOwnership(value) === "plugin"
   );
 }
 
-function withoutManagedCodexHandlers(value) {
+function withoutPluginCodexHandlers(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return value;
   }
   if (!Array.isArray(value.hooks)) return value;
-  const retained = value.hooks.filter((handler) => !isManagedCodexHandler(handler));
+  const retained = value.hooks.filter((handler) => !isPluginCodexHandler(handler));
   if (retained.length === value.hooks.length) return value;
   if (retained.length === 0) return null;
   return { ...value, hooks: retained };
@@ -454,19 +470,21 @@ function validatedHooksDocument(content) {
 function codexHooksStatus(content) {
   try {
     const { hooks } = validatedHooksDocument(content);
+    let plugin = false;
+    let desktop = false;
     for (const hookName of ["SessionStart", "UserPromptSubmit"]) {
       for (const entry of hooks[hookName] ?? []) {
-        if (
-          entry !== null &&
-          typeof entry === "object" &&
-          !Array.isArray(entry) &&
-          Array.isArray(entry.hooks) &&
-          entry.hooks.some(isManagedCodexHandler)
-        ) {
-          return "managed";
+        if (entry !== null && typeof entry === "object" && !Array.isArray(entry)) {
+          for (const handler of Array.isArray(entry.hooks) ? entry.hooks : []) {
+            const ownership = codexHandlerOwnership(handler);
+            if (ownership === "plugin") plugin = true;
+            if (ownership === "desktop") desktop = true;
+          }
         }
       }
     }
+    if (plugin) return desktop ? "partial" : "managed";
+    if (desktop) return "legacy";
     return "unconfigured";
   } catch {
     return "invalid";
@@ -476,10 +494,30 @@ function codexHooksStatus(content) {
 export function renderCodexHooks(content, options) {
   const requested = operation(options?.operation);
   const { document, hooks } = validatedHooksDocument(content);
+  if (
+    requested === "install" &&
+    ["SessionStart", "UserPromptSubmit"].some((hookName) =>
+      (hooks[hookName] ?? []).some(
+        (entry) =>
+          entry !== null &&
+          typeof entry === "object" &&
+          !Array.isArray(entry) &&
+          Array.isArray(entry.hooks) &&
+          entry.hooks.some(
+            (handler) => codexHandlerOwnership(handler) === "desktop",
+          ),
+      ),
+    )
+  ) {
+    fail(
+      "CONFIG_CONFLICT",
+      "Codex hooks still contain a legacy Desktop-managed session claim.",
+    );
+  }
   let changed = false;
   for (const hookName of ["SessionStart", "UserPromptSubmit"]) {
     const retained = (hooks[hookName] ?? []).flatMap((entry) => {
-      const stripped = withoutManagedCodexHandlers(entry);
+      const stripped = withoutPluginCodexHandlers(entry);
       if (stripped !== entry) changed = true;
       return stripped === null ? [] : [stripped];
     });

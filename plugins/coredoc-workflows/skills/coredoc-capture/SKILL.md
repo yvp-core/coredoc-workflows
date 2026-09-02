@@ -19,7 +19,9 @@ bundled Bun runtime. It does not require system Node, Bun, or Python. The agent 
 per-user state below `~/.coredoc`, a per-user LaunchAgent, and marker-owned global Claude
 Code/Codex settings. It must not create repository files, use Coredoc MCP for
 routing or credentials, read an MCP credential store, or require Coredoc
-Desktop.
+Desktop. Plugin ownership uses `ai.coredoc.workflows.capture-relay` and
+`~/.coredoc/capture-agent/capture-relay`; the legacy Desktop label, plist, and
+`~/.coredoc/capture-relay` root are never mutation targets.
 
 Before `setup`, `repair`, `upgrade`, authenticated `doctor`, or
 `uninstall --purge`, require an operator-provisioned mode-0600 policy at
@@ -80,15 +82,34 @@ remote token or retained credentials, host integration remains removed, and the
 safe next action is to inspect `status` and explicitly retry default uninstall
 or authorize `repair`—never infer `--purge`.
 
-If setup reports `MIGRATION_PENDING_UNSUPPORTED`, do not purge state or force
-the migration. Let the recognized Coredoc Desktop relay drain the configured
-workspace's legacy Codex queues, verify that they are empty, and then rerun
-setup.
-
-If setup reports `DESKTOP_RESTART_UNAVAILABLE`, it stopped before mutating the
-Desktop service. Repair or reinstall that recognized Desktop relay so its
-recorded executable and runtime script exist, verify it starts, and rerun
-setup.
+Setup does not stop or migrate a Coredoc Desktop daemon, import its queues, or
+revoke its credentials. `LEGACY_DESKTOP_PRESENT` identifies the exact Desktop-v1
+LaunchAgent; `OWNERSHIP_CONFLICT` is unrecognized state, and
+`FOREIGN_LISTENER` is an unowned process on the relay port. Stop on all three.
+For the exceptional legacy machine, let every binding drain, use Desktop's
+managed-capture **Disable** action for every configured Claude repository and
+Codex profile, and confirm every target is disabled. This removes
+repository-local Claude settings that override the plugin's global settings.
+Any remaining Desktop Codex OTEL block or session-claim hook is legacy state:
+setup returns `CONFIG_CONFLICT`, while `status`/`doctor` preserve it and report
+the native or claim state as `legacy`. Stop and remove the recognized service.
+The plugin recognizes only the standard
+unsuffixed Desktop LaunchAgent; also inventory and retire every exact-marker
+`ai.coredoc.capture-relay.<hash>.plist` development service, because a dormant
+suffixed service is not auto-detected and can restart later. Move each recognized
+Desktop `capture-relay` root—including the standard
+`~/.coredoc/capture-relay` and any configured development root—to a separate
+owner-only backup. Verify no old LaunchAgent, listener, or other
+service that can reclaim the fixed relay port remains before rerunning setup.
+The archived Desktop root is disjoint from plugin-owned state. Never inspect or
+print credential-bearing settings, kill an unknown listener, or delete unproven
+state. If an earlier pre-release plugin build used the Desktop label or relay
+root, uninstall it with that same build before running current setup; the
+current build intentionally reports `OWNERSHIP_CONFLICT` instead of adopting
+or rewriting that old state. After the new agent is healthy and the rollback
+window closes, revoke the old Desktop credentials through the ownership-scoped
+server or administrator workflow, verify their rejection, and securely remove
+the backups.
 
 After a successful first setup, tell the user to restart Claude Code and Codex
 once. Codex may ask them to trust the installed `SessionStart` hook; declining

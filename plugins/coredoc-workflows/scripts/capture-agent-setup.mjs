@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { createHash, randomBytes, randomUUID as nodeRandomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
 import * as defaultFileSystem from "node:fs/promises";
 import { homedir } from "node:os";
 import {
@@ -12,10 +11,8 @@ import {
   resolve,
 } from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 
 import {
-  CAPTURE_AGENT_LABEL,
   captureAgentPaths,
   createCaptureAgentLifecycle,
 } from "./capture-agent-lifecycle.mjs";
@@ -26,17 +23,12 @@ import {
   validateCaptureAgentPolicy,
 } from "./capture-agent-policy.mjs";
 import {
-  prepareDesktopQueueImport,
-  prepareDesktopRelayMigration,
-} from "./capture-agent-desktop-migration.mjs";
-import {
   inspectHostGlobalConfig,
   prepareCodexHooksTransaction,
   prepareHostGlobalConfigTransaction,
 } from "./host-global-config.mjs";
 import { managedRelayConfig } from "./managed-otel-relay.mjs";
 
-const runFile = promisify(execFile);
 const IDENTITY_MARKER = "coredoc-workflows.capture-agent-installation.v1";
 const IDENTITY_FIELDS = new Set([
   "schemaVersion",
@@ -51,7 +43,6 @@ const BINDING_FIELDS = new Set(["bindingId", "bindingNonce"]);
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LOCAL_TOKEN = /^[A-Za-z0-9_-]{32,256}$/;
 const CLOUD_TOKEN = /^cdt_[a-f0-9]{64}$/;
-const LEGACY_PREFIX = /^Bearer (cdt_[A-Za-z0-9_-]{8})[A-Za-z0-9_-]+$/;
 const PROFILE_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.config\.toml$/;
 const MAX_STATE_BYTES = 1024 * 1024;
 const LOCK_MARKER = "coredoc-workflows.capture-agent-setup-lock.v1";
@@ -70,12 +61,6 @@ const SAFE_ERROR_CODES = new Set([
   "DCR_FAILED",
   "DCR_INVALID",
   "DCR_REQUIRED",
-  "DESKTOP_AMBIGUOUS",
-  "DESKTOP_CONFLICT",
-  "DESKTOP_RESTORE_FAILED",
-  "DESKTOP_RESTART_UNAVAILABLE",
-  "DESKTOP_RETIRE_FAILED",
-  "DESKTOP_STOP_FAILED",
   "DISCOVERY_FAILED",
   "DISCOVERY_INVALID",
   "FOREIGN_LISTENER",
@@ -88,8 +73,8 @@ const SAFE_ERROR_CODES = new Set([
   "INSTALLATION_REVOKE_FAILED",
   "INSTALLATION_REVOKE_UNCONFIRMED",
   "INSTALLATION_ROTATE_FAILED",
+  "LEGACY_DESKTOP_PRESENT",
   "LOCKED",
-  "MIGRATION_PENDING_UNSUPPORTED",
   "NOT_INSTALLED",
   "NO_PREVIOUS_RUNTIME",
   "OAUTH_CALLBACK_FAILED",
@@ -329,6 +314,16 @@ async function safeSnapshot(path, fs, uid, { strictMode = true } = {}) {
   return { exists: true, content, mode: metadata.mode & 0o777 };
 }
 
+async function diagnosticSnapshot(path, fs, uid) {
+  try {
+    return { snapshot: await safeSnapshot(path, fs, uid), conflict: false };
+  } catch {
+    // Status and doctor are read-only diagnostics. Preserve unsafe state and
+    // expose only a bounded conflict instead of failing before the report.
+    return { snapshot: null, conflict: true };
+  }
+}
+
 function sameSnapshot(left, right) {
   return (
     left.exists === right.exists &&
@@ -545,31 +540,13 @@ function workspaceBinding(host, identity, policy, cloudToken) {
   };
 }
 
-function legacyClaudeBindings(config, policy, cloudToken) {
-  if (config === null) return [];
-  const validated = managedRelayConfig(config);
-  return validated.bindings
-    .filter(
-      (binding) =>
-        binding.host === "claude-code" &&
-        binding.workspaceId === policy.workspaceId &&
-        binding.workspaceMode !== true,
-    )
-    .map((binding) => ({
-      ...binding,
-      ...forwardEndpoints(policy),
-      cloudAuthorization: `Bearer ${cloudToken}`,
-    }));
-}
-
-function buildRelayConfig({ identity, policy, cloudToken, legacyConfig }) {
+function buildRelayConfig({ identity, policy, cloudToken }) {
   if (typeof cloudToken !== "string" || !CLOUD_TOKEN.test(cloudToken)) {
     fail("UNSAFE_STATE");
   }
   return managedRelayConfig({
     schemaVersion: 1,
     bindings: [
-      ...legacyClaudeBindings(legacyConfig, policy, cloudToken),
       workspaceBinding("claude-code", identity, policy, cloudToken),
       workspaceBinding("codex", identity, policy, cloudToken),
     ],
@@ -583,7 +560,7 @@ function ownedRelayConfig(value, identity, policy) {
   } catch {
     fail("OWNERSHIP_CONFLICT");
   }
-  if (config.bindings.length < 2) fail("OWNERSHIP_CONFLICT");
+  if (config.bindings.length !== 2) fail("OWNERSHIP_CONFLICT");
   const claude = config.bindings.filter(
     ({ host, workspaceMode }) => host === "claude-code" && workspaceMode === true,
   );
@@ -593,7 +570,7 @@ function ownedRelayConfig(value, identity, policy) {
   const allowed = config.bindings.every(
     (binding) =>
       binding.workspaceId === policy.workspaceId &&
-      (binding.workspaceMode === true || binding.host === "claude-code"),
+      binding.workspaceMode === true,
   );
   const authorizations = new Set(
     config.bindings.map(({ cloudAuthorization }) => cloudAuthorization),
@@ -626,17 +603,6 @@ function ownedRelayConfig(value, identity, policy) {
     fail("OWNERSHIP_CONFLICT");
   }
   return { config, token };
-}
-
-function legacyCredentialPrefixes(config, policy) {
-  const prefixes = new Set();
-  if (config === null) return prefixes;
-  for (const binding of managedRelayConfig(config).bindings) {
-    if (binding.workspaceId !== policy.workspaceId) continue;
-    const match = LEGACY_PREFIX.exec(binding.cloudAuthorization);
-    if (match) prefixes.add(match[1]);
-  }
-  return prefixes;
 }
 
 async function profileConfigPaths(paths, fs) {
@@ -718,13 +684,6 @@ async function probeCloudCredential({
   ) {
     fail("CLOUD_HEALTH_MISMATCH");
   }
-}
-
-function defaultRunCommand(executable, args) {
-  return runFile(executable, args, {
-    timeout: 10_000,
-    env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
-  }).then(() => undefined);
 }
 
 function defaultProcessAlive(pid) {
@@ -843,50 +802,12 @@ function readCodexIngress(snapshot) {
   return value.token;
 }
 
-function validateCodexIngressOwnership({ snapshot, identity, migration }) {
+function validateCodexIngressOwnership({ snapshot, identity }) {
   const token = readCodexIngress(snapshot);
   if (token === null) return;
-  if (identity !== null) {
-    if (token !== identity.codex.bindingNonce) fail("OWNERSHIP_CONFLICT");
-    return;
+  if (identity === null || token !== identity.codex.bindingNonce) {
+    fail("OWNERSHIP_CONFLICT");
   }
-  if (migration.status !== "desktop-v1") fail("OWNERSHIP_CONFLICT");
-  const matchingDesktopBindings = migration.relayConfig.bindings.filter(
-    ({ host, bindingNonceHash }) =>
-      host === "codex" && bindingNonceHash === sha256(token),
-  );
-  if (matchingDesktopBindings.length !== 1) fail("OWNERSHIP_CONFLICT");
-}
-
-async function cleanupLegacyTokens(session, prefixes) {
-  if (!session || prefixes.size === 0) {
-    return { status: "not-needed", revokedCount: 0 };
-  }
-  let owned;
-  try {
-    owned = await session.listOwnedTelemetryTokens();
-  } catch {
-    return { status: "degraded", revokedCount: 0 };
-  }
-  let revokedCount = 0;
-  let degraded = false;
-  for (const token of owned) {
-    if (
-      token.id === session.installationToken.id ||
-      token.name === session.installationToken.name ||
-      token.tokenPrefix === null ||
-      !prefixes.has(token.tokenPrefix)
-    ) {
-      continue;
-    }
-    try {
-      await session.revokeOwnedTelemetryToken(token.id);
-      revokedCount += 1;
-    } catch {
-      degraded = true;
-    }
-  }
-  return { status: degraded ? "degraded" : "complete", revokedCount };
 }
 
 export function createCaptureAgentSetup({
@@ -900,8 +821,6 @@ export function createCaptureAgentSetup({
   fetchImpl = fetch,
   requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   createRequestSignal = (milliseconds) => AbortSignal.timeout(milliseconds),
-  prepareDesktopMigration = prepareDesktopRelayMigration,
-  prepareQueueImport = prepareDesktopQueueImport,
   prepareHostConfig = prepareHostGlobalConfigTransaction,
   prepareHooksConfig = prepareCodexHooksTransaction,
   inspectHostConfig = inspectHostGlobalConfig,
@@ -909,7 +828,6 @@ export function createCaptureAgentSetup({
   randomLocalToken = () => randomBytes(32).toString("base64url"),
   randomLockToken = () => randomBytes(32).toString("base64url"),
   processAlive = defaultProcessAlive,
-  runCommand = defaultRunCommand,
   runtimeExecutablePath,
 } = {}) {
   if (
@@ -939,15 +857,13 @@ export function createCaptureAgentSetup({
       await activeLifecycle.uninstall({ discardPending: false });
       return;
     }
-    if (before.runtime?.digest !== setupResult.current?.digest) {
-      await activeLifecycle.rollback();
+    const runtimeChanged = before.runtime?.digest !== setupResult.current?.digest;
+    if (runtimeChanged) {
+      await activeLifecycle.rollback({ start: before.loaded !== false });
       return;
     }
-    if (before.listener === "free") {
-      await runCommand("/bin/launchctl", [
-        "bootout",
-        `gui/${uid}/${CAPTURE_AGENT_LABEL}`,
-      ]).catch(() => undefined);
+    if (before.loaded === false) {
+      await activeLifecycle.disable();
       return;
     }
     await activeLifecycle.setupRuntime();
@@ -959,7 +875,6 @@ export function createCaptureAgentSetup({
     identityBefore,
     relayBefore,
     codexIngressBefore,
-    migration,
     session,
     cloudToken,
     lifecycleBefore,
@@ -968,20 +883,16 @@ export function createCaptureAgentSetup({
     let stateTx;
     let nativeTx;
     let hooksTx;
-    let queueTx;
     let lifecycleResult;
     let hooksApplied = false;
     let nativeApplied = false;
     let stateApplied = false;
-    let queueApplied = false;
-    let committed = false;
     let claims = "configured";
     try {
       const relayConfig = buildRelayConfig({
         identity,
         policy,
         cloudToken,
-        legacyConfig: migration.relayConfig ?? (relayBefore.exists ? await readRelay(relayBefore) : null),
       });
       stateTx = stateTransaction(
         [
@@ -1007,17 +918,6 @@ export function createCaptureAgentSetup({
         fs,
         uid,
       );
-      await migration.stop();
-      queueTx = await prepareQueueImport({
-        migration,
-        targetRelayRoot: paths.relayRoot,
-        workspaceId: policy.workspaceId,
-        uid,
-        fileSystem: fs,
-      });
-      if (queueTx.summary.skippedUnsupportedPending > 0) {
-        fail("MIGRATION_PENDING_UNSUPPORTED");
-      }
       const codexConfigPaths = await profileConfigPaths(paths, fs);
       nativeTx = await prepareHostConfig({
         operation: "install",
@@ -1037,13 +937,12 @@ export function createCaptureAgentSetup({
           runtimeExecutablePath: activeRuntimeExecutablePath,
           claimProgramPath: paths.claimProgramPath,
         });
-      } catch {
+      } catch (error) {
+        if (error?.code === "CONFIG_CONFLICT") throw error;
         claims = "degraded";
       }
       await stateTx.apply();
       stateApplied = true;
-      await queueTx.apply();
-      queueApplied = true;
       lifecycleResult = await activeLifecycle.setupRuntime();
       await nativeTx.apply();
       nativeApplied = true;
@@ -1060,7 +959,8 @@ export function createCaptureAgentSetup({
         !new Set(["ready", "degraded"]).has(postStatus.status) ||
         !new Set(["ready", "degraded"]).has(postStatus.health) ||
         postStatus.listener !== "occupied" ||
-        postStatus.launchAgent !== "plugin-v1"
+        postStatus.launchAgent !== "plugin-v1" ||
+        postStatus.desktopLaunchAgent !== "absent"
       ) {
         fail("HEALTH_MISMATCH");
       }
@@ -1071,24 +971,6 @@ export function createCaptureAgentSetup({
         requestTimeoutMs,
         createRequestSignal,
       });
-      committed = true;
-
-      let migrationState = migration.status;
-      if (
-        queueTx.summary.skippedOtherWorkspacePending > 0 ||
-        queueTx.summary.skippedUnsupportedPending > 0
-      ) {
-        migrationState = "degraded";
-      }
-      try {
-        await migration.retire({
-          pluginLaunchAgentPath: paths.launchAgentPath,
-        });
-      } catch {
-        migrationState = "degraded";
-      }
-      const prefixes = legacyCredentialPrefixes(migration.relayConfig, policy);
-      const cleanup = await cleanupLegacyTokens(session, prefixes);
       return {
         schemaVersion: 1,
         command,
@@ -1099,12 +981,8 @@ export function createCaptureAgentSetup({
         },
         native: "ready",
         claims,
-        migration: migrationState,
-        migrationQueues: queueTx.summary,
-        cleanup,
       };
     } catch (error) {
-      if (committed) throw mappedError(error);
       const rollbackErrors = [];
       if (hooksApplied) {
         await hooksTx.rollback().catch((rollbackError) => rollbackErrors.push(rollbackError));
@@ -1118,12 +996,6 @@ export function createCaptureAgentSetup({
       await compensateLifecycle(lifecycleBefore, lifecycleResult).catch((rollbackError) =>
         rollbackErrors.push(rollbackError),
       );
-      if (queueApplied) {
-        await queueTx.rollback().catch((rollbackError) =>
-          rollbackErrors.push(rollbackError),
-        );
-      }
-      await migration.restore().catch((rollbackError) => rollbackErrors.push(rollbackError));
       if (session) {
         await session.revokeInstallationToken().catch((rollbackError) =>
           rollbackErrors.push(rollbackError),
@@ -1152,35 +1024,81 @@ export function createCaptureAgentSetup({
           uid,
         );
         const existingIdentity = await readIdentity(identityBefore, policy);
-        const lifecycleBefore = await activeLifecycle.status();
-        const migration = await prepareDesktopMigration({
-          homeDir: paths.homeDir,
-          uid,
-          fileSystem: fs,
-          runCommand,
-        });
-        const provisionalIdentity =
-          existingIdentity !== null &&
-          lifecycleBefore.launchAgent !== "plugin-v1" &&
-          (migration.status === "desktop-v1" ||
-            (!relayBefore.exists && !codexIngressBefore.exists));
+        const lifecycleStatusBefore = await activeLifecycle.status();
+        const desktopLaunchAgent =
+          lifecycleStatusBefore.desktopLaunchAgent ??
+          (lifecycleStatusBefore.launchAgent === "desktop-v1"
+            ? "desktop-v1"
+            : "absent");
+        if (desktopLaunchAgent === "desktop-v1") {
+          fail("LEGACY_DESKTOP_PRESENT");
+        }
+        if (desktopLaunchAgent !== "absent") fail("OWNERSHIP_CONFLICT");
         if (
-          existingIdentity &&
-          migration.status !== "none" &&
-          !provisionalIdentity
+          !new Set(["absent", "plugin-v1"]).has(
+            lifecycleStatusBefore.launchAgent,
+          )
         ) {
           fail("OWNERSHIP_CONFLICT");
         }
+        let loaded = false;
+        if (lifecycleStatusBefore.launchAgent === "plugin-v1") {
+          const preflight = await activeLifecycle.preflightDisable();
+          if (typeof preflight?.loaded !== "boolean") {
+            fail("SUPERVISOR_UNAVAILABLE");
+          }
+          loaded = preflight.loaded;
+        }
+        const lifecycleBefore = { ...lifecycleStatusBefore, loaded };
+        const codexConfigPaths = await profileConfigPaths(paths, fs);
+        const hostBefore = await inspectHostConfig({
+          claudeSettingsPath: paths.claudeSettingsPath,
+          codexConfigPaths,
+          codexHooksPath: paths.codexHooksPath,
+        });
+        const installableNativeStatus = new Set([
+          "absent",
+          "unconfigured",
+          "managed",
+        ]);
+        if (
+          !installableNativeStatus.has(hostBefore.claude) ||
+          hostBefore.codex.some(
+            (status) => !installableNativeStatus.has(status),
+          ) ||
+          new Set(["legacy", "partial"]).has(hostBefore.codexHooks)
+        ) {
+          fail("CONFIG_CONFLICT");
+        }
+        if (
+          lifecycleBefore.loaded === false &&
+          lifecycleBefore.listener === "occupied"
+        ) {
+          fail("FOREIGN_LISTENER");
+        }
+        if (lifecycleBefore.queueState === "unsafe") {
+          fail("UNSAFE_STATE");
+        }
+        if (
+          existingIdentity === null &&
+          lifecycleBefore.queueState !== "empty"
+        ) {
+          fail("OWNERSHIP_CONFLICT");
+        }
+        const provisionalIdentity =
+          existingIdentity !== null &&
+          lifecycleBefore.launchAgent !== "plugin-v1" &&
+          !relayBefore.exists &&
+          !codexIngressBefore.exists;
         if (!existingIdentity && lifecycleBefore.launchAgent === "plugin-v1") {
           fail("OWNERSHIP_CONFLICT");
         }
-        if (!existingIdentity && relayBefore.exists && migration.status === "none") {
+        if (!existingIdentity && relayBefore.exists) {
           fail("OWNERSHIP_CONFLICT");
         }
         validateCodexIngressOwnership({
           snapshot: codexIngressBefore,
           identity: provisionalIdentity ? null : existingIdentity,
-          migration,
         });
 
         const identity =
@@ -1212,7 +1130,6 @@ export function createCaptureAgentSetup({
               identityBefore,
               relayBefore,
               codexIngressBefore,
-              migration,
               session: null,
               cloudToken: owned.token,
               lifecycleBefore,
@@ -1235,7 +1152,6 @@ export function createCaptureAgentSetup({
               identityBefore,
               relayBefore,
               codexIngressBefore,
-              migration,
               session,
               cloudToken: session.installationToken.token,
               lifecycleBefore,
@@ -1249,34 +1165,57 @@ export function createCaptureAgentSetup({
 
   async function status() {
     const purgePending = (await readPurgeRecord(paths, fs, uid)) !== null;
-    const identitySnapshot = await safeSnapshot(paths.identityPath, fs, uid);
-    const relaySnapshot = await safeSnapshot(paths.relayConfigPath, fs, uid);
-    const codexIngressSnapshot = await safeSnapshot(
-      paths.codexIngressPath,
-      fs,
-      uid,
-    );
-    const identity = await readIdentity(identitySnapshot);
-    const storedPolicy = identity
-      ? validateCaptureAgentPolicy({
+    const [identityFile, relayFile, codexIngressFile] = await Promise.all([
+      diagnosticSnapshot(paths.identityPath, fs, uid),
+      diagnosticSnapshot(paths.relayConfigPath, fs, uid),
+      diagnosticSnapshot(paths.codexIngressPath, fs, uid),
+    ]);
+    let identity = null;
+    let storedPolicy = null;
+    let installation = identityFile.conflict ? "conflict" : "absent";
+    if (identityFile.snapshot?.exists) {
+      try {
+        identity = await readIdentity(identityFile.snapshot);
+        storedPolicy = validateCaptureAgentPolicy({
           schemaVersion: 1,
           serverOrigin: identity.serverOrigin,
           workspaceId: identity.workspaceId,
-        })
-      : null;
-    let relay = "absent";
-    if (identity && relaySnapshot.exists) {
-      ownedRelayConfig(await readRelay(relaySnapshot), identity, storedPolicy);
-      relay = "ready";
+        });
+        installation = "ready";
+      } catch {
+        identity = null;
+        storedPolicy = null;
+        installation = "conflict";
+      }
     }
-    let codexIngress = "absent";
-    if (identity && codexIngressSnapshot.exists) {
-      validateCodexIngressOwnership({
-        snapshot: codexIngressSnapshot,
-        identity,
-        migration: { status: "none" },
-      });
-      codexIngress = "ready";
+    let relay = relayFile.conflict ? "conflict" : "absent";
+    if (relayFile.snapshot?.exists) {
+      if (identity === null) {
+        relay = "conflict";
+      } else {
+        try {
+          ownedRelayConfig(await readRelay(relayFile.snapshot), identity, storedPolicy);
+          relay = "ready";
+        } catch {
+          relay = "conflict";
+        }
+      }
+    }
+    let codexIngress = codexIngressFile.conflict ? "conflict" : "absent";
+    if (codexIngressFile.snapshot?.exists) {
+      if (identity === null) {
+        codexIngress = "conflict";
+      } else {
+        try {
+          validateCodexIngressOwnership({
+            snapshot: codexIngressFile.snapshot,
+            identity,
+          });
+          codexIngress = "ready";
+        } catch {
+          codexIngress = "conflict";
+        }
+      }
     }
     const codexConfigPaths = await profileConfigPaths(paths, fs);
     const [lifecycleStatus, host] = await Promise.all([
@@ -1289,16 +1228,67 @@ export function createCaptureAgentSetup({
     ]);
     const nativeReady =
       host.claude === "managed" && host.codex.every((value) => value === "managed");
+    const desktopLaunchAgent =
+      lifecycleStatus.desktopLaunchAgent ??
+      (lifecycleStatus.launchAgent === "desktop-v1"
+        ? "desktop-v1"
+        : "absent");
+    const degradedReasons = new Set(
+      Array.isArray(lifecycleStatus.degradedReasons)
+        ? lifecycleStatus.degradedReasons
+        : [],
+    );
+    if (installation === "conflict") degradedReasons.add("INSTALLATION_CONFLICT");
+    if (relay === "conflict") degradedReasons.add("RELAY_CONFLICT");
+    if (codexIngress === "conflict") degradedReasons.add("CODEX_INGRESS_CONFLICT");
+    if (desktopLaunchAgent === "desktop-v1") {
+      degradedReasons.add("LEGACY_DESKTOP_PRESENT");
+    }
+    if (
+      desktopLaunchAgent === "foreign" ||
+      lifecycleStatus.launchAgent === "foreign"
+    ) {
+      degradedReasons.add("OWNERSHIP_CONFLICT");
+    }
+    if (
+      lifecycleStatus.launchAgent === "absent" &&
+      desktopLaunchAgent === "absent" &&
+      lifecycleStatus.listener === "occupied"
+    ) {
+      degradedReasons.add("FOREIGN_LISTENER");
+    }
+    if (installation !== "ready" && lifecycleStatus.queueState !== "empty") {
+      degradedReasons.add("ORPHANED_QUEUE_STATE");
+    }
+    const hasDiagnosticConflict = degradedReasons.size > 0;
+    const hasBlockingDisabledState =
+      installation !== "ready" ||
+      relay !== "ready" ||
+      codexIngress !== "ready" ||
+      lifecycleStatus.queueState === "unsafe" ||
+      degradedReasons.has("OWNERSHIP_CONFLICT");
     const disabled =
       lifecycleStatus.status !== "not-installed" &&
+      lifecycleStatus.launchAgent === "plugin-v1" &&
+      desktopLaunchAgent === "absent" &&
+      !hasBlockingDisabledState &&
       !nativeReady &&
       lifecycleStatus.listener === "free";
     const ready =
       lifecycleStatus.status === "ready" &&
-      identity !== null &&
+      lifecycleStatus.launchAgent === "plugin-v1" &&
+      desktopLaunchAgent === "absent" &&
+      !hasDiagnosticConflict &&
+      installation === "ready" &&
       relay === "ready" &&
       codexIngress === "ready" &&
       nativeReady;
+    const notInstalled =
+      lifecycleStatus.status === "not-installed" &&
+      lifecycleStatus.launchAgent === "absent" &&
+      desktopLaunchAgent === "absent" &&
+      lifecycleStatus.listener === "free" &&
+      !hasDiagnosticConflict;
     return {
       schemaVersion: 1,
       command: "status",
@@ -1308,7 +1298,7 @@ export function createCaptureAgentSetup({
           : "ready"
         : disabled
           ? "disabled"
-          : lifecycleStatus.status === "not-installed"
+          : notInstalled
             ? "not-installed"
             : "degraded",
       runtime:
@@ -1318,16 +1308,26 @@ export function createCaptureAgentSetup({
               version: lifecycleStatus.runtime.version,
               digest: lifecycleStatus.runtime.digest,
             },
-      installation: identity === null ? "absent" : "ready",
+      installation,
       relay,
       codexIngress,
       native: {
         claude: host.claude,
         codex: host.codex,
       },
-      claims: host.codexHooks === "managed" ? "configured" : "degraded",
+      claims:
+        host.codexHooks === "managed"
+          ? "configured"
+          : host.codexHooks === "legacy"
+            ? "legacy"
+            : "degraded",
+      launchAgent: lifecycleStatus.launchAgent,
+      desktopLaunchAgent,
+      listener: lifecycleStatus.listener,
+      health: lifecycleStatus.health,
       pendingCount: lifecycleStatus.pendingCount,
       queueState: lifecycleStatus.queueState ?? "unknown",
+      degradedReasons: [...degradedReasons].sort(),
       purge: purgePending ? "pending" : "none",
     };
   }
@@ -1416,7 +1416,6 @@ export function createCaptureAgentSetup({
     validateCodexIngressOwnership({
       snapshot: codexIngressBefore,
       identity,
-      migration: { status: "none" },
     });
     return {
       policy,
@@ -1590,7 +1589,7 @@ export function createCaptureAgentSetup({
         const after = await activeLifecycle.preflightUninstall({
           discardPending: false,
         });
-        if (!after.installed) throw error;
+        if (!after.installed || after.partial) fail("UNINSTALL_INCOMPLETE");
         if (preflight.loaded) await activeLifecycle.startInstalledRuntime();
         await host.rollback();
       } catch (rollbackError) {

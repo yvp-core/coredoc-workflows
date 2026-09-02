@@ -222,7 +222,13 @@ test("managed CLI records into the global binding-hash outbox without a cwd dire
   );
   assert.equal(result.status, "queued");
   const hash = createHash("sha256").update(nonce).digest("hex");
-  const directory = join(stateHome, "capture-relay", "outbox", hash);
+  const directory = join(
+    stateHome,
+    "capture-agent",
+    "capture-relay",
+    "outbox",
+    hash,
+  );
   assert.equal(statSync(directory).mode & 0o777, 0o700);
   assert.equal(
     readdirSync(directory).filter((name) => name.endsWith(".event.json")).length,

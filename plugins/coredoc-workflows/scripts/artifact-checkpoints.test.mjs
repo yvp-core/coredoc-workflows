@@ -1285,7 +1285,7 @@ test("rendered workspace Claude env authenticates with its nonce and stores arti
     sent: 0,
   });
   const directory = artifactCheckpointDirectory(
-    join(stateHome, "capture-relay"),
+    join(stateHome, "capture-agent", "capture-relay"),
     sha256BindingNonce(bindingId),
   );
   assert.equal(artifactCheckpointHealth(directory).pendingCount, 1);
@@ -1364,7 +1364,7 @@ test("configured Codex artifacts use ingress and binding-ID authentication", asy
     readFileSync(
       join(
         artifactCheckpointDirectory(
-          join(stateHome, "capture-relay"),
+          join(stateHome, "capture-agent", "capture-relay"),
           digest(bindingId),
         ),
         "state.json",
@@ -1380,7 +1380,7 @@ test("corrupt managed state returns one bounded CONFIG_CONFLICT instead of rethr
   const stateHome = mkdtempSync(join(tmpdir(), "coredoc-artifact-corrupt-state-"));
   const nonce = "local-binding";
   const directory = artifactCheckpointDirectory(
-    join(stateHome, "capture-relay"),
+    join(stateHome, "capture-agent", "capture-relay"),
     digest(nonce),
   );
   createArtifactCheckpointStore({ directory });

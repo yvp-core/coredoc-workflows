@@ -365,7 +365,11 @@ Claude Code and Codex configuration. Marketplace installation alone performs
 none of those actions. The LaunchAgent runs the digest-addressed installed Bun
 through a small environment-sanitizing runner, while the Codex claim hook follows
 the stable `current` runtime link. Plugin cache rotation therefore cannot strand
-the agent.
+the agent. Plugin ownership uses the distinct
+`ai.coredoc.workflows.capture-relay` label and
+`~/.coredoc/capture-agent/capture-relay` state root; the legacy Desktop label,
+plist, and `~/.coredoc/capture-relay` root are separate and are never mutation
+targets.
 
 Claude Code and Codex receive different random loopback capabilities. Both
 semantic capture and native OTLP point to `http://127.0.0.1:43181`; host settings
@@ -394,13 +398,34 @@ queue, and closed degradation state. A foreign listener, unmanaged host OTLP
 configuration, policy drift, unsafe state file, or unavailable supervisor fails
 closed before setup overwrites anything.
 
-Setup recognizes only the supported marker-owned Desktop relay and LaunchAgent
-layouts. During migration it stops only that recognized service, imports
-compatible pending state for the configured workspace, starts and probes the new
-agent, and then retires the old marker-owned service and matching legacy
-credential. An unknown listener is never killed. A failure before commit
-restores the prior service state, host files, runtime links, and queue placement;
-unsupported pending data is left for the old relay to drain.
+Setup does not migrate a Coredoc Desktop daemon, its queues, or its credentials.
+`LEGACY_DESKTOP_PRESENT` identifies the exact Desktop-v1 LaunchAgent;
+`OWNERSHIP_CONFLICT` is unrecognized state, and `FOREIGN_LISTENER` is an
+unowned process on the relay port. All fail before enrollment or managed-state
+mutation. On the exceptional legacy machine, let every binding drain, then use
+Desktop's managed-capture **Disable** action for every configured Claude
+repository and Codex profile so its higher-precedence repository-local settings
+are removed. Confirm every target is disabled and stop and remove the recognized
+service. Any remaining Desktop Codex OTEL block or session-claim hook is
+reported as legacy state and blocks setup with `CONFIG_CONFLICT`; the plugin
+never replaces or deletes that Desktop-owned configuration. Read-only
+`status`/`doctor` reports a legacy claim hook as `claims: "legacy"`. The plugin
+recognizes the standard unsuffixed Desktop LaunchAgent
+itself; also inventory and retire every exact-marker
+`ai.coredoc.capture-relay.<hash>.plist` development service because a dormant
+suffixed service is not auto-detected and can restart later. Atomically move
+each recognized Desktop `capture-relay` root—including the standard
+`~/.coredoc/capture-relay` and any configured development root—to a separate
+owner-only backup. Verify no old LaunchAgent, listener, or other
+service that can reclaim the fixed relay port remains before rerunning setup.
+The archived Desktop root is disjoint from plugin-owned state. The plugin never
+kills an unknown listener or imports or deletes the backups. If an earlier
+pre-release plugin build used the Desktop label or relay root, uninstall it with
+that same build before running current setup; the current build intentionally
+refuses to adopt it. After the new agent is healthy and the rollback window
+closes, revoke the old Desktop telemetry credentials through the
+ownership-scoped server or administrator workflow, verify their rejection, and securely
+remove the backups.
 
 Only structured identity and usage fields can leave the machine: host/provider,
 session or conversation ID, model and supported host version, token/cache/
@@ -416,7 +441,7 @@ development diagnostic, not the supported provisioning/lifecycle path.
 Accepted data goes only to the configured Coredoc workspace. Workspace admins
 can read workspace-wide activity; members receive server-filtered rows for their
 own identity. Pending state remains binding-isolated below the mode-0700
-`~/.coredoc/capture-relay` directory. Files are mode 0600 and contain only
+`~/.coredoc/capture-agent/capture-relay` directory. Files are mode 0600 and contain only
 validated capture envelopes, sanitized native records, or bounded diagnostics.
 
 `pnpm --dir plugins/coredoc-workflows capture-health:report` prints exactly one
@@ -432,7 +457,8 @@ when an operator explicitly supplies `COREDOC_CAPTURE_ENDPOINT` and an
 independent `COREDOC_CAPTURE_HEADERS` credential; plugin installation supplies
 neither, and this path never reuses the agent credential. See
 [`docs/plugin-managed-capture-agent.md`](../../docs/plugin-managed-capture-agent.md)
-for policy setup, lifecycle commands, migration, rollback, and purge behavior.
+for policy setup, lifecycle commands, manual legacy cutover, rollback, and purge
+behavior.
 
 ## Deliberate constraints
 

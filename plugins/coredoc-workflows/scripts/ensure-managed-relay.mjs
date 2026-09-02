@@ -32,7 +32,13 @@ export function managedRelayConfigPath(home) {
   ) {
     throw new Error("INVALID_HOME");
   }
-  return join(home, ".coredoc", "capture-relay", "relay.json");
+  return join(
+    home,
+    ".coredoc",
+    "capture-agent",
+    "capture-relay",
+    "relay.json",
+  );
 }
 
 function unavailable(error, fallback = "CONFIG_UNAVAILABLE") {

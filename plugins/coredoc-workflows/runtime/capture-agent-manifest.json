@@ -36,11 +36,11 @@
     },
     {
       "path": "scripts/artifact-checkpoints.mjs",
-      "sha256": "a593b6827e87978266cf450f730301ba0f3a3db29d65029712eb5dc99b777c3d"
+      "sha256": "6f42fec8a03f21a85a8feb5d22595c10f8e9d98dd12227bd12f4fafe5c965bb6"
     },
     {
       "path": "scripts/capture-client.mjs",
-      "sha256": "3ef6cf368b913760494e08c6f5584816ecaa9e921825fb8a1143ea3a751a8dce"
+      "sha256": "bc3ce10133831d598523ee666d0477cb9a4da5c9ae39661bc8a2edc712674fff"
     },
     {
       "path": "scripts/capture-health-report.mjs",
@@ -52,11 +52,11 @@
     },
     {
       "path": "scripts/codex-session-claim.mjs",
-      "sha256": "0bedaad0003b91495990127b2b379e1e681efbf28c636b043d1adc45c382d380"
+      "sha256": "3af1b1a1d81e51e8d7d897086eed31bb2225c87813d7cb142647365a3adcf223"
     },
     {
       "path": "scripts/managed-otel-relay.mjs",
-      "sha256": "79f9d01ca51bce7994c2d57c57a20c72666ce369d61fe5948a0c7239f659cba2"
+      "sha256": "0bbc01efcfe78950f128a15bcf6475d3b1f04d50fb7fcf92a0e78a2f8096c8fc"
     },
     {
       "path": "scripts/native-otel-sanitizer.mjs",

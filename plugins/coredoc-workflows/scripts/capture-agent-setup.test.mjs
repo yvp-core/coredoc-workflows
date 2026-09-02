@@ -18,6 +18,12 @@ import {
   createCaptureAgentSetup,
   runCaptureAgentSetupCli,
 } from "./capture-agent-setup.mjs";
+import {
+  CAPTURE_AGENT_LABEL,
+  DESKTOP_CAPTURE_AGENT_LABEL,
+  DESKTOP_LAUNCH_AGENT_MARKER,
+  createCaptureAgentLifecycle,
+} from "./capture-agent-lifecycle.mjs";
 import { resolveWorkflowRuntime } from "./capture-client.mjs";
 import { claimCodexSession } from "./codex-session-claim.mjs";
 
@@ -33,6 +39,40 @@ const INSTALLATION_TOKEN_ID = "44444444-4444-4444-8444-444444444444";
 const CLOUD_TOKEN = `cdt_${"a".repeat(64)}`;
 const CLAUDE_TOKEN = "c".repeat(48);
 const CODEX_TOKEN = "d".repeat(48);
+
+function desktopCodexOtelConfig() {
+  return [
+    'model = "gpt-5.6-sol"',
+    "# >>> coredoc managed otel v1 eof-newline=1",
+    "[otel]",
+    "log_user_prompt = false",
+    'exporter = { otlp-http = { endpoint = "http://127.0.0.1:43181/v1/logs", protocol = "json", headers = { "X-Coredoc-Relay-Ingress" = "' +
+      "l".repeat(48) +
+      '" } } }',
+    "# <<< coredoc managed otel v1",
+    "",
+  ].join("\n");
+}
+
+function desktopCodexHooks() {
+  return JSON.stringify({
+    hooks: {
+      SessionStart: [
+        {
+          matcher: "startup|resume|clear|compact",
+          hooks: [
+            {
+              type: "command",
+              command:
+                "COREDOC_CODEX_SESSION_CLAIM=1 ELECTRON_RUN_AS_NODE=1 '/Applications/Coredoc.app/Contents/MacOS/Coredoc' '/Users/test/.coredoc/capture-relay/codex-session-claim.mjs'",
+              async: true,
+            },
+          ],
+        },
+      ],
+    },
+  });
+}
 
 test("setup paths reject relative homes so capture never writes into a repository", () => {
   assert.throws(
@@ -85,9 +125,25 @@ function json(value, status = 200) {
   });
 }
 
-function fakeLifecycle(events, { pendingCount = 0, health = "ready" } = {}) {
-  let installed = false;
-  let active = false;
+function fakeLifecycle(
+  events,
+  {
+    pendingCount = 0,
+    health = "ready",
+    initialLaunchAgent = "absent",
+    initialDesktopLaunchAgent =
+      initialLaunchAgent === "desktop-v1" ? "desktop-v1" : "absent",
+    initialListener = "free",
+    initialPendingCount = 0,
+    initialQueueState = "empty",
+    initiallyInstalled = false,
+    initiallyLoaded = false,
+    installedListener,
+  } = {},
+) {
+  let installed = initiallyInstalled;
+  let active = initiallyLoaded;
+  let listenerOverride = installedListener;
   const lifecyclePurgeProof = {
     schemaVersion: 1,
     stateSha256: "a".repeat(64),
@@ -139,30 +195,41 @@ function fakeLifecycle(events, { pendingCount = 0, health = "ready" } = {}) {
             runtime,
             previousRuntime: null,
             launchAgent: "plugin-v1",
-            listener: active ? "occupied" : "free",
+            desktopLaunchAgent: initialDesktopLaunchAgent,
+            listener: listenerOverride ?? (active ? "occupied" : "free"),
             health: active ? health : "unavailable",
             pendingCount,
             queueState: pendingCount === 0 ? "empty" : "pending",
+            degradedReasons: [
+              ...(active ? [] : ["HEALTH_UNAVAILABLE"]),
+              ...(pendingCount === 0 ? [] : ["QUEUE_PENDING"]),
+            ].sort(),
           }
         : {
             schemaVersion: 1,
             status: "not-installed",
             runtime: null,
             previousRuntime: null,
-            launchAgent: "absent",
-            listener: "free",
+            launchAgent: initialLaunchAgent,
+            desktopLaunchAgent: initialDesktopLaunchAgent,
+            listener: initialListener,
             health: "not-installed",
-            pendingCount: 0,
-            queueState: "empty",
+            pendingCount: initialPendingCount,
+            queueState: initialQueueState,
           };
     },
     async upgrade() {
       events.push("lifecycle:upgrade");
       return { status: "ready", current: runtime, previous: runtime };
     },
-    async rollback() {
+    async rollback({ start = true } = {}) {
       events.push("lifecycle:rollback");
-      return { status: "ready", current: runtime, previous: runtime };
+      active = start;
+      return {
+        status: start ? "ready" : "disabled",
+        current: runtime,
+        previous: runtime,
+      };
     },
     async disable() {
       events.push("lifecycle:disable");
@@ -188,6 +255,7 @@ function fakeLifecycle(events, { pendingCount = 0, health = "ready" } = {}) {
         schemaVersion: 1,
         status: "ready",
         installed,
+        partial: false,
         loaded: active,
         pendingCount,
         disposition: discardPending ? "discard" : "preserve",
@@ -210,43 +278,29 @@ function fakeLifecycle(events, { pendingCount = 0, health = "ready" } = {}) {
     _setActive(value) {
       active = value;
     },
-  };
-}
-
-function noDesktopMigration(events, relayConfig = null) {
-  return {
-    status: relayConfig === null ? "none" : "desktop-v1",
-    relayConfig,
-    configPath: null,
-    async stop() {
-      events.push("desktop:stop");
-    },
-    async restore() {
-      events.push("desktop:restore");
-    },
-    async retire() {
-      events.push("desktop:retire");
+    _setInstalledListener(value) {
+      listenerOverride = value;
     },
   };
 }
 
 async function harness({
-  migrationConfig = null,
-  owned = [],
   cloudTokens = [CLOUD_TOKEN],
   observeLoadedRelay = false,
   enrollmentErrors = [],
   revokeInstallationFailures = 0,
-  queueSummary = {
-    importedPending: 0,
-    skippedOtherWorkspacePending: 0,
-    skippedUnsupportedPending: 0,
-  },
   enrollmentGate = async () => undefined,
-  onDesktopStop = async () => undefined,
-  onQueuePrepare = async () => undefined,
   lifecyclePendingCount = 0,
   lifecycleHealth = "ready",
+  initialLaunchAgent = "absent",
+  initialDesktopLaunchAgent =
+    initialLaunchAgent === "desktop-v1" ? "desktop-v1" : "absent",
+  initialListener = "free",
+  initialPendingCount = 0,
+  initialQueueState = "empty",
+  initiallyInstalled = false,
+  initiallyLoaded = false,
+  installedListener,
   fileSystem = nodeFileSystem,
 } = {}) {
   const homeDir = await mkdtemp(join(tmpdir(), "capture-agent-setup-"));
@@ -258,6 +312,14 @@ async function harness({
   const lifecycle = fakeLifecycle(events, {
     pendingCount: lifecyclePendingCount,
     health: lifecycleHealth,
+    initialLaunchAgent,
+    initialDesktopLaunchAgent,
+    initialListener,
+    initialPendingCount,
+    initialQueueState,
+    initiallyInstalled,
+    initiallyLoaded,
+    installedListener,
   });
   if (observeLoadedRelay) {
     const originalSetup = lifecycle.setupRuntime;
@@ -274,7 +336,6 @@ async function harness({
   let installationOwnedByPrincipal = true;
   let ownedListFailures = 0;
   let failOwnedListAfterRevoke = false;
-  const revoked = [];
   const enrollment = async ({
     installationId,
     mintInstallationToken = true,
@@ -319,12 +380,7 @@ async function harness({
                 },
               ]
             : []),
-          ...owned,
         ];
-      },
-      async revokeOwnedTelemetryToken(id) {
-        events.push("tokens:revoke-owned");
-        revoked.push(id);
       },
       async revokeInstallationToken() {
         events.push("tokens:revoke-installation");
@@ -375,30 +431,6 @@ async function harness({
         ? AbortSignal.abort(new Error("bounded timeout"))
         : new AbortController().signal;
     },
-    prepareDesktopMigration: async () => {
-      const migration = noDesktopMigration(events, migrationConfig);
-      const stop = migration.stop;
-      return {
-        ...migration,
-        async stop() {
-          await stop();
-          await onDesktopStop();
-        },
-      };
-    },
-    prepareQueueImport: async () => {
-      events.push("queues:prepare");
-      await onQueuePrepare();
-      return {
-        summary: queueSummary,
-        async apply() {
-          events.push("queues:apply");
-        },
-        async rollback() {
-          events.push("queues:rollback");
-        },
-      };
-    },
     randomUUID: () => uuids.shift(),
     randomLocalToken: () => tokens.shift(),
     runCommand: async (executable, args) => {
@@ -414,7 +446,6 @@ async function harness({
     lifecycle,
     setup,
     requests,
-    revoked,
     enrollmentCount: () => enrollmentCount,
     installationPresent: () => installationPresent,
     loadedCloudAuthorization: () => loadedCloudAuthorization,
@@ -579,190 +610,315 @@ test("setup rerun reuses installation and binding IDs so a queued record still r
   assert.equal(context.enrollmentCount(), 1);
 });
 
-test("Desktop migration carries fixed-workspace Claude bindings and revokes every matched old credential after health", async () => {
-  const otherWorkspace = "99999999-9999-4999-8999-999999999999";
-  const legacyClaudeId = "55555555-5555-4555-8555-555555555555";
-  const oldOne = `cdt_${"b".repeat(64)}`;
-  const oldTwo = `cdt_${"c".repeat(64)}`;
-  const migrationConfig = {
-    schemaVersion: 1,
-    bindings: [
-      {
-        schemaVersion: 1,
-        bindingId: legacyClaudeId,
-        bindingNonceHash: "1".repeat(64),
-        host: "claude-code",
-        workspaceId: POLICY.workspaceId,
-        repositoryKey: "owner/repository",
-        nativeForwardEndpoint: `${POLICY.serverOrigin}/api/v1/workspaces/${POLICY.workspaceId}/otel/v1/logs`,
-        captureForwardEndpoint: `${POLICY.serverOrigin}/api/v1/workspaces/${POLICY.workspaceId}/capture/v1/events`,
-        cloudAuthorization: `Bearer ${oldOne}`,
-      },
-      {
-        schemaVersion: 1,
-        bindingId: "66666666-6666-4666-8666-666666666666",
-        bindingNonceHash: "2".repeat(64),
-        host: "codex",
-        workspaceId: POLICY.workspaceId,
-        repositoryKey: "owner/old-codex",
-        repositoryScopeKey: `repo-${"2".repeat(24)}`,
-        profileName: null,
-        nativeForwardEndpoint: `${POLICY.serverOrigin}/api/v1/workspaces/${POLICY.workspaceId}/otel/v1/logs`,
-        captureForwardEndpoint: `${POLICY.serverOrigin}/api/v1/workspaces/${POLICY.workspaceId}/capture/v1/events`,
-        cloudAuthorization: `Bearer ${oldTwo}`,
-      },
-      {
-        schemaVersion: 1,
-        bindingId: "77777777-7777-4777-8777-777777777777",
-        bindingNonceHash: "3".repeat(64),
-        host: "claude-code",
-        workspaceId: otherWorkspace,
-        repositoryKey: "other/repository",
-        nativeForwardEndpoint: `${POLICY.serverOrigin}/api/v1/workspaces/${otherWorkspace}/otel/v1/logs`,
-        captureForwardEndpoint: `${POLICY.serverOrigin}/api/v1/workspaces/${otherWorkspace}/capture/v1/events`,
-        cloudAuthorization: `Bearer cdt_${"d".repeat(64)}`,
-      },
-    ],
-  };
-  const oldOneId = "88888888-8888-4888-8888-888888888888";
-  const oldTwoId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-  const context = await harness({
-    migrationConfig,
-    owned: [
-      {
-        id: oldOneId,
-        name: "otel:legacy-one",
-        tokenPrefix: oldOne.slice(0, 12),
-        createdAt: "2026-01-01T00:00:00.000Z",
-        expiresAt: null,
-        lastUsedAt: null,
-      },
-      {
-        id: oldTwoId,
-        name: "otel:legacy-two",
-        tokenPrefix: oldTwo.slice(0, 12),
-        createdAt: "2026-01-01T00:00:00.000Z",
-        expiresAt: null,
-        lastUsedAt: null,
-      },
-      {
-        id: INSTALLATION_TOKEN_ID,
-        name: `capture-agent:${INSTALLATION_ID}`,
-        tokenPrefix: CLOUD_TOKEN.slice(0, 12),
-        createdAt: "2026-09-01T10:00:00.000Z",
-        expiresAt: null,
-        lastUsedAt: null,
-      },
-    ],
-  });
-
-  const result = await context.setup.setup();
+test("setup refuses a mixed legacy relay config instead of deleting carried bindings", async () => {
+  const context = await harness();
+  await context.setup.setup();
   const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
   const relay = JSON.parse(await readFile(paths.relayConfigPath, "utf8"));
-  assert.equal(relay.bindings.length, 3);
-  const carried = relay.bindings.find(({ bindingId }) => bindingId === legacyClaudeId);
-  assert.equal(carried.repositoryKey, "owner/repository");
-  assert.equal(carried.cloudAuthorization, `Bearer ${CLOUD_TOKEN}`);
-  assert.equal(relay.bindings.some(({ host, workspaceMode }) => host === "codex" && !workspaceMode), false);
-  assert.equal(relay.bindings.some(({ workspaceId }) => workspaceId === otherWorkspace), false);
-  assert.deepEqual(context.revoked.sort(), [oldOneId, oldTwoId].sort());
-  assert.equal(
-    context.events.indexOf("cloud:probe") <
-      context.events.indexOf("tokens:list-owned"),
-    true,
+  const workspaceClaude = relay.bindings.find(
+    ({ host }) => host === "claude-code",
   );
-  assert.equal(result.cleanup.revokedCount, 2);
-  assert.doesNotMatch(JSON.stringify(result), /cdt_|bbbbbbbb|cccccccc/);
-  assert.equal(
-    context.events.indexOf("desktop:stop") <
-      context.events.indexOf("queues:prepare"),
-    true,
-  );
-});
-
-test("fixed-workspace unsupported Desktop queues restore Desktop and block retirement and token cleanup", async () => {
-  const oldToken = `cdt_${"b".repeat(64)}`;
-  const oldTokenId = "88888888-8888-4888-8888-888888888888";
-  const context = await harness({
-    migrationConfig: {
-      schemaVersion: 1,
-      bindings: [
-        {
-          schemaVersion: 1,
-          bindingId: "66666666-6666-4666-8666-666666666666",
-          bindingNonceHash: "2".repeat(64),
-          host: "codex",
-          workspaceId: POLICY.workspaceId,
-          repositoryKey: "owner/old-codex",
-          repositoryScopeKey: `repo-${"2".repeat(24)}`,
-          profileName: null,
-          nativeForwardEndpoint: `${POLICY.serverOrigin}/api/v1/workspaces/${POLICY.workspaceId}/otel/v1/logs`,
-          captureForwardEndpoint: `${POLICY.serverOrigin}/api/v1/workspaces/${POLICY.workspaceId}/capture/v1/events`,
-          cloudAuthorization: `Bearer ${oldToken}`,
-        },
-      ],
-    },
-    owned: [
-      {
-        id: oldTokenId,
-        name: "otel:legacy-codex",
-        tokenPrefix: oldToken.slice(0, 12),
-        createdAt: "2026-01-01T00:00:00.000Z",
-        expiresAt: null,
-        lastUsedAt: null,
-      },
-    ],
-    queueSummary: {
-      importedPending: 0,
-      skippedOtherWorkspacePending: 0,
-      skippedUnsupportedPending: 2,
-    },
+  relay.bindings.push({
+    schemaVersion: 1,
+    bindingId: "55555555-5555-4555-8555-555555555555",
+    bindingNonceHash: "e".repeat(64),
+    host: "claude-code",
+    workspaceId: POLICY.workspaceId,
+    repositoryKey: "owner/legacy-repository",
+    nativeForwardEndpoint: workspaceClaude.nativeForwardEndpoint,
+    captureForwardEndpoint: workspaceClaude.captureForwardEndpoint,
+    cloudAuthorization: workspaceClaude.cloudAuthorization,
   });
+  const mixedConfig = `${JSON.stringify(relay)}\n`;
+  await writeFile(paths.relayConfigPath, mixedConfig, { mode: 0o600 });
+  const setupCallsBefore = context.events.filter(
+    (event) => event === "lifecycle:setup",
+  ).length;
 
   await assert.rejects(
     context.setup.setup(),
     (error) =>
       error instanceof CaptureAgentSetupError &&
-      error.code === "MIGRATION_PENDING_UNSUPPORTED" &&
-      error.rollback === "restored",
+      error.code === "OWNERSHIP_CONFLICT",
   );
+
+  assert.equal(context.enrollmentCount(), 1);
   assert.equal(
-    context.events.indexOf("desktop:stop") <
-      context.events.indexOf("queues:prepare"),
-    true,
+    context.events.filter((event) => event === "lifecycle:setup").length,
+    setupCallsBefore,
   );
-  assert.equal(context.events.includes("desktop:restore"), true);
-  assert.equal(context.events.includes("desktop:retire"), false);
-  assert.equal(context.events.includes("tokens:list-owned"), false);
-  assert.deepEqual(context.revoked, []);
+  assert.equal(await readFile(paths.relayConfigPath, "utf8"), mixedConfig);
 });
 
-test("Desktop is quiesced before queue enumeration so a final append is included", async () => {
-  let sourceDirectory;
-  let finalQueuePath;
-  const context = await harness({
-    migrationConfig: {
-      schemaVersion: 1,
-      bindings: [],
-    },
-    onDesktopStop: async () => {
-      await writeFile(finalQueuePath, "final Desktop queue record", {
-        mode: 0o600,
+for (const [name, pathKey, content] of [
+  ["legacy Desktop Codex OTEL", "codexBaseConfigPath", desktopCodexOtelConfig()],
+  ["legacy Desktop Codex hook", "codexHooksPath", desktopCodexHooks()],
+  ["unmanaged Codex OTEL", "codexBaseConfigPath", "[otel]\nlog_user_prompt = false\n"],
+  [
+    "unmanaged Claude OTEL",
+    "claudeSettingsPath",
+    JSON.stringify({ env: { OTEL_LOGS_EXPORTER: "otlp" } }),
+  ],
+]) {
+  test(`setup refuses ${name} before enrollment or mutation`, async () => {
+    const context = await harness();
+    const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+    await mkdir(
+      join(
+        context.homeDir,
+        pathKey === "claudeSettingsPath" ? ".claude" : ".codex",
+      ),
+      {
+      recursive: true,
+      mode: 0o700,
+      },
+    );
+    await writeFile(paths[pathKey], content, { mode: 0o600 });
+
+    await assert.rejects(
+      context.setup.setup(),
+      (error) =>
+        error instanceof CaptureAgentSetupError &&
+        error.code === "CONFIG_CONFLICT" &&
+        error.rollback === undefined,
+    );
+
+    assert.equal(context.enrollmentCount(), 0);
+    assert.equal(context.events.includes("lifecycle:setup"), false);
+    assert.equal(await readFile(paths[pathKey], "utf8"), content);
+    await assert.rejects(stat(paths.identityPath), { code: "ENOENT" });
+    await assert.rejects(stat(paths.relayConfigPath), { code: "ENOENT" });
+    await assert.rejects(stat(paths.codexIngressPath), { code: "ENOENT" });
+    if (pathKey === "codexHooksPath") {
+      assert.equal((await context.setup.status()).claims, "legacy");
+      assert.equal((await context.setup.doctor()).claims, "legacy");
+    }
+  });
+}
+
+test("a Desktop hook racing enrollment is rejected and its minted token is revoked", async () => {
+  let context;
+  const desktopHooks = desktopCodexHooks();
+  context = await harness({
+    enrollmentGate: async () => {
+      const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+      await mkdir(join(context.homeDir, ".codex"), {
+        recursive: true,
+        mode: 0o700,
       });
-    },
-    onQueuePrepare: async () => {
-      assert.equal(await readFile(finalQueuePath, "utf8"), "final Desktop queue record");
+      await writeFile(paths.codexHooksPath, desktopHooks, { mode: 0o600 });
     },
   });
-  sourceDirectory = join(context.homeDir, "desktop-source-queue");
-  finalQueuePath = join(sourceDirectory, "final.event.json");
-  await mkdir(sourceDirectory, { mode: 0o700 });
+  const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
 
-  await context.setup.setup();
+  await assert.rejects(
+    context.setup.setup(),
+    (error) =>
+      error instanceof CaptureAgentSetupError &&
+      error.code === "CONFIG_CONFLICT" &&
+      error.rollback === "restored",
+  );
+
+  assert.equal(context.enrollmentCount(), 1);
+  assert.equal(context.events.includes("tokens:revoke-installation"), true);
+  assert.equal(context.events.includes("lifecycle:setup"), false);
+  assert.equal(await readFile(paths.codexHooksPath, "utf8"), desktopHooks);
+  await assert.rejects(stat(paths.relayConfigPath), { code: "ENOENT" });
+  await assert.rejects(stat(paths.codexIngressPath), { code: "ENOENT" });
+});
+
+for (const [name, lifecycle, code] of [
+  [
+    "a legacy Desktop LaunchAgent",
+    { initialDesktopLaunchAgent: "desktop-v1", initialListener: "free" },
+    "LEGACY_DESKTOP_PRESENT",
+  ],
+  [
+    "a foreign Desktop LaunchAgent",
+    { initialDesktopLaunchAgent: "foreign", initialListener: "free" },
+    "OWNERSHIP_CONFLICT",
+  ],
+  [
+    "a foreign LaunchAgent",
+    { initialLaunchAgent: "foreign", initialListener: "free" },
+    "OWNERSHIP_CONFLICT",
+  ],
+  [
+    "an unowned local relay listener",
+    { initialLaunchAgent: "absent", initialListener: "occupied" },
+    "FOREIGN_LISTENER",
+  ],
+  [
+    "an unloaded plugin LaunchAgent with a foreign listener",
+    {
+      initiallyInstalled: true,
+      initiallyLoaded: false,
+      installedListener: "occupied",
+    },
+    "FOREIGN_LISTENER",
+  ],
+  [
+    "orphaned pre-install queues",
+    { initialPendingCount: 1, initialQueueState: "pending" },
+    "OWNERSHIP_CONFLICT",
+  ],
+  [
+    "unsafe pre-install queue state",
+    { initialPendingCount: null, initialQueueState: "unsafe" },
+    "UNSAFE_STATE",
+  ],
+]) {
+  test(`setup refuses ${name} before enrollment or mutation`, async () => {
+    const context = await harness(lifecycle);
+    const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+
+    await assert.rejects(
+      context.setup.setup(),
+      (error) =>
+        error instanceof CaptureAgentSetupError &&
+        error.code === code &&
+        error.rollback === undefined,
+    );
+
+    assert.equal(context.enrollmentCount(), 0);
+    assert.equal(context.events.includes("lifecycle:setup"), false);
+    assert.equal(context.events.includes("lifecycle:rollback"), false);
+    await assert.rejects(readFile(paths.identityPath), { code: "ENOENT" });
+    await assert.rejects(readFile(paths.relayConfigPath), { code: "ENOENT" });
+    await assert.rejects(readFile(paths.codexIngressPath), { code: "ENOENT" });
+  });
+}
+
+test("setup leaves a stopped Desktop relay root untouched in its disjoint namespace", async () => {
+  const context = await harness();
+  const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+  const legacyConfig = '{"legacy":"desktop-relay"}\n';
+  const desktopConfigPath = join(paths.desktopRelayRoot, "relay.json");
+  await mkdir(paths.desktopRelayRoot, { recursive: true, mode: 0o700 });
+  await writeFile(desktopConfigPath, legacyConfig, { mode: 0o600 });
+
+  const result = await context.setup.setup();
+
+  assert.equal(result.status, "ready");
+  assert.equal(context.enrollmentCount(), 1);
+  assert.equal(context.events.includes("lifecycle:setup"), true);
+  assert.equal(await readFile(desktopConfigPath, "utf8"), legacyConfig);
+  assert.equal(JSON.parse(await readFile(paths.relayConfigPath, "utf8")).bindings.length, 2);
+});
+
+test("setup compensation removes only plugin state when Desktop takes the shared listener", async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), "capture-agent-race-"));
+  const paths = captureAgentSetupPaths({ homeDir, env: {} });
+  const uid = typeof process.getuid === "function" ? process.getuid() : 501;
+  let listenerOccupied = false;
+  let pluginLoaded = false;
+  let desktopLoaded = false;
+  const launchctlCalls = [];
+  const runCommand = async (_executable, args) => {
+    launchctlCalls.push(args);
+    if (args[0] === "bootstrap") {
+      if (args[2] === paths.launchAgentPath) pluginLoaded = true;
+      return;
+    }
+    if (args[0] === "bootout") {
+      pluginLoaded = false;
+      return;
+    }
+    if (args[0] !== "print") return;
+    const service = args[1];
+    const loaded = service.endsWith(`/${CAPTURE_AGENT_LABEL}`)
+      ? pluginLoaded
+      : service.endsWith(`/${DESKTOP_CAPTURE_AGENT_LABEL}`)
+        ? desktopLoaded
+        : false;
+    if (loaded) return;
+    const label = service.slice(service.lastIndexOf("/") + 1);
+    const error = new Error("synthetic service not found");
+    error.code = 113;
+    error.stderr = `Could not find service "${label}" in domain for user gui: ${uid}\n`;
+    throw error;
+  };
+  const realLifecycle = createCaptureAgentLifecycle({
+    env: {},
+    homeDir,
+    platform: "darwin",
+    uid,
+    runCommand,
+    probeListener: async () => listenerOccupied,
+    probeHealth: async () => undefined,
+    importSmoke: async () => undefined,
+    wait: async () => undefined,
+  });
+  const desktopPlist = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
+  const lifecycle = {
+    ...realLifecycle,
+    async setupRuntime() {
+      const result = await realLifecycle.setupRuntime();
+      await mkdir(join(homeDir, "Library", "LaunchAgents"), {
+        recursive: true,
+        mode: 0o700,
+      });
+      await writeFile(paths.desktopLaunchAgentPath, desktopPlist, {
+        mode: 0o600,
+      });
+      desktopLoaded = true;
+      listenerOccupied = true;
+      return result;
+    },
+  };
+  const setup = createCaptureAgentSetup({
+    homeDir,
+    env: {},
+    uid,
+    loadPolicy: async () => POLICY,
+    lifecycle,
+    enrollment: async ({ completeEnrollment }) =>
+      completeEnrollment({
+        installationToken: {
+          id: INSTALLATION_TOKEN_ID,
+          name: `capture-agent:${INSTALLATION_ID}`,
+          token: CLOUD_TOKEN,
+          createdAt: "2026-09-01T10:00:00.000Z",
+          expiresAt: null,
+        },
+        async listOwnedTelemetryTokens() {
+          return [];
+        },
+        async revokeInstallationToken() {},
+      }),
+    randomUUID: (() => {
+      const values = [INSTALLATION_ID, CLAUDE_BINDING_ID, CODEX_BINDING_ID];
+      return () => values.shift();
+    })(),
+    randomLocalToken: (() => {
+      const values = [CLAUDE_TOKEN, CODEX_TOKEN];
+      return () => values.shift();
+    })(),
+  });
+
+  await assert.rejects(
+    setup.setup(),
+    (error) =>
+      error instanceof CaptureAgentSetupError &&
+      error.code === "HEALTH_MISMATCH" &&
+      error.rollback === "restored",
+  );
+
+  await assert.rejects(stat(paths.launchAgentPath), { code: "ENOENT" });
+  await assert.rejects(stat(paths.statePath), { code: "ENOENT" });
+  await assert.rejects(stat(paths.runtimeRoot), { code: "ENOENT" });
+  await assert.rejects(stat(paths.relayConfigPath), { code: "ENOENT" });
+  await assert.rejects(stat(paths.codexIngressPath), { code: "ENOENT" });
+  assert.equal(await readFile(paths.desktopLaunchAgentPath, "utf8"), desktopPlist);
+  assert.equal(pluginLoaded, false);
+  assert.equal(desktopLoaded, true);
   assert.equal(
-    context.events.indexOf("desktop:stop") <
-      context.events.indexOf("queues:prepare"),
-    true,
+    launchctlCalls.some(
+      (args) =>
+        args[0] === "bootout" &&
+        args.includes(`gui/${uid}/${DESKTOP_CAPTURE_AGENT_LABEL}`),
+    ),
+    false,
   );
 });
 
@@ -798,21 +954,14 @@ test("setup lock spans provisional identity and browser enrollment", async () =>
   assert.equal(context.enrollmentCount(), 1);
 });
 
-test("authenticated degraded lifecycle health with pending imported queues does not roll back setup", async () => {
+test("authenticated degraded lifecycle health with pending plugin queues does not roll back setup", async () => {
   const context = await harness({
-    queueSummary: {
-      importedPending: 1,
-      skippedOtherWorkspacePending: 0,
-      skippedUnsupportedPending: 0,
-    },
     lifecyclePendingCount: 1,
     lifecycleHealth: "degraded",
   });
 
   const result = await context.setup.setup();
   assert.equal(result.status, "degraded");
-  assert.equal(result.migrationQueues.importedPending, 1);
-  assert.equal(context.events.includes("desktop:restore"), false);
   assert.equal(context.events.includes("lifecycle:rollback"), false);
 });
 
@@ -857,6 +1006,117 @@ test("same-runtime rollback restores disk before reloading the prior cloud crede
     context.events.filter((event) => event === "lifecycle:setup").length,
     3,
   );
+});
+
+test("failed setup restores an existing disabled lifecycle through lifecycle ownership", async () => {
+  const context = await harness();
+  await context.setup.setup();
+  await context.setup.disable();
+  const setupRuntime = context.lifecycle.setupRuntime.bind(context.lifecycle);
+  context.lifecycle.setupRuntime = async () => {
+    const result = await setupRuntime();
+    return {
+      ...result,
+      current: { ...result.current, digest: "e".repeat(64) },
+    };
+  };
+  const rollback = context.lifecycle.rollback.bind(context.lifecycle);
+  let rollbackStart;
+  context.lifecycle.rollback = async (options) => {
+    rollbackStart = options?.start;
+    if (rollbackStart !== false) {
+      throw Object.assign(new Error("dormant prior runtime cannot start"), {
+        code: "HEALTH_MISMATCH",
+      });
+    }
+    return rollback(options);
+  };
+  const disableCallsBefore = context.events.filter(
+    (event) => event === "lifecycle:disable",
+  ).length;
+  context.setProbeResponses([
+    json({ status: "ready" }),
+    json({ status: "temporarily-unavailable" }, 503),
+  ]);
+
+  await assert.rejects(
+    context.setup.setup(),
+    (error) =>
+      error instanceof CaptureAgentSetupError &&
+      error.code === "CLOUD_HEALTH_MISMATCH" &&
+      error.rollback === "restored",
+  );
+
+  assert.equal(
+    context.events.filter((event) => event === "lifecycle:disable").length,
+    disableCallsBefore,
+  );
+  assert.equal(rollbackStart, false);
+  assert.equal(context.events.includes("lifecycle:rollback"), true);
+  assert.equal(
+    context.events.some((event) => event.startsWith("/bin/launchctl:")),
+    false,
+  );
+  assert.equal((await context.lifecycle.status()).listener, "free");
+  assert.equal((await context.setup.status()).status, "disabled");
+});
+
+test("failed compensation disable is reported as rollback failure", async () => {
+  const context = await harness();
+  await context.setup.setup();
+  await context.setup.disable();
+  context.lifecycle.disable = async () => {
+    context.events.push("lifecycle:disable");
+    throw Object.assign(new Error("injected compensation disable failure"), {
+      code: "SUPERVISOR_UNAVAILABLE",
+    });
+  };
+  context.setProbeResponses([
+    json({ status: "ready" }),
+    json({ status: "temporarily-unavailable" }, 503),
+  ]);
+
+  await assert.rejects(
+    context.setup.setup(),
+    (error) =>
+      error instanceof CaptureAgentSetupError &&
+      error.code === "ROLLBACK_FAILED" &&
+      error.rollback === "failed",
+  );
+  assert.equal(
+    context.events.some((event) => event.startsWith("/bin/launchctl:")),
+    false,
+  );
+});
+
+test("failed setup keeps a loaded lifecycle active when its listener was temporarily free", async () => {
+  const context = await harness();
+  await context.setup.setup();
+  const setupCallsBefore = context.events.filter(
+    (event) => event === "lifecycle:setup",
+  ).length;
+  const disableCallsBefore = context.events.filter(
+    (event) => event === "lifecycle:disable",
+  ).length;
+  context.lifecycle._setInstalledListener("free");
+
+  await assert.rejects(
+    context.setup.setup(),
+    (error) =>
+      error instanceof CaptureAgentSetupError &&
+      error.code === "HEALTH_MISMATCH" &&
+      error.rollback === "restored",
+  );
+
+  assert.equal(
+    context.events.filter((event) => event === "lifecycle:setup").length,
+    setupCallsBefore + 2,
+  );
+  assert.equal(
+    context.events.filter((event) => event === "lifecycle:disable").length,
+    disableCallsBefore,
+  );
+  assert.equal((await context.lifecycle.preflightDisable()).loaded, true);
 });
 
 test("persists a provisional installation identity before enrollment and reuses it after a lost response", async () => {
@@ -933,6 +1193,89 @@ test("cloud probes are bounded during setup and doctor", async () => {
   assert.deepEqual(context.requestTimeouts, [43, 43]);
 });
 
+test("status and doctor expose a legacy Desktop listener without mutating it", async () => {
+  const context = await harness({
+    initialLaunchAgent: "absent",
+    initialDesktopLaunchAgent: "desktop-v1",
+    initialListener: "occupied",
+  });
+
+  const status = await context.setup.status();
+  assert.equal(status.status, "degraded");
+  assert.equal(status.launchAgent, "absent");
+  assert.equal(status.desktopLaunchAgent, "desktop-v1");
+  assert.equal(status.listener, "occupied");
+  assert.equal(status.health, "not-installed");
+  assert.deepEqual(status.degradedReasons, ["LEGACY_DESKTOP_PRESENT"]);
+
+  const doctor = await context.setup.doctor();
+  assert.equal(doctor.status, "degraded");
+  assert.equal(doctor.desktopLaunchAgent, "desktop-v1");
+  assert.equal(doctor.checks.cloud, "not-configured");
+  assert.equal(context.enrollmentCount(), 0);
+  assert.equal(context.events.includes("lifecycle:setup"), false);
+});
+
+test("status and doctor classify orphan relay and ingress files as conflicts", async () => {
+  const context = await harness();
+  const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+  await mkdir(paths.relayRoot, { recursive: true, mode: 0o700 });
+  await writeFile(paths.relayConfigPath, "not-json\n", { mode: 0o600 });
+  await writeFile(paths.codexIngressPath, "also-not-json\n", { mode: 0o600 });
+
+  const status = await context.setup.status();
+  assert.equal(status.status, "degraded");
+  assert.equal(status.installation, "absent");
+  assert.equal(status.relay, "conflict");
+  assert.equal(status.codexIngress, "conflict");
+  assert.deepEqual(status.degradedReasons, [
+    "CODEX_INGRESS_CONFLICT",
+    "RELAY_CONFLICT",
+  ]);
+
+  const doctor = await context.setup.doctor();
+  assert.equal(doctor.checks.cloud, "not-configured");
+  assert.equal(await readFile(paths.relayConfigPath, "utf8"), "not-json\n");
+  assert.equal(await readFile(paths.codexIngressPath, "utf8"), "also-not-json\n");
+});
+
+test("status and doctor report malformed owned relay state without throwing", async () => {
+  const context = await harness();
+  await context.setup.setup();
+  const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+  await writeFile(paths.relayConfigPath, "not-json\n", { mode: 0o600 });
+
+  const status = await context.setup.status();
+  assert.equal(status.installation, "ready");
+  assert.equal(status.relay, "conflict");
+  assert.deepEqual(status.degradedReasons, ["RELAY_CONFLICT"]);
+  const doctor = await context.setup.doctor();
+  assert.equal(doctor.checks.cloud, "not-configured");
+});
+
+test("status classifies mismatched ingress and malformed identity without throwing", async () => {
+  const context = await harness();
+  await context.setup.setup();
+  const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+  const mismatchedIngress = `${JSON.stringify({ schemaVersion: 1, token: "z".repeat(48) })}\n`;
+  await writeFile(paths.codexIngressPath, mismatchedIngress, { mode: 0o600 });
+
+  const mismatched = await context.setup.status();
+  assert.equal(mismatched.codexIngress, "conflict");
+  assert.deepEqual(mismatched.degradedReasons, ["CODEX_INGRESS_CONFLICT"]);
+
+  await writeFile(paths.identityPath, "not-json\n", { mode: 0o600 });
+  const malformed = await context.setup.doctor();
+  assert.equal(malformed.checks.installation, "conflict");
+  assert.equal(malformed.checks.relay, "conflict");
+  assert.equal(malformed.checks.cloud, "not-configured");
+  assert.deepEqual(malformed.degradedReasons, [
+    "CODEX_INGRESS_CONFLICT",
+    "INSTALLATION_CONFLICT",
+    "RELAY_CONFLICT",
+  ]);
+});
+
 test("disable removes only host markers, stops the service, and setup re-enables it", async () => {
   const context = await harness();
   await context.setup.setup();
@@ -949,7 +1292,9 @@ test("disable removes only host markers, stops the service, and setup re-enables
   for (const path of [paths.identityPath, paths.relayConfigPath, paths.codexIngressPath]) {
     assert.equal((await stat(path)).isFile(), true);
   }
-  assert.equal((await context.setup.status()).status, "disabled");
+  const disabledStatus = await context.setup.status();
+  assert.equal(disabledStatus.status, "disabled");
+  assert.deepEqual(disabledStatus.degradedReasons, ["HEALTH_UNAVAILABLE"]);
 
   const enabled = await context.setup.setup();
   assert.equal(enabled.status, "ready");
@@ -970,6 +1315,21 @@ test("disable unregisters a loaded LaunchAgent even while its listener is tempor
   assert.equal(disabled.status, "disabled");
   assert.equal(context.events.includes("lifecycle:disable"), true);
   assert.equal((await context.setup.status()).status, "disabled");
+});
+
+test("disabled status preserves pending-queue diagnostics", async () => {
+  const context = await harness({ lifecyclePendingCount: 1 });
+  await context.setup.setup();
+  await context.setup.disable();
+
+  const status = await context.setup.status();
+  assert.equal(status.status, "disabled");
+  assert.equal(status.queueState, "pending");
+  assert.equal(status.pendingCount, 1);
+  assert.deepEqual(status.degradedReasons, [
+    "HEALTH_UNAVAILABLE",
+    "QUEUE_PENDING",
+  ]);
 });
 
 test("disable never restores host routes when the stopped runtime cannot restart", async () => {
@@ -1087,6 +1447,49 @@ test("default uninstall restores the exact stopped runtime before restoring host
   assert.match(
     await readFile(paths.claudeSettingsPath, "utf8"),
     /OTEL_EXPORTER_OTLP_ENDPOINT/,
+  );
+});
+
+test("default uninstall leaves host integration removed when disabled lifecycle cleanup is partial", async () => {
+  const context = await harness();
+  await context.setup.setup();
+  await context.lifecycle.disable();
+  const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+  const originalPreflight = context.lifecycle.preflightUninstall;
+  let preflightCalls = 0;
+  context.lifecycle.preflightUninstall = async (options) => {
+    preflightCalls += 1;
+    if (preflightCalls > 1) {
+      return {
+        ...(await originalPreflight(options)),
+        partial: true,
+        loaded: false,
+      };
+    }
+    return originalPreflight(options);
+  };
+  context.lifecycle.uninstall = async () => {
+    context.lifecycle._setActive(false);
+    throw Object.assign(new Error("partial lifecycle cleanup"), {
+      code: "UNSAFE_STATE",
+    });
+  };
+
+  await assert.rejects(context.setup.uninstall({ purge: false }), {
+    code: "UNINSTALL_INCOMPLETE",
+  });
+
+  assert.equal(
+    context.events.includes("lifecycle:start-installed"),
+    false,
+  );
+  assert.doesNotMatch(
+    await readFile(paths.claudeSettingsPath, "utf8"),
+    /OTEL_EXPORTER_OTLP_ENDPOINT/,
+  );
+  assert.doesNotMatch(
+    await readFile(paths.codexBaseConfigPath, "utf8"),
+    /coredoc capture-agent managed otel/,
   );
 });
 
@@ -1572,6 +1975,7 @@ test("setup CLI emits bounded actionable error codes without messages or secrets
     { code: "DISCOVERY_FAILED", command: "setup" },
     { code: "OAUTH_TIMEOUT", command: "setup" },
     { code: "CONFIG_CONFLICT", command: "setup" },
+    { code: "LEGACY_DESKTOP_PRESENT", command: "setup" },
     { code: "CLOUD_AUTH_REJECTED", command: "upgrade" },
     { code: "INSTALLATION_REVOKE_UNCONFIRMED", command: "uninstall" },
     { code: "PURGE_INCOMPLETE", command: "uninstall" },

@@ -36,7 +36,8 @@ import {
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
-export const CAPTURE_AGENT_LABEL = "ai.coredoc.capture-relay";
+export const CAPTURE_AGENT_LABEL = "ai.coredoc.workflows.capture-relay";
+export const DESKTOP_CAPTURE_AGENT_LABEL = "ai.coredoc.capture-relay";
 export const PLUGIN_LAUNCH_AGENT_MARKER =
   "<!-- Coredoc Workflows plugin capture agent LaunchAgent v1 -->";
 export const DESKTOP_LAUNCH_AGENT_MARKER =
@@ -165,13 +166,20 @@ export function captureAgentPaths({ env = process.env, homeDir = homedir() } = {
     runtimeExecutablePath: join(currentPath, BUNDLED_RUNTIME_RUNNER_PATH),
     statePath: join(agentRoot, "state.json"),
     lockPath: join(coredocHome, ".capture-agent-lifecycle.lock"),
-    relayRoot: join(coredocHome, "capture-relay"),
-    relayConfigPath: join(coredocHome, "capture-relay", "relay.json"),
+    relayRoot: join(agentRoot, "capture-relay"),
+    relayConfigPath: join(agentRoot, "capture-relay", "relay.json"),
+    desktopRelayRoot: join(coredocHome, "capture-relay"),
     launchAgentPath: join(
       resolvedHome,
       "Library",
       "LaunchAgents",
       `${CAPTURE_AGENT_LABEL}.plist`,
+    ),
+    desktopLaunchAgentPath: join(
+      resolvedHome,
+      "Library",
+      "LaunchAgents",
+      `${DESKTOP_CAPTURE_AGENT_LABEL}.plist`,
     ),
   };
 }
@@ -727,19 +735,46 @@ ${argumentsList.map((value) => `    <string>${xml(value)}</string>`).join("\n")}
 `;
 }
 
-function plistOwnership(content) {
+function plistOwnership(content, { label, marker, ownership }) {
   if (content === undefined) return "absent";
   const exactLabel = content.includes(
-    `<key>Label</key><string>${CAPTURE_AGENT_LABEL}</string>`,
+    `<key>Label</key><string>${label}</string>`,
   ) ||
     content.includes(
-      `<key>Label</key>\n  <string>${CAPTURE_AGENT_LABEL}</string>`,
+      `<key>Label</key>\n  <string>${label}</string>`,
     );
   if (!exactLabel) return "foreign";
-  const plugin = content.includes(PLUGIN_LAUNCH_AGENT_MARKER);
-  const desktop = content.includes(DESKTOP_LAUNCH_AGENT_MARKER);
-  if (plugin === desktop) return "foreign";
-  return plugin ? "plugin-v1" : "desktop-v1";
+  const expectedMarker = content.includes(marker);
+  const otherMarker = content.includes(
+    marker === PLUGIN_LAUNCH_AGENT_MARKER
+      ? DESKTOP_LAUNCH_AGENT_MARKER
+      : PLUGIN_LAUNCH_AGENT_MARKER,
+  );
+  return expectedMarker && !otherMarker ? ownership : "foreign";
+}
+
+function launchAgentOwnership(paths) {
+  const content = readOptional(paths.launchAgentPath);
+  const desktopContent = readOptional(paths.desktopLaunchAgentPath);
+  const ownership = plistOwnership(content, {
+    label: CAPTURE_AGENT_LABEL,
+    marker: PLUGIN_LAUNCH_AGENT_MARKER,
+    ownership: "plugin-v1",
+  });
+  const desktopOwnership = plistOwnership(desktopContent, {
+    label: DESKTOP_CAPTURE_AGENT_LABEL,
+    marker: DESKTOP_LAUNCH_AGENT_MARKER,
+    ownership: "desktop-v1",
+  });
+  return { content, desktopContent, ownership, desktopOwnership };
+}
+
+function assertLaunchAgentPlistMatches(paths, expectedContents) {
+  const current = readOptional(paths.launchAgentPath);
+  if (!expectedContents.some((expected) => current === expected)) {
+    fail("OWNERSHIP_CONFLICT");
+  }
+  return current;
 }
 
 function defaultRunCommand(executable, args) {
@@ -1078,8 +1113,8 @@ function lifecyclePurgeProof(value) {
   return { ...candidate };
 }
 
-function launchService(uid) {
-  return `gui/${uid}/${CAPTURE_AGENT_LABEL}`;
+function launchService(uid, label = CAPTURE_AGENT_LABEL) {
+  return `gui/${uid}/${label}`;
 }
 
 function launchDomain(uid) {
@@ -1107,12 +1142,12 @@ async function bootstrapLaunchAgent({ paths, uid, runCommand, wait }) {
   }
 }
 
-function launchctlServiceNotFound(error, uid) {
+function launchctlServiceNotFound(error, uid, label = CAPTURE_AGENT_LABEL) {
   return (
     error?.code === 113 &&
     typeof error.stderr === "string" &&
     error.stderr.includes(
-      `Could not find service "${CAPTURE_AGENT_LABEL}" in domain for user gui: ${uid}`,
+      `Could not find service "${label}" in domain for user gui: ${uid}`,
     )
   );
 }
@@ -1132,12 +1167,16 @@ async function stopLaunchAgent({ uid, runCommand }) {
   }
 }
 
-async function isLaunchAgentLoaded({ uid, runCommand }) {
+async function isLaunchAgentLoaded({
+  uid,
+  runCommand,
+  label = CAPTURE_AGENT_LABEL,
+}) {
   try {
-    await runCommand("/bin/launchctl", ["print", launchService(uid)]);
+    await runCommand("/bin/launchctl", ["print", launchService(uid, label)]);
     return true;
   } catch (error) {
-    if (launchctlServiceNotFound(error, uid)) return false;
+    if (launchctlServiceNotFound(error, uid, label)) return false;
     fail("SUPERVISOR_UNAVAILABLE");
   }
 }
@@ -1152,6 +1191,38 @@ async function waitForListenerDown({ probeListener, wait }) {
     if (attempt + 1 < 20) await wait(100);
   }
   fail("SUPERVISOR_UNAVAILABLE");
+}
+
+async function waitForPluginStop({
+  paths,
+  uid,
+  runCommand,
+  probeListener,
+  wait,
+}) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      if (!(await probeListener())) return;
+    } catch {
+      fail("SUPERVISOR_UNAVAILABLE");
+    }
+    if (attempt + 1 < 20) await wait(100);
+  }
+
+  const { ownership, desktopOwnership } = launchAgentOwnership(paths);
+  if (ownership !== "plugin-v1" || desktopOwnership !== "desktop-v1") {
+    fail("SUPERVISOR_UNAVAILABLE");
+  }
+  if (
+    await isLaunchAgentLoaded({ uid, runCommand }) ||
+    !(await isLaunchAgentLoaded({
+      uid,
+      runCommand,
+      label: DESKTOP_CAPTURE_AGENT_LABEL,
+    }))
+  ) {
+    fail("SUPERVISOR_UNAVAILABLE");
+  }
 }
 
 function desiredPlist({ paths, state }) {
@@ -1172,11 +1243,44 @@ async function installAndStart({
   runCommand,
   wait,
   plist,
-  hadPlist,
+  oldPlist,
 }) {
-  if (hadPlist) await stopLaunchAgent({ uid, runCommand });
+  assertLaunchAgentPlistMatches(paths, [oldPlist]);
+  if (oldPlist !== undefined) {
+    await stopLaunchAgent({ uid, runCommand });
+    assertLaunchAgentPlistMatches(paths, [oldPlist]);
+  }
   atomicWrite(paths.launchAgentPath, plist, 0o600);
+  assertLaunchAgentPlistMatches(paths, [plist]);
   await bootstrapLaunchAgent({ paths, uid, runCommand, wait });
+  assertLaunchAgentPlistMatches(paths, [plist]);
+}
+
+async function installWithoutStart({
+  paths,
+  uid,
+  runCommand,
+  wait,
+  probeListener,
+  plist,
+  oldPlist,
+}) {
+  assertLaunchAgentPlistMatches(paths, [oldPlist]);
+  await stopLaunchAgent({ uid, runCommand });
+  assertLaunchAgentPlistMatches(paths, [oldPlist]);
+  await waitForPluginStop({
+    paths,
+    uid,
+    runCommand,
+    probeListener,
+    wait,
+  });
+  assertLaunchAgentPlistMatches(paths, [oldPlist]);
+  atomicWrite(paths.launchAgentPath, plist, 0o600);
+  assertLaunchAgentPlistMatches(paths, [plist]);
+  if (await isLaunchAgentLoaded({ uid, runCommand })) {
+    fail("SUPERVISOR_UNAVAILABLE");
+  }
 }
 
 async function verifyHealthWithRetry({ state, probeHealth, wait }) {
@@ -1231,6 +1335,8 @@ function healthDiagnosticState(value) {
 async function restoreSnapshot({
   paths,
   oldPlist,
+  oldLoaded,
+  transactionPlist,
   oldStateRaw,
   oldState,
   uid,
@@ -1240,7 +1346,18 @@ async function restoreSnapshot({
   probeListener,
 }) {
   try {
+    const transactionPlists = [oldPlist, transactionPlist];
+    assertLaunchAgentPlistMatches(paths, transactionPlists);
     await stopLaunchAgent({ uid, runCommand });
+    assertLaunchAgentPlistMatches(paths, transactionPlists);
+    await waitForPluginStop({
+      paths,
+      uid,
+      runCommand,
+      probeListener,
+      wait,
+    });
+    assertLaunchAgentPlistMatches(paths, transactionPlists);
     if (oldState === null) {
       removeLink(paths.currentPath);
       removeLink(paths.previousPath);
@@ -1250,14 +1367,25 @@ async function restoreSnapshot({
       atomicWrite(paths.statePath, oldStateRaw, 0o600);
     }
     if (oldPlist === undefined) {
-      if (existsSync(paths.launchAgentPath)) unlinkSync(paths.launchAgentPath);
+      const currentPlist = assertLaunchAgentPlistMatches(
+        paths,
+        transactionPlists,
+      );
+      if (currentPlist !== undefined) unlinkSync(paths.launchAgentPath);
     } else {
+      assertLaunchAgentPlistMatches(paths, transactionPlists);
       atomicWrite(paths.launchAgentPath, oldPlist, 0o600);
-      await bootstrapLaunchAgent({ paths, uid, runCommand, wait });
-      if (oldState === null) {
-        if (!(await probeListener())) fail("ROLLBACK_FAILED");
-      } else {
-        await verifyHealthWithRetry({ state: oldState, probeHealth, wait });
+      assertLaunchAgentPlistMatches(paths, [oldPlist]);
+      if (oldLoaded) {
+        await bootstrapLaunchAgent({ paths, uid, runCommand, wait });
+        assertLaunchAgentPlistMatches(paths, [oldPlist]);
+        if (oldState === null) {
+          if (!(await probeListener())) fail("ROLLBACK_FAILED");
+        } else {
+          await verifyHealthWithRetry({ state: oldState, probeHealth, wait });
+        }
+      } else if (await isLaunchAgentLoaded({ uid, runCommand })) {
+        fail("ROLLBACK_FAILED");
       }
     }
   } catch {
@@ -1487,22 +1615,34 @@ export function createCaptureAgentLifecycle({
     }
   }
 
-  function ownedPlist() {
-    const content = readOptional(paths.launchAgentPath);
-    const ownership = plistOwnership(content);
-    if (ownership === "foreign") fail("OWNERSHIP_CONFLICT");
-    return { content, ownership };
+  function ownedPluginPlist() {
+    const ownership = launchAgentOwnership(paths);
+    if (ownership.ownership === "foreign") fail("OWNERSHIP_CONFLICT");
+    return ownership;
+  }
+
+  function activationPlists() {
+    const ownership = ownedPluginPlist();
+    if (ownership.desktopOwnership !== "absent") {
+      fail("OWNERSHIP_CONFLICT");
+    }
+    return ownership;
+  }
+
+  function assertPlistMatches(expectedContents) {
+    return assertLaunchAgentPlistMatches(paths, expectedContents);
   }
 
   async function activateBundle(action, { requireInstalled = false } = {}) {
     environment();
     return withLock(async () => {
-      const { content: oldPlist, ownership } = ownedPlist();
+      const initialOwnership = activationPlists();
+      const { content: oldPlist, desktopContent: oldDesktopPlist, ownership } =
+        initialOwnership;
       const oldState = readAgentState(paths.statePath, { optional: true });
       if (requireInstalled && oldState === null) fail("NOT_INSTALLED");
       if (
-        ownership === "desktop-v1" ||
-        (oldState === null && ownership === "plugin-v1")
+        oldState === null && ownership === "plugin-v1"
       ) {
         fail("OWNERSHIP_CONFLICT");
       }
@@ -1510,7 +1650,15 @@ export function createCaptureAgentLifecycle({
         fail("FOREIGN_LISTENER");
       }
       if (oldState !== null) validateInstalledState(paths, oldState);
+      const oldLoaded =
+        ownership === "plugin-v1"
+          ? await isLaunchAgentLoaded({ uid, runCommand })
+          : false;
       const bundle = normalizeRuntimeBundle(await loadBundle());
+      assertPlistMatches([oldPlist]);
+      if (readOptional(paths.desktopLaunchAgentPath) !== oldDesktopPlist) {
+        fail("OWNERSHIP_CONFLICT");
+      }
       const staged = await stageRuntime({
         bundle,
         paths,
@@ -1533,20 +1681,22 @@ export function createCaptureAgentLifecycle({
           : oldState?.current ?? null,
       });
       let mutated = false;
+      const plist = desiredPlist({ paths, state: nextState });
       try {
+        assertPlistMatches([oldPlist]);
         mutated = true;
         writeRuntimeLinks(paths, nextState);
         writeAgentState(paths.statePath, nextState);
-        const plist = desiredPlist({ paths, state: nextState });
         await installAndStart({
           paths,
           uid,
           runCommand,
           wait,
           plist,
-          hadPlist: ownership !== "absent",
+          oldPlist,
         });
         await verifyHealthWithRetry({ state: nextState, probeHealth, wait });
+        assertPlistMatches([plist]);
         if (
           oldState?.previous &&
           oldState.previous.directoryName !== nextState.current.directoryName &&
@@ -1573,6 +1723,8 @@ export function createCaptureAgentLifecycle({
             await restoreSnapshot({
               paths,
               oldPlist,
+              oldLoaded,
+              transactionPlist: plist,
               oldStateRaw,
               oldState,
               uid,
@@ -1591,6 +1743,7 @@ export function createCaptureAgentLifecycle({
               : "HEALTH_MISMATCH";
           throw new CaptureAgentLifecycleError(code, { rollback: "restored" });
         }
+        if (staged.created) removeInstalledRuntime(paths, staged.record);
         throw error;
       }
     });
@@ -1603,7 +1756,7 @@ export function createCaptureAgentLifecycle({
   async function startInstalledRuntime() {
     environment();
     return withLock(async () => {
-      const { ownership } = ownedPlist();
+      const { content: plist, ownership } = activationPlists();
       const state = readAgentState(paths.statePath, { optional: true });
       if (state === null || ownership !== "plugin-v1") {
         fail("OWNERSHIP_CONFLICT");
@@ -1612,15 +1765,21 @@ export function createCaptureAgentLifecycle({
       const alreadyLoaded = await isLaunchAgentLoaded({ uid, runCommand });
       try {
         if (!alreadyLoaded) {
+          assertPlistMatches([plist]);
           await bootstrapLaunchAgent({ paths, uid, runCommand, wait });
+          assertPlistMatches([plist]);
         }
         await verifyHealthWithRetry({ state, probeHealth, wait });
+        assertPlistMatches([plist]);
       } catch (error) {
         if (!alreadyLoaded) {
-          await stopLaunchAgent({ uid, runCommand }).catch(() => undefined);
-          await waitForListenerDown({ probeListener, wait }).catch(
-            () => undefined,
-          );
+          try {
+            assertPlistMatches([plist]);
+            await stopLaunchAgent({ uid, runCommand });
+            await waitForListenerDown({ probeListener, wait });
+          } catch {
+            // Preserve the activation error without touching a replaced plist.
+          }
         }
         throw error;
       }
@@ -1638,44 +1797,66 @@ export function createCaptureAgentLifecycle({
     return activateBundle("upgrade", { requireInstalled: true });
   }
 
-  async function rollback() {
+  async function rollback({ start = true } = {}) {
     environment();
+    if (typeof start !== "boolean") fail("INVALID_ARGUMENTS");
     return withLock(async () => {
-      const { content: oldPlist, ownership } = ownedPlist();
+      const { content: oldPlist, ownership } = activationPlists();
       if (ownership !== "plugin-v1") fail("OWNERSHIP_CONFLICT");
       const oldState = readAgentState(paths.statePath);
       validateInstalledState(paths, oldState);
       if (oldState.previous === null) fail("NO_PREVIOUS_RUNTIME");
       const oldStateRaw = readFileSync(paths.statePath, "utf8");
+      const oldLoaded = await isLaunchAgentLoaded({ uid, runCommand });
       const nextState = agentState({
         ...oldState,
         current: oldState.previous,
         previous: oldState.current,
       });
+      const plist = desiredPlist({ paths, state: nextState });
+      let mutated = false;
       try {
+        assertPlistMatches([oldPlist]);
+        mutated = true;
         writeRuntimeLinks(paths, nextState);
         writeAgentState(paths.statePath, nextState);
-        await installAndStart({
-          paths,
-          uid,
-          runCommand,
-          wait,
-          plist: desiredPlist({ paths, state: nextState }),
-          hadPlist: true,
-        });
-        await verifyHealthWithRetry({ state: nextState, probeHealth, wait });
+        if (start) {
+          await installAndStart({
+            paths,
+            uid,
+            runCommand,
+            wait,
+            plist,
+            oldPlist,
+          });
+          await verifyHealthWithRetry({ state: nextState, probeHealth, wait });
+        } else {
+          await installWithoutStart({
+            paths,
+            uid,
+            runCommand,
+            wait,
+            probeListener,
+            plist,
+            oldPlist,
+          });
+        }
+        assertPlistMatches([plist]);
         return {
           schemaVersion: 1,
-          status: "ready",
+          status: start ? "ready" : "disabled",
           action: "rollback",
           current: publicRuntime(nextState.current),
           previous: publicRuntime(nextState.previous),
         };
       } catch (error) {
+        if (!mutated) throw error;
         try {
           await restoreSnapshot({
             paths,
             oldPlist,
+            oldLoaded,
+            transactionPlist: plist,
             oldStateRaw,
             oldState,
             uid,
@@ -1699,8 +1880,7 @@ export function createCaptureAgentLifecycle({
   async function status() {
     environment();
     const state = readAgentState(paths.statePath, { optional: true });
-    const plist = readOptional(paths.launchAgentPath);
-    const ownership = plistOwnership(plist);
+    const { ownership, desktopOwnership } = launchAgentOwnership(paths);
     const listener = (await probeListener()) ? "occupied" : "free";
     let pendingCount = 0;
     let queueState = "empty";
@@ -1723,6 +1903,7 @@ export function createCaptureAgentLifecycle({
         runtime: null,
         previousRuntime: null,
         launchAgent: ownership,
+        desktopLaunchAgent: desktopOwnership,
         listener,
         health: "not-installed",
         pendingCount,
@@ -1734,7 +1915,9 @@ export function createCaptureAgentLifecycle({
     let statusValue = queueState === "empty" ? "ready" : "degraded";
     try {
       validateInstalledState(paths, state);
-      if (ownership !== "plugin-v1") fail("OWNERSHIP_CONFLICT");
+      if (ownership !== "plugin-v1" || desktopOwnership !== "absent") {
+        fail("OWNERSHIP_CONFLICT");
+      }
       const diagnostic = healthDiagnosticState(await probeHealth({
         token: state.healthToken,
         runtimeVersion: state.current.version,
@@ -1756,6 +1939,7 @@ export function createCaptureAgentLifecycle({
       runtime: publicRuntime(state.current),
       previousRuntime: publicRuntime(state.previous),
       launchAgent: ownership,
+      desktopLaunchAgent: desktopOwnership,
       listener,
       health,
       pendingCount,
@@ -1767,14 +1951,23 @@ export function createCaptureAgentLifecycle({
   async function disable() {
     environment();
     return withLock(async () => {
-      const { ownership } = ownedPlist();
+      const { content: plist, ownership } = ownedPluginPlist();
       const state = readAgentState(paths.statePath, { optional: true });
       if (state === null || ownership !== "plugin-v1") {
         fail("OWNERSHIP_CONFLICT");
       }
       validateInstalledState(paths, state);
+      assertPlistMatches([plist]);
       await stopLaunchAgent({ uid, runCommand });
-      await waitForListenerDown({ probeListener, wait });
+      assertPlistMatches([plist]);
+      await waitForPluginStop({
+        paths,
+        uid,
+        runCommand,
+        probeListener,
+        wait,
+      });
+      assertPlistMatches([plist]);
       return {
         schemaVersion: 1,
         status: "disabled",
@@ -1786,7 +1979,7 @@ export function createCaptureAgentLifecycle({
   async function preflightDisable() {
     environment();
     return withLock(async () => {
-      const { ownership } = ownedPlist();
+      const { ownership } = ownedPluginPlist();
       const state = readAgentState(paths.statePath, { optional: true });
       if (state === null || ownership !== "plugin-v1") {
         fail("OWNERSHIP_CONFLICT");
@@ -1801,7 +1994,7 @@ export function createCaptureAgentLifecycle({
   }
 
   function uninstallPreflight(discardPending, purgeProof) {
-    const { content: plist, ownership } = ownedPlist();
+    const { content: plist, ownership } = ownedPluginPlist();
     const state = readAgentState(paths.statePath, { optional: true });
     const proof = purgeProof === undefined ? null : lifecyclePurgeProof(purgeProof);
     const absent = state === null && ownership === "absent";
@@ -1843,6 +2036,7 @@ export function createCaptureAgentLifecycle({
     }
     const pending = captureStateInventory(paths).pending;
     return {
+      plist,
       state,
       absent,
       pending,
@@ -1868,6 +2062,7 @@ export function createCaptureAgentLifecycle({
         schemaVersion: 1,
         status: "ready",
         installed: !plan.absent,
+        partial: plan.resumePartial,
         loaded,
         pendingCount: plan.pending.length,
         disposition: discardPending ? "discard" : "preserve",
@@ -1881,7 +2076,7 @@ export function createCaptureAgentLifecycle({
     if (typeof discardPending !== "boolean") fail("INVALID_ARGUMENTS");
     return withLock(async () => {
       const plan = uninstallPreflight(discardPending, purgeProof);
-      const { state, absent } = plan;
+      const { plist, state, absent } = plan;
       let { pending } = plan;
       if (absent) {
         if (discardPending) purgeCaptureState(paths);
@@ -1892,11 +2087,21 @@ export function createCaptureAgentLifecycle({
           discardedPending: discardPending ? pending.length : 0,
         };
       }
+      assertPlistMatches([plist]);
       await stopLaunchAgent({ uid, runCommand });
-      await waitForListenerDown({ probeListener, wait });
+      assertPlistMatches([plist]);
+      await waitForPluginStop({
+        paths,
+        uid,
+        runCommand,
+        probeListener,
+        wait,
+      });
+      assertPlistMatches([plist]);
       pending = pendingQueueEntries(paths);
       if (discardPending) purgeCaptureState(paths);
-      if (entryExists(paths.launchAgentPath)) unlinkSync(paths.launchAgentPath);
+      const currentPlist = assertPlistMatches([plist]);
+      if (currentPlist !== undefined) unlinkSync(paths.launchAgentPath);
       removeLink(paths.currentPath);
       removeLink(paths.previousPath);
       removeInstalledRuntime(paths, state.current, {

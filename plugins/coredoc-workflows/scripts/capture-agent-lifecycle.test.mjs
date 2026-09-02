@@ -26,6 +26,7 @@ import test from "../test/test-api.mjs";
 
 import {
   CAPTURE_AGENT_LABEL,
+  DESKTOP_CAPTURE_AGENT_LABEL,
   DESKTOP_LAUNCH_AGENT_MARKER,
   PLUGIN_LAUNCH_AGENT_MARKER,
   CaptureAgentLifecycleError,
@@ -94,6 +95,7 @@ function lifecycleHarness({
   probeListener = async () => false,
   probeHealth = async () => undefined,
   importSmoke = async () => undefined,
+  onLoadRuntimeBundle = () => undefined,
   renameRuntime = renameSync,
   runCommand = async () => undefined,
 } = {}) {
@@ -107,7 +109,10 @@ function lifecycleHarness({
     pluginRoot,
     platform: "darwin",
     uid: FIXTURE_UID,
-    loadRuntimeBundle: () => activeBundle,
+    loadRuntimeBundle: () => {
+      onLoadRuntimeBundle();
+      return activeBundle;
+    },
     runCommand: async (executable, args) => {
       calls.push([executable, args]);
       return runCommand(executable, args);
@@ -136,6 +141,35 @@ function expectCode(code) {
   return (error) =>
     error instanceof CaptureAgentLifecycleError && error.code === code;
 }
+
+test("plugin-managed relay paths are disjoint from legacy Desktop ownership", () => {
+  const homeDir = "/Users/test";
+  const coredocHome = join(homeDir, ".coredoc");
+  const paths = captureAgentPaths({
+    env: { COREDOC_HOME: coredocHome },
+    homeDir,
+  });
+
+  assert.equal(CAPTURE_AGENT_LABEL, "ai.coredoc.workflows.capture-relay");
+  assert.equal(
+    paths.launchAgentPath,
+    join(homeDir, "Library", "LaunchAgents", `${CAPTURE_AGENT_LABEL}.plist`),
+  );
+  assert.equal(
+    paths.desktopLaunchAgentPath,
+    join(
+      homeDir,
+      "Library",
+      "LaunchAgents",
+      `${DESKTOP_CAPTURE_AGENT_LABEL}.plist`,
+    ),
+  );
+  assert.equal(paths.relayRoot, join(coredocHome, "capture-agent", "capture-relay"));
+  assert.equal(paths.desktopRelayRoot, join(coredocHome, "capture-relay"));
+  assert.notEqual(paths.launchAgentPath, paths.desktopLaunchAgentPath);
+  assert.notEqual(paths.relayRoot, paths.desktopRelayRoot);
+  assert.notEqual(CAPTURE_AGENT_LABEL, DESKTOP_CAPTURE_AGENT_LABEL);
+});
 
 function waitForChildLine(child, expected) {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -388,6 +422,76 @@ test("upgrade health failure restores the previous runtime, state, plist, and pr
   );
 });
 
+test("upgrade health failure preserves a previously disabled LaunchAgent", async () => {
+  let pluginLoaded = false;
+  let desktopLoaded = false;
+  let rejectedVersion = null;
+  const desktopPlist = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
+  const serviceNotFound = (label) => {
+    const error = new Error("launchd service is not loaded");
+    error.code = 113;
+    error.stderr = `Could not find service "${label}" in domain for user gui: ${FIXTURE_UID}`;
+    return error;
+  };
+  const harness = lifecycleHarness({
+    runCommand: async (_executable, args) => {
+      if (args[0] === "bootstrap") {
+        pluginLoaded = true;
+        return;
+      }
+      if (args[0] === "bootout") {
+        pluginLoaded = false;
+        return;
+      }
+      if (args[0] === "print") {
+        const label = args[1].slice(args[1].lastIndexOf("/") + 1);
+        const loaded =
+          label === CAPTURE_AGENT_LABEL
+            ? pluginLoaded
+            : label === DESKTOP_CAPTURE_AGENT_LABEL && desktopLoaded;
+        if (loaded) return;
+        throw serviceNotFound(label);
+      }
+    },
+    probeListener: async () => pluginLoaded || desktopLoaded,
+    probeHealth: async ({ runtimeVersion }) => {
+      if (runtimeVersion === rejectedVersion) {
+        writeFileSync(harness.paths.desktopLaunchAgentPath, desktopPlist, {
+          mode: 0o600,
+        });
+        desktopLoaded = true;
+        throw new Error("synthetic unhealthy");
+      }
+    },
+  });
+  const installed = await harness.lifecycle.setupRuntime();
+  await harness.lifecycle.disable();
+  assert.equal(pluginLoaded, false);
+  const oldPlist = readFileSync(harness.paths.launchAgentPath, "utf8");
+  const oldState = readFileSync(harness.paths.statePath, "utf8");
+  harness.setBundle(runtimeFixture("2.0.0", "disabled-upgrade"));
+  rejectedVersion = "2.0.0";
+
+  await assert.rejects(harness.lifecycle.upgrade(), (error) => {
+    assert.equal(error.code, "HEALTH_MISMATCH");
+    assert.equal(error.rollback, "restored");
+    return true;
+  });
+
+  assert.equal(pluginLoaded, false);
+  assert.equal(desktopLoaded, true);
+  assert.equal(
+    readFileSync(harness.paths.desktopLaunchAgentPath, "utf8"),
+    desktopPlist,
+  );
+  assert.equal(readFileSync(harness.paths.statePath, "utf8"), oldState);
+  assert.equal(readFileSync(harness.paths.launchAgentPath, "utf8"), oldPlist);
+  assert.equal(
+    readlinkSync(harness.paths.currentPath),
+    join("runtime", "versions", installed.current.directoryName),
+  );
+});
+
 test("explicit rollback swaps current and previous runtimes after authenticated health", async () => {
   const harness = lifecycleHarness();
   const first = await harness.lifecycle.setupRuntime();
@@ -401,6 +505,79 @@ test("explicit rollback swaps current and previous runtimes after authenticated 
     readlinkSync(harness.paths.currentPath),
     join("runtime", "versions", first.current.directoryName),
   );
+});
+
+test("disabled rollback restores an unhealthy prior runtime without starting it", async () => {
+  let pluginLoaded = false;
+  let rejectedVersion = null;
+  const healthVersions = [];
+  const serviceNotFound = (label) => {
+    const error = new Error("launchd service is not loaded");
+    error.code = 113;
+    error.stderr = `Could not find service "${label}" in domain for user gui: ${FIXTURE_UID}`;
+    return error;
+  };
+  const harness = lifecycleHarness({
+    runCommand: async (_executable, args) => {
+      if (args[0] === "bootstrap") {
+        pluginLoaded = true;
+        return;
+      }
+      if (args[0] === "bootout") {
+        pluginLoaded = false;
+        return;
+      }
+      if (args[0] === "print") {
+        if (pluginLoaded) return;
+        throw serviceNotFound(args[1].slice(args[1].lastIndexOf("/") + 1));
+      }
+    },
+    probeListener: async () => pluginLoaded,
+    probeHealth: async ({ runtimeVersion }) => {
+      healthVersions.push(runtimeVersion);
+      if (runtimeVersion === rejectedVersion) {
+        throw new Error("dormant prior runtime is unhealthy");
+      }
+    },
+  });
+  const first = await harness.lifecycle.setupRuntime();
+  harness.setBundle(runtimeFixture("2.0.0", "two"));
+  const second = await harness.lifecycle.upgrade();
+  assert.equal(pluginLoaded, true);
+  rejectedVersion = first.current.version;
+  healthVersions.length = 0;
+  const commandCountBeforeRollback = harness.calls.length;
+
+  const rolledBack = await harness.lifecycle.rollback({ start: false });
+
+  assert.equal(rolledBack.status, "disabled");
+  assert.equal(rolledBack.current.digest, first.current.digest);
+  assert.equal(rolledBack.previous.digest, second.current.digest);
+  assert.equal(pluginLoaded, false);
+  assert.deepEqual(healthVersions, []);
+  assert.equal(
+    harness.calls
+      .slice(commandCountBeforeRollback)
+      .some(([, args]) => args[0] === "bootstrap"),
+    false,
+  );
+  assert.equal(
+    harness.calls
+      .slice(commandCountBeforeRollback)
+      .some(([, args]) => args[0] === "bootout"),
+    true,
+  );
+  assert.equal(
+    readlinkSync(harness.paths.currentPath),
+    join("runtime", "versions", first.current.directoryName),
+  );
+  assert.equal(
+    readFileSync(harness.paths.launchAgentPath, "utf8").includes(
+      first.current.digest,
+    ),
+    true,
+  );
+  assert.equal((await harness.lifecycle.preflightDisable()).loaded, false);
 });
 
 test("retired-runtime cleanup failure does not roll back a healthy upgrade", async () => {
@@ -443,17 +620,166 @@ test("lifecycle refuses foreign and Desktop-v1 ownership before mutation", async
   const desktop = lifecycleHarness({
     probeListener: async () => true,
   });
-  const original = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
-  mkdirSync(dirname(desktop.paths.launchAgentPath), { recursive: true });
-  writeFileSync(desktop.paths.launchAgentPath, original, { mode: 0o600 });
+  const original = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
+  mkdirSync(dirname(desktop.paths.desktopLaunchAgentPath), { recursive: true });
+  writeFileSync(desktop.paths.desktopLaunchAgentPath, original, { mode: 0o600 });
+  const desktopStatus = await desktop.lifecycle.status();
+  assert.equal(desktopStatus.launchAgent, "absent");
+  assert.equal(desktopStatus.desktopLaunchAgent, "desktop-v1");
   await assert.rejects(
     desktop.lifecycle.setupRuntime(),
     expectCode("OWNERSHIP_CONFLICT"),
   );
-  assert.equal(readFileSync(desktop.paths.launchAgentPath, "utf8"), original);
+  assert.equal(
+    readFileSync(desktop.paths.desktopLaunchAgentPath, "utf8"),
+    original,
+  );
+  assert.equal(existsSync(desktop.paths.launchAgentPath), false);
   assert.equal(existsSync(desktop.paths.statePath), false);
   assert.equal(existsSync(desktop.paths.runtimeRoot), false);
   assert.deepEqual(desktop.calls, []);
+});
+
+test("setup preserves a Desktop plist created while the runtime bundle loads", async () => {
+  let harness;
+  const desktopPlist = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
+  harness = lifecycleHarness({
+    onLoadRuntimeBundle: () => {
+      mkdirSync(dirname(harness.paths.desktopLaunchAgentPath), { recursive: true });
+      writeFileSync(harness.paths.desktopLaunchAgentPath, desktopPlist, {
+        mode: 0o600,
+      });
+    },
+    probeHealth: async () => {
+      throw new Error("synthetic unhealthy");
+    },
+  });
+
+  let failure;
+  try {
+    await harness.lifecycle.setupRuntime();
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.equal(existsSync(harness.paths.launchAgentPath), false);
+  assert.equal(
+    readFileSync(harness.paths.desktopLaunchAgentPath, "utf8"),
+    desktopPlist,
+  );
+  assert.equal(failure?.code, "OWNERSHIP_CONFLICT");
+  assert.equal(failure?.rollback, undefined);
+  assert.equal(existsSync(harness.paths.statePath), false);
+  assert.equal(existsSync(harness.paths.runtimeRoot), false);
+  assert.deepEqual(harness.calls, []);
+});
+
+test("failed activation rolls back only plugin ownership when Desktop appears", async () => {
+  let harness;
+  const desktopPlist = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
+  harness = lifecycleHarness({
+    probeHealth: async ({ runtimeVersion }) => {
+      if (runtimeVersion !== "2.0.0") return;
+      writeFileSync(harness.paths.desktopLaunchAgentPath, desktopPlist, {
+        mode: 0o600,
+      });
+      throw new Error("synthetic unhealthy");
+    },
+  });
+  await harness.lifecycle.setupRuntime();
+  const oldPlist = readFileSync(harness.paths.launchAgentPath, "utf8");
+  harness.setBundle(runtimeFixture("2.0.0", "two"));
+
+  await assert.rejects(harness.lifecycle.upgrade(), (error) => {
+    assert.equal(error.code, "HEALTH_MISMATCH");
+    assert.equal(error.rollback, "restored");
+    return true;
+  });
+
+  assert.equal(readFileSync(harness.paths.launchAgentPath, "utf8"), oldPlist);
+  assert.equal(
+    readFileSync(harness.paths.desktopLaunchAgentPath, "utf8"),
+    desktopPlist,
+  );
+  const bootouts = harness.calls.filter(([, args]) => args[0] === "bootout");
+  assert.equal(bootouts.length > 0, true);
+  assert.equal(
+    bootouts.every(([, args]) =>
+      args.includes(`gui/${FIXTURE_UID}/${CAPTURE_AGENT_LABEL}`),
+    ),
+    true,
+  );
+  assert.equal(
+    harness.calls.some(([, args]) =>
+      args.some((value) => value.includes(DESKTOP_CAPTURE_AGENT_LABEL)),
+    ),
+    false,
+  );
+});
+
+test("uninstall removes only plugin state when Desktop owns the shared listener", async () => {
+  let listenerOccupied = false;
+  let pluginLoaded = false;
+  let desktopLoaded = false;
+  const harness = lifecycleHarness({
+    probeListener: async () => listenerOccupied,
+    runCommand: async (_executable, args) => {
+      if (args[0] === "bootstrap") {
+        if (args[2] === harness.paths.launchAgentPath) pluginLoaded = true;
+        return;
+      }
+      if (args[0] === "bootout") {
+        pluginLoaded = false;
+        return;
+      }
+      if (args[0] !== "print") return;
+      const service = args[1];
+      const loaded = service.endsWith(`/${CAPTURE_AGENT_LABEL}`)
+        ? pluginLoaded
+        : service.endsWith(`/${DESKTOP_CAPTURE_AGENT_LABEL}`)
+          ? desktopLoaded
+          : false;
+      if (loaded) return;
+      const label = service.slice(service.lastIndexOf("/") + 1);
+      const error = new Error("synthetic service not found");
+      error.code = 113;
+      error.stderr = `Could not find service "${label}" in domain for user gui: ${FIXTURE_UID}\n`;
+      throw error;
+    },
+  });
+  await harness.lifecycle.setupRuntime();
+  const desktopPlist = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
+  mkdirSync(dirname(harness.paths.desktopLaunchAgentPath), { recursive: true });
+  writeFileSync(harness.paths.desktopLaunchAgentPath, desktopPlist, {
+    mode: 0o600,
+  });
+  desktopLoaded = true;
+  listenerOccupied = true;
+
+  const result = await harness.lifecycle.uninstall();
+
+  assert.equal(result.status, "uninstalled");
+  assert.equal(existsSync(harness.paths.launchAgentPath), false);
+  assert.equal(existsSync(harness.paths.statePath), false);
+  assert.equal(existsSync(harness.paths.runtimeRoot), false);
+  assert.equal(
+    readFileSync(harness.paths.desktopLaunchAgentPath, "utf8"),
+    desktopPlist,
+  );
+  assert.equal(
+    harness.calls.some(([, args]) =>
+      args.includes(`gui/${FIXTURE_UID}/${DESKTOP_CAPTURE_AGENT_LABEL}`),
+    ),
+    true,
+  );
+  assert.equal(
+    harness.calls.some(
+      ([, args]) =>
+        args[0] === "bootout" &&
+        args.includes(`gui/${FIXTURE_UID}/${DESKTOP_CAPTURE_AGENT_LABEL}`),
+    ),
+    false,
+  );
 });
 
 test("kernel lifecycle lock serializes contenders and ignores orphaned takeover state", () => {
@@ -578,6 +904,7 @@ test("status is read-only and redacted for both absent and installed agents", as
     runtime: null,
     previousRuntime: null,
     launchAgent: "absent",
+    desktopLaunchAgent: "absent",
     listener: "free",
     health: "not-installed",
     pendingCount: 0,
@@ -591,6 +918,7 @@ test("status is read-only and redacted for both absent and installed agents", as
   const installed = await harness.lifecycle.status();
   assert.equal(installed.status, "ready");
   assert.equal(installed.launchAgent, "plugin-v1");
+  assert.equal(installed.desktopLaunchAgent, "absent");
   assert.equal(installed.health, "ready");
   assert.equal(installed.queueState, "empty");
   assert.deepEqual(installed.degradedReasons, []);
@@ -843,6 +1171,7 @@ test("uninstall preflight validates ownership and queues without mutation", asyn
       schemaVersion: 1,
       status: "ready",
       installed: true,
+      partial: false,
       loaded: true,
       pendingCount: 4,
       disposition: "discard",
@@ -1035,6 +1364,10 @@ test("default uninstall resumes after a prior attempt removed the plist but left
   unlinkSync(harness.paths.currentPath);
   chmodSync(dirname(removedFile), 0o700);
   unlinkSync(removedFile);
+
+  const preflight = await harness.lifecycle.preflightUninstall();
+  assert.equal(preflight.installed, true);
+  assert.equal(preflight.partial, true);
 
   const result = await harness.lifecycle.uninstall();
   assert.equal(result.status, "uninstalled");
