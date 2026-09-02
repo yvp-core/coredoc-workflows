@@ -242,6 +242,9 @@ test("surfaces exactly one bounded notice when the relay port answers with a for
 
   assert.deepEqual(result, { status: "unavailable", code: "BINDING_MISMATCH" });
   assert.deepEqual(written, [`${BINDING_MISMATCH_NOTICE}\n`]);
+  assert.match(written[0], /capture doctor/);
+  assert.match(written[0], /repair the plugin-managed capture agent/);
+  assert.doesNotMatch(written[0], /Desktop/i);
   assert.doesNotMatch(written[0], /Bearer|nonce|\/Users\/|43181/i);
 });
 

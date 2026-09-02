@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "../test/test-api.mjs";
@@ -81,9 +87,11 @@ function writeCodexIngress({ codexHome, stateHome }) {
     codexManagedConfig(CODEX_BINDING_NONCE),
     "utf8",
   );
-  mkdirSync(join(stateHome, "capture-relay"), { recursive: true });
+  mkdirSync(join(stateHome, "capture-agent", "capture-relay"), {
+    recursive: true,
+  });
   writeFileSync(
-    join(stateHome, "capture-relay", "codex-ingress.json"),
+    join(stateHome, "capture-agent", "capture-relay", "codex-ingress.json"),
     `${JSON.stringify({ schemaVersion: 1, token: CODEX_BINDING_NONCE })}\n`,
     { mode: 0o600 },
   );
@@ -115,32 +123,35 @@ function writeCodexRelayFixture({
     codexManagedConfig(bindingNonce),
     "utf8",
   );
-  mkdirSync(join(stateHome, "capture-relay"), { recursive: true });
+  mkdirSync(join(stateHome, "capture-agent", "capture-relay"), { recursive: true });
   writeFileSync(
-    join(stateHome, "capture-relay", "codex-ingress.json"),
+    join(stateHome, "capture-agent", "capture-relay", "codex-ingress.json"),
     `${JSON.stringify({ schemaVersion: 1, token: bindingNonce })}\n`,
     { mode: 0o600 },
   );
-  writeManagedRelayConfig(join(stateHome, "capture-relay", "relay.json"), {
-    schemaVersion: 1,
-    bindings: [
-      {
-        schemaVersion: 1,
-        bindingId: "22222222-2222-4222-8222-222222222222",
-        bindingNonceHash: sha256BindingNonce(bindingNonce),
-        host: "codex",
-        workspaceId: "ws-1",
-        repositoryKey: "coredoc/coredoc-parser",
-        repositoryScopeKey: resolveRepositoryScopeKey(cwd),
-        profileName: null,
-        nativeForwardEndpoint:
-          "https://capture.invalid/api/v1/workspaces/ws-1/otel/v1/logs",
-        captureForwardEndpoint:
-          "https://capture.invalid/api/v1/workspaces/ws-1/capture/v1/events",
-        cloudAuthorization: "Bearer test-token",
-      },
-    ],
-  });
+  writeManagedRelayConfig(
+    join(stateHome, "capture-agent", "capture-relay", "relay.json"),
+    {
+      schemaVersion: 1,
+      bindings: [
+        {
+          schemaVersion: 1,
+          bindingId: "22222222-2222-4222-8222-222222222222",
+          bindingNonceHash: sha256BindingNonce(bindingNonce),
+          host: "codex",
+          workspaceId: "ws-1",
+          repositoryKey: "coredoc/coredoc-parser",
+          repositoryScopeKey: resolveRepositoryScopeKey(cwd),
+          profileName: null,
+          nativeForwardEndpoint:
+            "https://capture.invalid/api/v1/workspaces/ws-1/otel/v1/logs",
+          captureForwardEndpoint:
+            "https://capture.invalid/api/v1/workspaces/ws-1/capture/v1/events",
+          cloudAuthorization: "Bearer test-token",
+        },
+      ],
+    },
+  );
 }
 
 test("uses Codex's stable session identity when the workflow hook variable is absent", () => {
@@ -178,6 +189,16 @@ test("recovers semantic capture from the exact managed Codex relay binding", () 
   const root = mkdtempSync(join(tmpdir(), "coredoc-codex-runtime-"));
   const codexHome = join(root, "codex");
   const stateHome = join(root, "state");
+  const desktopRelayRoot = join(stateHome, "capture-relay");
+  const desktopIngress = '{"desktop":"must-not-be-read"}\n';
+  const desktopConfig = '{"desktop":"must-not-be-read"}\n';
+  mkdirSync(desktopRelayRoot, { recursive: true });
+  writeFileSync(join(desktopRelayRoot, "codex-ingress.json"), desktopIngress, {
+    mode: 0o600,
+  });
+  writeFileSync(join(desktopRelayRoot, "relay.json"), desktopConfig, {
+    mode: 0o600,
+  });
   writeCodexRelayFixture({ codexHome, stateHome });
 
   const runtime = resolveWorkflowRuntime({
@@ -204,6 +225,14 @@ test("recovers semantic capture from the exact managed Codex relay binding", () 
   assert.equal(
     runtime.env.COREDOC_WORKFLOWS_REPO_KEY,
     "coredoc/coredoc-parser",
+  );
+  assert.equal(
+    readFileSync(join(desktopRelayRoot, "codex-ingress.json"), "utf8"),
+    desktopIngress,
+  );
+  assert.equal(
+    readFileSync(join(desktopRelayRoot, "relay.json"), "utf8"),
+    desktopConfig,
   );
 });
 
@@ -266,44 +295,57 @@ test("routes managed Codex workflow capture by cwd across two repository binding
   mkdirSync(repoTwo, { recursive: true });
   gitInit(repoOne);
   gitInit(repoTwo);
-  writeFileSync(join(codexHome, "config.toml"), codexManagedConfig(CODEX_BINDING_NONCE), "utf8");
-  mkdirSync(join(stateHome, "capture-relay"), { recursive: true });
   writeFileSync(
-    join(stateHome, "capture-relay", "codex-ingress.json"),
+    join(codexHome, "config.toml"),
+    codexManagedConfig(CODEX_BINDING_NONCE),
+    "utf8",
+  );
+  mkdirSync(join(stateHome, "capture-agent", "capture-relay"), {
+    recursive: true,
+  });
+  writeFileSync(
+    join(stateHome, "capture-agent", "capture-relay", "codex-ingress.json"),
     `${JSON.stringify({ schemaVersion: 1, token: CODEX_BINDING_NONCE })}\n`,
     { mode: 0o600 },
   );
-  writeManagedRelayConfig(join(stateHome, "capture-relay", "relay.json"), {
-    schemaVersion: 1,
-    bindings: [
-      {
-        schemaVersion: 1,
-        bindingId: "22222222-2222-4222-8222-222222222222",
-        bindingNonceHash: sha256BindingNonce(CODEX_BINDING_NONCE),
-        host: "codex",
-        workspaceId: "ws-1",
-        repositoryKey: "acme/repo-one",
-        repositoryScopeKey: resolveRepositoryScopeKey(repoOne),
-        profileName: null,
-        nativeForwardEndpoint: "https://capture.invalid/api/v1/workspaces/ws-1/otel/v1/logs",
-        captureForwardEndpoint: "https://capture.invalid/api/v1/workspaces/ws-1/capture/v1/events",
-        cloudAuthorization: "Bearer test-token-one",
-      },
-      {
-        schemaVersion: 1,
-        bindingId: "33333333-3333-4333-8333-333333333333",
-        bindingNonceHash: sha256BindingNonce(CODEX_BINDING_NONCE),
-        host: "codex",
-        workspaceId: "ws-2",
-        repositoryKey: "acme/repo-two",
-        repositoryScopeKey: resolveRepositoryScopeKey(repoTwo),
-        profileName: "pilot",
-        nativeForwardEndpoint: "https://capture.invalid/api/v1/workspaces/ws-2/otel/v1/logs",
-        captureForwardEndpoint: "https://capture.invalid/api/v1/workspaces/ws-2/capture/v1/events",
-        cloudAuthorization: "Bearer test-token-two",
-      },
-    ],
-  });
+  writeManagedRelayConfig(
+    join(stateHome, "capture-agent", "capture-relay", "relay.json"),
+    {
+      schemaVersion: 1,
+      bindings: [
+        {
+          schemaVersion: 1,
+          bindingId: "22222222-2222-4222-8222-222222222222",
+          bindingNonceHash: sha256BindingNonce(CODEX_BINDING_NONCE),
+          host: "codex",
+          workspaceId: "ws-1",
+          repositoryKey: "acme/repo-one",
+          repositoryScopeKey: resolveRepositoryScopeKey(repoOne),
+          profileName: null,
+          nativeForwardEndpoint:
+            "https://capture.invalid/api/v1/workspaces/ws-1/otel/v1/logs",
+          captureForwardEndpoint:
+            "https://capture.invalid/api/v1/workspaces/ws-1/capture/v1/events",
+          cloudAuthorization: "Bearer test-token-one",
+        },
+        {
+          schemaVersion: 1,
+          bindingId: "33333333-3333-4333-8333-333333333333",
+          bindingNonceHash: sha256BindingNonce(CODEX_BINDING_NONCE),
+          host: "codex",
+          workspaceId: "ws-2",
+          repositoryKey: "acme/repo-two",
+          repositoryScopeKey: resolveRepositoryScopeKey(repoTwo),
+          profileName: "pilot",
+          nativeForwardEndpoint:
+            "https://capture.invalid/api/v1/workspaces/ws-2/otel/v1/logs",
+          captureForwardEndpoint:
+            "https://capture.invalid/api/v1/workspaces/ws-2/capture/v1/events",
+          cloudAuthorization: "Bearer test-token-two",
+        },
+      ],
+    },
+  );
 
   const first = resolveWorkflowRuntime({
     cwd: repoOne,
@@ -830,7 +872,13 @@ test("managed capture uses a global mode-0700 outbox keyed by relay binding hash
   });
 
   const bindingHash = createHash("sha256").update(nonce).digest("hex");
-  const expected = join(stateHome, "capture-relay", "outbox", bindingHash);
+  const expected = join(
+    stateHome,
+    "capture-agent",
+    "capture-relay",
+    "outbox",
+    bindingHash,
+  );
   assert.equal(statSync(expected).isDirectory(), true);
   assert.equal(statSync(expected).mode & 0o777, 0o700);
   assert.equal(recorder.pending().length, 1);

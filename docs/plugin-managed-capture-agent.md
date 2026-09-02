@@ -28,6 +28,12 @@ the mutable plugin cache. The Codex claim hook follows the stable `current`
 runtime link, so plugin cache rotation cannot strand the persistent agent.
 No system Node, Bun, or Python installation is required.
 
+Plugin ownership is isolated under the
+`ai.coredoc.workflows.capture-relay` LaunchAgent label and
+`~/.coredoc/capture-agent/capture-relay` state root. The legacy Desktop label,
+plist, and `~/.coredoc/capture-relay` root are separate and are never plugin
+mutation targets.
+
 ## Destination policy
 
 Before `setup`, `repair`, `upgrade`, authenticated `doctor`, or destructive
@@ -103,7 +109,7 @@ credential-bearing files to diagnose an error.
 | --- | --- |
 | `status` | Reads local ownership, runtime, host configuration, listener, and bounded queue state. It does not enroll, contact the server, or require the policy file. |
 | `doctor` | Adds bounded policy and authenticated server checks to local status. It does not mutate state. |
-| `setup` | Enrolls if needed, migrates a recognized Desktop relay if present, installs and health-checks the immutable runtime, and merge-writes marker-owned host settings. It is safe to rerun. |
+| `setup` | Enrolls if needed, installs and health-checks the immutable runtime, and merge-writes marker-owned host settings. Before enrollment or managed-state mutation, it returns `LEGACY_DESKTOP_PRESENT` for the exact Desktop-v1 LaunchAgent, `OWNERSHIP_CONFLICT` for unrecognized state, or `FOREIGN_LISTENER` for an unowned listener. It is safe to rerun after conflicts are resolved. |
 | `repair` | Reconciles the same bounded marker-owned setup contract. It refuses unmanaged conflicts, unknown listeners, and unsafe installed state rather than deleting an untrusted runtime tree. |
 | `upgrade` | Activates the runtime shipped by the current plugin with the existing installation credential and restores the prior runtime if activation fails. |
 | `disable` | Stops the LaunchAgent and removes marker-owned host integration while retaining the runtime, identity, credential configuration, and queues. |
@@ -156,15 +162,15 @@ The default state root is `${COREDOC_HOME:-~/.coredoc}`:
     runtime/versions/<version>-<digest>/
     current -> runtime/versions/<version>-<digest>
     previous -> runtime/versions/<version>-<digest>
-  capture-relay/
-    relay.json
-    codex-ingress.json
-    codex-attribution-state.json
-    codex-relay-events.jsonl
-    codex-relay-events.jsonl.1
-    native-outbox/
-    outbox/
-    artifact-outbox/
+    capture-relay/
+      relay.json
+      codex-ingress.json
+      codex-attribution-state.json
+      codex-relay-events.jsonl
+      codex-relay-events.jsonl.1
+      native-outbox/
+      outbox/
+      artifact-outbox/
 ```
 
 Secret-bearing files and queue records are mode 0600; containing directories
@@ -174,35 +180,52 @@ so the running process does not import from a repository checkout or plugin
 cache.
 
 Native Claude Code and Codex OTLP and semantic workflow events use separate
-random local capabilities. The cloud bearer stays in `capture-relay/relay.json`
+random local capabilities. The cloud bearer stays in
+`capture-agent/capture-relay/relay.json`
 and is not written to host settings. A missing physical repository does not
 block native telemetry or workspace-level workflow events. Repository-bound
 operations remain unavailable until the server resolves one unambiguous
 normalized Git identity; the client does not create or guess a repository.
 
-## Desktop migration
+## Legacy Desktop cutover
 
-Desktop is not a prerequisite. If a recognized marker-owned Desktop relay is
-present, setup performs a bounded migration:
+Desktop is not a prerequisite, and the plugin does not automatically stop or
+migrate a Desktop daemon, import its queues, or revoke its credentials. Before
+enrollment or managed-state mutation, setup returns `LEGACY_DESKTOP_PRESENT`
+for the exact standard Desktop-v1 LaunchAgent, `OWNERSHIP_CONFLICT` for
+unrecognized state, or `FOREIGN_LISTENER` for an unowned listener on the relay
+port. The plugin owns `ai.coredoc.workflows.capture-relay`; Desktop's standard
+label remains `ai.coredoc.capture-relay`. Dormant development LaunchAgents with
+a deterministic `ai.coredoc.capture-relay.<hash>` label are intentionally
+outside distributed setup discovery.
 
-- inspect only the known per-user service and relay layouts;
-- snapshot marker-owned host state and whether the service was loaded;
-- stop only the recognized service;
-- import compatible pending queues for the policy workspace;
-- start and health-check the plugin-managed agent on the same loopback contract;
-- run the authenticated server probe;
-- retire obsolete marker-owned state and matching legacy credentials only after
-  the new agent is healthy.
+Cut over the exceptional legacy machine manually. Let every binding drain, then
+use Desktop's managed-capture **Disable** action for every configured Claude
+repository and Codex profile and confirm every target is disabled. This removes
+repository-local Claude settings that would otherwise override the plugin's
+global settings. Any remaining Desktop Codex OTEL block or session-claim hook is
+preserved, reported as legacy state, and blocks setup with `CONFIG_CONFLICT`;
+the plugin never adopts or deletes it. Inventory every exact Desktop-marker standard and suffixed
+development LaunchAgent, including dormant services, and stop and remove each
+recognized service through its supported operator procedure. Atomically move
+each corresponding `capture-relay` root—including `~/.coredoc/capture-relay`
+and any configured development root—to a separate owner-only backup. Verify
+that no old LaunchAgent, listener, or service that can reclaim the fixed relay
+port remains before rerunning setup. The archived Desktop root is disjoint from
+plugin-owned state. Never inspect or print credential-bearing settings, kill an
+unknown listener, or delete state whose ownership is not proven. The plugin
+neither imports nor deletes the backups. If an earlier pre-release plugin build
+used the Desktop label or relay root, uninstall it with that same build before
+running current setup; the current build intentionally refuses to adopt it.
 
-An unknown listener or ambiguous service is never killed. If setup reports
-`MIGRATION_PENDING_UNSUPPORTED`, let the recognized old relay drain its pending
-records and rerun setup. If it reports `DESKTOP_RESTART_UNAVAILABLE`, restore or
-repair that recognized relay first so the pre-migration snapshot can be safely
-restarted.
+Keep the backups through the rollback window. After the new agent is healthy and
+that window closes, revoke the old Desktop telemetry credentials through the
+ownership-scoped server or administrator workflow, verify their rejection, and
+securely remove the backups.
 
-Before the transaction commits, any failure restores the prior LaunchAgent
-loaded state, plist, host settings, runtime links, and queue placement. A
-rollback failure is reported explicitly instead of claiming setup succeeded.
+For ordinary plugin-managed setup, any failure before the transaction commits
+restores marker-owned host files, runtime links, and service state. A rollback
+failure is reported explicitly instead of claiming setup succeeded.
 
 ## Upgrade, disable, rollback, and removal
 
@@ -292,7 +315,7 @@ setup. It remains explicitly opt-in through `COREDOC_CAPTURE_ENDPOINT` and
 
 ## Release verification
 
-Changes to the capture agent require focused setup, lifecycle, migration, host
+Changes to the capture agent require focused setup, lifecycle, host
 configuration, policy, and enrollment tests under bundled Bun, plus the Node.js
 22 compatibility suite. Changes to runtime installation, launchd interaction,
 or rollback also require an isolated macOS LaunchAgent smoke test. Tests must

@@ -259,7 +259,7 @@ test("authenticated relay health advertises the exact accepted capture schemas",
 
 test("serves authenticated agent health v2 without changing exact binding health v1", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "coredoc-managed-relay-health-v2-"));
-  const path = join(directory, "capture-relay", "relay.json");
+  const path = join(directory, "capture-agent", "capture-relay", "relay.json");
   writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [binding()] });
   const agentOutbox = join(directory, "capture-agent", "outbox");
   mkdirSync(agentOutbox, { recursive: true, mode: 0o700 });
@@ -333,12 +333,12 @@ test("serves authenticated agent health v2 without changing exact binding health
 
 test("authenticated health v2 surfaces artifact-only repository attribution failure", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "coredoc-managed-relay-artifact-health-v2-"));
-  const path = join(directory, "capture-relay", "relay.json");
+  const path = join(directory, "capture-agent", "capture-relay", "relay.json");
   const configured = binding();
   writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [configured] });
   const artifactStore = createArtifactCheckpointStore({
     directory: artifactCheckpointDirectory(
-      join(directory, "capture-relay"),
+      join(directory, "capture-agent", "capture-relay"),
       configured.bindingNonceHash,
     ),
   });

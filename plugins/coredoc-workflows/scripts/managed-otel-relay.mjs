@@ -713,11 +713,12 @@ function agentQueueCount(configPath) {
   const relayRoot = dirname(configPath);
   if (
     basename(configPath) !== "relay.json" ||
-    basename(relayRoot) !== "capture-relay"
+    basename(relayRoot) !== "capture-relay" ||
+    basename(dirname(relayRoot)) !== "capture-agent"
   ) {
     return 0;
   }
-  const root = join(dirname(relayRoot), "capture-agent", "outbox");
+  const root = join(dirname(relayRoot), "outbox");
   if (!existsSync(root)) return 0;
   let count = 0;
   let visited = 0;

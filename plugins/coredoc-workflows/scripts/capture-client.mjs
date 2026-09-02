@@ -139,7 +139,11 @@ export function selectManagedCaptureBinding({
 }
 
 function managedCodexBinding(env, cwd, readRelayConfig) {
-  const relayRoot = join(resolve(stateRoot(env)), "capture-relay");
+  const relayRoot = join(
+    resolve(stateRoot(env)),
+    "capture-agent",
+    "capture-relay",
+  );
   const bindingNonce = codexIngressToken(join(relayRoot, "codex-ingress.json"));
   if (bindingNonce === undefined) return undefined;
   let relayConfig;
@@ -327,7 +331,7 @@ function bindingCaptureDirectory(relayRoot, bindingNonceHash) {
 
 export function managedCaptureDirectory(bindingNonceHash, env = process.env) {
   return bindingCaptureDirectory(
-    join(resolve(stateRoot(env)), "capture-relay"),
+    join(resolve(stateRoot(env)), "capture-agent", "capture-relay"),
     bindingNonceHash,
   );
 }

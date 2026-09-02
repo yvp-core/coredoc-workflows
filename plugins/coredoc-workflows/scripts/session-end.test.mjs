@@ -497,7 +497,7 @@ test("SessionEnd queues configured artifacts locally without artifact fetch and 
 
   const store = createArtifactCheckpointStore({
     directory: artifactCheckpointDirectory(
-      join(stateHome, "capture-relay"),
+      join(stateHome, "capture-agent", "capture-relay"),
       sha256BindingNonce(nonce),
     ),
   });

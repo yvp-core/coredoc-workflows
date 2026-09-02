@@ -62,8 +62,16 @@ test("launcher routes capture lifecycle through bundled Bun without replacing JS
     COREDOC_HOME: join(root, ".coredoc"),
   };
   const { stdout } = await run(launcher, ["capture", "status"], { env });
-  assert.equal(JSON.parse(stdout).command, "status");
-  assert.equal(JSON.parse(stdout).status, "not-installed");
+  const status = JSON.parse(stdout);
+  assert.equal(status.command, "status");
+  if (status.listener === "occupied") {
+    assert.equal(status.status, "degraded");
+    assert.deepEqual(status.degradedReasons, ["FOREIGN_LISTENER"]);
+  } else {
+    assert.equal(status.listener, "free");
+    assert.equal(status.status, "not-installed");
+    assert.deepEqual(status.degradedReasons, []);
+  }
 
   const recorder = spawnSync(launcher, ["capture"], {
     env,

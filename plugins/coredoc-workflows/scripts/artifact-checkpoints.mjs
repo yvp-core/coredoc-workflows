@@ -1136,7 +1136,11 @@ function configuredContext(env, cwd) {
     repositoryKey = canonicalRepositoryKey(env.COREDOC_WORKFLOWS_REPO_KEY);
   }
   const { bindingHash, relayBinding } = configuredRelayBinding(env);
-  const relayRoot = join(resolve(stateRoot(env)), "capture-relay");
+  const relayRoot = join(
+    resolve(stateRoot(env)),
+    "capture-agent",
+    "capture-relay",
+  );
   return {
     endpoint: MANAGED_ENDPOINT,
     relayBinding,

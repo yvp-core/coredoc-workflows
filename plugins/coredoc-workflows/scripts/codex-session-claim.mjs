@@ -13,7 +13,12 @@ function ingressToken(env) {
   const configuredRoot = env.COREDOC_HOME;
   if (configuredRoot && !isAbsolute(configuredRoot)) throw new Error("unavailable");
   const root = configuredRoot ? resolve(configuredRoot) : join(homedir(), ".coredoc");
-  const path = join(root, "capture-relay", "codex-ingress.json");
+  const path = join(
+    root,
+    "capture-agent",
+    "capture-relay",
+    "codex-ingress.json",
+  );
   const metadata = lstatSync(path);
   if (
     !metadata.isFile() ||

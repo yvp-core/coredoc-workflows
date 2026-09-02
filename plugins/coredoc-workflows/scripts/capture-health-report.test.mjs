@@ -55,7 +55,12 @@ function binding({
 
 function managedFixture() {
   const stateHome = mkdtempSync(join(tmpdir(), "coredoc-capture-report-state-"));
-  const configPath = join(stateHome, "capture-relay", "relay.json");
+  const configPath = join(
+    stateHome,
+    "capture-agent",
+    "capture-relay",
+    "relay.json",
+  );
   const first = binding();
   const second = binding({
     bindingId: BINDING_TWO_ID,
@@ -210,7 +215,12 @@ test("managed reporting preserves repository-attribution degradation", () => {
 
 test("managed Codex reporting reads pending events under the writer's exact binding fingerprint", () => {
   const stateHome = mkdtempSync(join(tmpdir(), "coredoc-codex-report-state-"));
-  const configPath = join(stateHome, "capture-relay", "relay.json");
+  const configPath = join(
+    stateHome,
+    "capture-agent",
+    "capture-relay",
+    "relay.json",
+  );
   const configured = {
     ...binding({ bindingId: BINDING_ONE_ID, nonce: NONCE_ONE, workspaceId: "workspace-one" }),
     host: "codex",
@@ -254,7 +264,12 @@ test("managed Codex reporting reads pending events under the writer's exact bind
 
 test("rendered workspace Claude env records and reports from the stable binding-ID directory", () => {
   const stateHome = mkdtempSync(join(tmpdir(), "coredoc-claude-workspace-report-state-"));
-  const configPath = join(stateHome, "capture-relay", "relay.json");
+  const configPath = join(
+    stateHome,
+    "capture-agent",
+    "capture-relay",
+    "relay.json",
+  );
   const legacy = binding({
     bindingId: BINDING_ONE_ID,
     nonce: NONCE_ONE,
