@@ -222,9 +222,14 @@ function fakeLifecycle(
       events.push("lifecycle:upgrade");
       return { status: "ready", current: runtime, previous: runtime };
     },
-    async rollback() {
+    async rollback({ start = true } = {}) {
       events.push("lifecycle:rollback");
-      return { status: "ready", current: runtime, previous: runtime };
+      active = start;
+      return {
+        status: start ? "ready" : "disabled",
+        current: runtime,
+        previous: runtime,
+      };
     },
     async disable() {
       events.push("lifecycle:disable");
@@ -1015,6 +1020,17 @@ test("failed setup restores an existing disabled lifecycle through lifecycle own
       current: { ...result.current, digest: "e".repeat(64) },
     };
   };
+  const rollback = context.lifecycle.rollback.bind(context.lifecycle);
+  let rollbackStart;
+  context.lifecycle.rollback = async (options) => {
+    rollbackStart = options?.start;
+    if (rollbackStart !== false) {
+      throw Object.assign(new Error("dormant prior runtime cannot start"), {
+        code: "HEALTH_MISMATCH",
+      });
+    }
+    return rollback(options);
+  };
   const disableCallsBefore = context.events.filter(
     (event) => event === "lifecycle:disable",
   ).length;
@@ -1033,14 +1049,10 @@ test("failed setup restores an existing disabled lifecycle through lifecycle own
 
   assert.equal(
     context.events.filter((event) => event === "lifecycle:disable").length,
-    disableCallsBefore + 1,
+    disableCallsBefore,
   );
+  assert.equal(rollbackStart, false);
   assert.equal(context.events.includes("lifecycle:rollback"), true);
-  assert.equal(
-    context.events.lastIndexOf("lifecycle:rollback") <
-      context.events.lastIndexOf("lifecycle:disable"),
-    true,
-  );
   assert.equal(
     context.events.some((event) => event.startsWith("/bin/launchctl:")),
     false,

@@ -507,6 +507,79 @@ test("explicit rollback swaps current and previous runtimes after authenticated 
   );
 });
 
+test("disabled rollback restores an unhealthy prior runtime without starting it", async () => {
+  let pluginLoaded = false;
+  let rejectedVersion = null;
+  const healthVersions = [];
+  const serviceNotFound = (label) => {
+    const error = new Error("launchd service is not loaded");
+    error.code = 113;
+    error.stderr = `Could not find service "${label}" in domain for user gui: ${FIXTURE_UID}`;
+    return error;
+  };
+  const harness = lifecycleHarness({
+    runCommand: async (_executable, args) => {
+      if (args[0] === "bootstrap") {
+        pluginLoaded = true;
+        return;
+      }
+      if (args[0] === "bootout") {
+        pluginLoaded = false;
+        return;
+      }
+      if (args[0] === "print") {
+        if (pluginLoaded) return;
+        throw serviceNotFound(args[1].slice(args[1].lastIndexOf("/") + 1));
+      }
+    },
+    probeListener: async () => pluginLoaded,
+    probeHealth: async ({ runtimeVersion }) => {
+      healthVersions.push(runtimeVersion);
+      if (runtimeVersion === rejectedVersion) {
+        throw new Error("dormant prior runtime is unhealthy");
+      }
+    },
+  });
+  const first = await harness.lifecycle.setupRuntime();
+  harness.setBundle(runtimeFixture("2.0.0", "two"));
+  const second = await harness.lifecycle.upgrade();
+  assert.equal(pluginLoaded, true);
+  rejectedVersion = first.current.version;
+  healthVersions.length = 0;
+  const commandCountBeforeRollback = harness.calls.length;
+
+  const rolledBack = await harness.lifecycle.rollback({ start: false });
+
+  assert.equal(rolledBack.status, "disabled");
+  assert.equal(rolledBack.current.digest, first.current.digest);
+  assert.equal(rolledBack.previous.digest, second.current.digest);
+  assert.equal(pluginLoaded, false);
+  assert.deepEqual(healthVersions, []);
+  assert.equal(
+    harness.calls
+      .slice(commandCountBeforeRollback)
+      .some(([, args]) => args[0] === "bootstrap"),
+    false,
+  );
+  assert.equal(
+    harness.calls
+      .slice(commandCountBeforeRollback)
+      .some(([, args]) => args[0] === "bootout"),
+    true,
+  );
+  assert.equal(
+    readlinkSync(harness.paths.currentPath),
+    join("runtime", "versions", first.current.directoryName),
+  );
+  assert.equal(
+    readFileSync(harness.paths.launchAgentPath, "utf8").includes(
+      first.current.digest,
+    ),
+    true,
+  );
+  assert.equal((await harness.lifecycle.preflightDisable()).loaded, false);
+});
+
 test("retired-runtime cleanup failure does not roll back a healthy upgrade", async () => {
   let retiredDirectory;
   const harness = lifecycleHarness({

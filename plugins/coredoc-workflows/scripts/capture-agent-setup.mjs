@@ -859,13 +859,14 @@ export function createCaptureAgentSetup({
     }
     const runtimeChanged = before.runtime?.digest !== setupResult.current?.digest;
     if (runtimeChanged) {
-      await activeLifecycle.rollback();
+      await activeLifecycle.rollback({ start: before.loaded !== false });
+      return;
     }
     if (before.loaded === false) {
       await activeLifecycle.disable();
       return;
     }
-    if (!runtimeChanged) await activeLifecycle.setupRuntime();
+    await activeLifecycle.setupRuntime();
   }
 
   async function performSetup({

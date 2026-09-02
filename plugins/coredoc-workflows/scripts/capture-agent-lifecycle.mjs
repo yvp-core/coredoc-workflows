@@ -1256,6 +1256,33 @@ async function installAndStart({
   assertLaunchAgentPlistMatches(paths, [plist]);
 }
 
+async function installWithoutStart({
+  paths,
+  uid,
+  runCommand,
+  wait,
+  probeListener,
+  plist,
+  oldPlist,
+}) {
+  assertLaunchAgentPlistMatches(paths, [oldPlist]);
+  await stopLaunchAgent({ uid, runCommand });
+  assertLaunchAgentPlistMatches(paths, [oldPlist]);
+  await waitForPluginStop({
+    paths,
+    uid,
+    runCommand,
+    probeListener,
+    wait,
+  });
+  assertLaunchAgentPlistMatches(paths, [oldPlist]);
+  atomicWrite(paths.launchAgentPath, plist, 0o600);
+  assertLaunchAgentPlistMatches(paths, [plist]);
+  if (await isLaunchAgentLoaded({ uid, runCommand })) {
+    fail("SUPERVISOR_UNAVAILABLE");
+  }
+}
+
 async function verifyHealthWithRetry({ state, probeHealth, wait }) {
   const expected = {
     token: state.healthToken,
@@ -1770,8 +1797,9 @@ export function createCaptureAgentLifecycle({
     return activateBundle("upgrade", { requireInstalled: true });
   }
 
-  async function rollback() {
+  async function rollback({ start = true } = {}) {
     environment();
+    if (typeof start !== "boolean") fail("INVALID_ARGUMENTS");
     return withLock(async () => {
       const { content: oldPlist, ownership } = activationPlists();
       if (ownership !== "plugin-v1") fail("OWNERSHIP_CONFLICT");
@@ -1792,19 +1820,31 @@ export function createCaptureAgentLifecycle({
         mutated = true;
         writeRuntimeLinks(paths, nextState);
         writeAgentState(paths.statePath, nextState);
-        await installAndStart({
-          paths,
-          uid,
-          runCommand,
-          wait,
-          plist,
-          oldPlist,
-        });
-        await verifyHealthWithRetry({ state: nextState, probeHealth, wait });
+        if (start) {
+          await installAndStart({
+            paths,
+            uid,
+            runCommand,
+            wait,
+            plist,
+            oldPlist,
+          });
+          await verifyHealthWithRetry({ state: nextState, probeHealth, wait });
+        } else {
+          await installWithoutStart({
+            paths,
+            uid,
+            runCommand,
+            wait,
+            probeListener,
+            plist,
+            oldPlist,
+          });
+        }
         assertPlistMatches([plist]);
         return {
           schemaVersion: 1,
-          status: "ready",
+          status: start ? "ready" : "disabled",
           action: "rollback",
           current: publicRuntime(nextState.current),
           previous: publicRuntime(nextState.previous),
