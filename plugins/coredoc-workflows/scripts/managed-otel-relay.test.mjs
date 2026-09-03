@@ -28,7 +28,10 @@ import {
   writeManagedRelayConfig,
 } from "./managed-otel-relay.mjs";
 import { sanitizeCodexOtlp } from "./native-otel-sanitizer.mjs";
-import { resolveRepositoryScopeKey } from "./project-key.mjs";
+import {
+  resolveRepositoryRoot,
+  resolveRepositoryScopeKey,
+} from "./project-key.mjs";
 import {
   artifactCheckpointDirectory,
   createArtifactCheckpointStore,
@@ -532,6 +535,23 @@ test("round-trips exact workspace-mode bindings without weakening legacy binding
       }),
     (error) => error?.code === "INVALID_CONFIG"
   );
+  // One Codex workspace binding may coexist with Codex repository bindings
+  // that share its ingress nonce; a repository binding on a different nonce
+  // is still rejected.
+  const mixedPath = join(directory, "mixed.json");
+  const codexRepository = binding({
+    host: "codex",
+    nonce: "workspace-codex-ingress",
+    workspaceId: "ws-three",
+  });
+  writeManagedRelayConfig(mixedPath, {
+    schemaVersion: 1,
+    bindings: [codex, codexRepository],
+  });
+  assert.deepEqual(readManagedRelayConfig(mixedPath), {
+    schemaVersion: 1,
+    bindings: [codex, codexRepository],
+  });
   assert.throws(
     () =>
       writeManagedRelayConfig(path, {
@@ -540,7 +560,7 @@ test("round-trips exact workspace-mode bindings without weakening legacy binding
           codex,
           binding({
             host: "codex",
-            nonce: "workspace-codex-ingress",
+            nonce: "other-codex-ingress",
             workspaceId: "ws-three",
           }),
         ],
@@ -3166,4 +3186,247 @@ test("heals a stale persisted transport error after a relay restart", async (t) 
   }
   assert.equal(persisted.errorCode, null);
   assert.equal(persisted.pendingCount, 0);
+});
+
+test("routes a claimed listed-repository session to its own destination while other sessions fall back to the workspace binding", async (t) => {
+  const requests = [];
+  const upstream = createServer(async (request, response) => {
+    requests.push({ url: request.url, body: await readJson(request) });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end("{}\n");
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => close(upstream));
+  const directory = mkdtempSync(
+    join(tmpdir(), "coredoc-managed-relay-mixed-routing-")
+  );
+  const listedCwd = join(directory, "listed-repo");
+  const otherCwd = join(directory, "other-repo");
+  mkdirSync(join(listedCwd, ".git"), { recursive: true });
+  mkdirSync(join(otherCwd, ".git"), { recursive: true });
+  const path = join(directory, "relay.json");
+  const ingress = "machine_ingress_abcdefghijklmnopqrstuvwxyz012345";
+  const workspace = workspaceBinding({
+    host: "codex",
+    nonce: ingress,
+    workspaceId: "ws-default",
+    nativeForwardEndpoint: `http://127.0.0.1:${upstreamPort}/api/v1/workspaces/ws-default/otel/v1/logs`,
+    captureForwardEndpoint: `http://127.0.0.1:${upstreamPort}/api/v1/workspaces/ws-default/capture/v1/events`,
+    cloudAuthorization: "Bearer cloud-token-default",
+  });
+  const listed = {
+    ...binding({
+      bindingId: BINDING_TWO_ID,
+      host: "codex",
+      nonce: ingress,
+      workspaceId: "ws-local",
+      repositoryKey: "acme/listed",
+      nativeForwardEndpoint: `http://127.0.0.1:${upstreamPort}/api/v1/workspaces/ws-local/otel/v1/logs`,
+      captureForwardEndpoint: `http://127.0.0.1:${upstreamPort}/api/v1/workspaces/ws-local/capture/v1/events`,
+      cloudAuthorization: "Bearer cloud-token-local",
+    }),
+    repositoryScopeKey: resolveRepositoryScopeKey(listedCwd),
+  };
+  writeManagedRelayConfig(path, {
+    schemaVersion: 1,
+    bindings: [workspace, listed],
+  });
+  const relay = createManagedRelay({ configPath: path });
+  const relayPort = await listen(relay);
+  t.after(() => (relay.listening ? close(relay) : undefined));
+  const endpoint = `http://127.0.0.1:${relayPort}`;
+  const claim = async (sessionId, cwd) => {
+    const response = await fetch(`${endpoint}/codex/v1/session-claims`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-Coredoc-Relay-Ingress": ingress,
+      },
+      body: JSON.stringify({ sessionId, cwd }),
+    });
+    return { status: response.status, body: await response.json() };
+  };
+
+  const listedClaim = await claim("session-listed", listedCwd);
+  assert.deepEqual(listedClaim, {
+    status: 200,
+    body: { status: "claimed", bindingId: listed.bindingId },
+  });
+  const otherClaim = await claim("session-other", otherCwd);
+  assert.deepEqual(otherClaim, {
+    status: 200,
+    body: { status: "claimed", bindingId: workspace.bindingId },
+  });
+
+  for (const sessionId of ["session-listed", "session-other"]) {
+    const response = await fetch(`${endpoint}/v1/logs`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-Coredoc-Relay-Ingress": ingress,
+      },
+      body: JSON.stringify(codexFixtureForSession(sessionId)),
+    });
+    assert.equal(response.status, 200);
+  }
+  await waitFor(() => requests.length === 2);
+  assert.deepEqual(
+    requests.map(({ url }) => url).sort(),
+    [
+      "/api/v1/workspaces/ws-default/otel/v1/logs",
+      "/api/v1/workspaces/ws-local/otel/v1/logs",
+    ]
+  );
+  const localRequest = requests.find(({ url }) => url.includes("ws-local"));
+  const defaultRequest = requests.find(({ url }) => url.includes("ws-default"));
+  const sessionsOf = (request) =>
+    request.body.resourceLogs.flatMap((resource) =>
+      resource.scopeLogs.flatMap((scope) =>
+        scope.logRecords.map(
+          (record) =>
+            record.attributes.find(({ key }) => key === "conversation.id")
+              .value.stringValue
+        )
+      )
+    );
+  assert.deepEqual([...new Set(sessionsOf(localRequest))], ["session-listed"]);
+  assert.deepEqual([...new Set(sessionsOf(defaultRequest))], ["session-other"]);
+});
+
+test("agent health treats repository bindings on other workspaces as routing, not a workspace conflict", async (t) => {
+  const directory = mkdtempSync(
+    join(tmpdir(), "coredoc-managed-relay-health-multi-")
+  );
+  const path = join(directory, "capture-agent", "capture-relay", "relay.json");
+  const token = "health_token_abcdefghijklmnopqrstuvwxyz0123456789";
+  const start = async (bindings) => {
+    writeManagedRelayConfig(path, { schemaVersion: 1, bindings });
+    const relay = createManagedRelay({
+      configPath: path,
+      agentHealth: {
+        token,
+        runtimeVersion: "0.11.1-dayio.1",
+        runtimeDigest: "a".repeat(64),
+        protocolVersion: 1,
+        configSchemaVersion: 1,
+      },
+    });
+    const port = await listen(relay);
+    t.after(() => (relay.listening ? close(relay) : undefined));
+    const response = await fetch(`http://127.0.0.1:${port}/health/v2`, {
+      headers: { "X-Coredoc-Agent-Health": token },
+    });
+    assert.equal(response.status, 200);
+    const health = await response.json();
+    await close(relay);
+    return health;
+  };
+
+  const mixed = await start([
+    workspaceBinding({ workspaceId: "ws-default" }),
+    workspaceBinding({
+      bindingId: BINDING_TWO_ID,
+      nonce: "codex-ingress",
+      host: "codex",
+      workspaceId: "ws-default",
+    }),
+    binding({
+      bindingId: "33333333-3333-4333-8333-333333333333",
+      nonce: "claude-repo-nonce",
+      workspaceId: "ws-local",
+      repositoryKey: "acme/listed",
+    }),
+  ]);
+  assert.equal(
+    mixed.fixedWorkspaceHash,
+    createHash("sha256").update("ws-default").digest("hex")
+  );
+  assert.equal(mixed.degradedReasons.includes("WORKSPACE_CONFLICT"), false);
+  assert.equal(mixed.repositoryAttribution, "ready");
+
+  const conflicting = await start([
+    workspaceBinding({ workspaceId: "ws-default" }),
+    workspaceBinding({
+      bindingId: BINDING_TWO_ID,
+      nonce: "codex-ingress",
+      host: "codex",
+      workspaceId: "ws-other",
+    }),
+  ]);
+  assert.equal(conflicting.fixedWorkspaceHash, null);
+  assert.equal(conflicting.degradedReasons.includes("WORKSPACE_CONFLICT"), true);
+});
+
+test("a Codex repository binding pinned to a checkout root does not claim a sibling worktree", async (t) => {
+  const requests = [];
+  const upstream = createServer(async (request, response) => {
+    requests.push({ url: request.url, body: await readJson(request) });
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end("{}\n");
+  });
+  const upstreamPort = await listen(upstream);
+  t.after(() => close(upstream));
+  const directory = mkdtempSync(join(tmpdir(), "coredoc-managed-relay-worktree-"));
+  const listedCwd = join(directory, "listed");
+  const siblingCwd = join(directory, "sibling");
+  mkdirSync(join(listedCwd, ".git", "worktrees", "sibling"), { recursive: true });
+  writeFileSync(join(listedCwd, ".git", "worktrees", "sibling", "commondir"), "../..\n");
+  mkdirSync(siblingCwd, { recursive: true });
+  writeFileSync(
+    join(siblingCwd, ".git"),
+    `gitdir: ${join(listedCwd, ".git", "worktrees", "sibling")}\n`
+  );
+  assert.equal(resolveRepositoryScopeKey(siblingCwd), resolveRepositoryScopeKey(listedCwd));
+  const path = join(directory, "relay.json");
+  const ingress = "machine_ingress_abcdefghijklmnopqrstuvwxyz012345";
+  const workspace = workspaceBinding({
+    host: "codex",
+    nonce: ingress,
+    workspaceId: "ws-default",
+    nativeForwardEndpoint: `http://127.0.0.1:${upstreamPort}/api/v1/workspaces/ws-default/otel/v1/logs`,
+    captureForwardEndpoint: `http://127.0.0.1:${upstreamPort}/api/v1/workspaces/ws-default/capture/v1/events`,
+  });
+  const listed = {
+    ...binding({
+      bindingId: BINDING_TWO_ID,
+      host: "codex",
+      nonce: ingress,
+      workspaceId: "ws-local",
+      repositoryKey: "acme/listed",
+      nativeForwardEndpoint: `http://127.0.0.1:${upstreamPort}/api/v1/workspaces/ws-local/otel/v1/logs`,
+      captureForwardEndpoint: `http://127.0.0.1:${upstreamPort}/api/v1/workspaces/ws-local/capture/v1/events`,
+      cloudAuthorization: "Bearer cloud-token-local",
+    }),
+    repositoryScopeKey: resolveRepositoryScopeKey(listedCwd),
+    repositoryRoot: resolveRepositoryRoot(listedCwd),
+  };
+  writeManagedRelayConfig(path, { schemaVersion: 1, bindings: [workspace, listed] });
+  assert.deepEqual(readManagedRelayConfig(path).bindings[1].repositoryRoot, listed.repositoryRoot);
+  assert.throws(
+    () =>
+      writeManagedRelayConfig(join(directory, "bad.json"), {
+        schemaVersion: 1,
+        bindings: [{ ...listed, repositoryRoot: "relative/root" }],
+      }),
+    (error) => error?.code === "INVALID_CONFIG"
+  );
+  const relay = createManagedRelay({ configPath: path });
+  const relayPort = await listen(relay);
+  t.after(() => (relay.listening ? close(relay) : undefined));
+  const claim = async (sessionId, cwd) => {
+    const response = await fetch(`http://127.0.0.1:${relayPort}/codex/v1/session-claims`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "X-Coredoc-Relay-Ingress": ingress },
+      body: JSON.stringify({ sessionId, cwd }),
+    });
+    return response.json();
+  };
+  assert.deepEqual(await claim("session-listed", listedCwd), {
+    status: "claimed",
+    bindingId: listed.bindingId,
+  });
+  assert.deepEqual(await claim("session-sibling", siblingCwd), {
+    status: "claimed",
+    bindingId: workspace.bindingId,
+  });
 });

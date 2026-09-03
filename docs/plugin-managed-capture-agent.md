@@ -55,6 +55,37 @@ Replace both placeholders before setup. `serverOrigin` must be a canonical
 HTTPS origin with no credentials, path, query, fragment, or trailing slash.
 `workspaceId` must be an RFC-4122 version 4 UUID. Extra fields are rejected.
 
+Schema 2 routes specific checkouts to their own server while every other
+session keeps the default destination:
+
+```json
+{
+  "schemaVersion": 2,
+  "destinations": [
+    { "id": "cloud", "serverOrigin": "<https-origin>", "workspaceId": "<workspace-uuid>", "default": true },
+    {
+      "id": "local",
+      "serverOrigin": "http://127.0.0.1:3000",
+      "workspaceId": "<local-workspace-uuid>",
+      "repositories": ["/absolute/path/to/checkout"]
+    }
+  ]
+}
+```
+
+Exactly one destination is `default` and it lists no repositories; every other
+destination lists at least one absolute checkout path with a Git `origin`
+remote, and a checkout belongs to one destination. `http:` origins are accepted
+for `127.0.0.1` and `[::1]` only, never `localhost`. Setup enrolls each
+destination separately under the same installation id, writes the default
+workspace bindings plus one repository binding per host per listed checkout,
+installs a marker-owned `.claude/settings.local.json` in each listed checkout,
+and probes every destination after health. Codex sessions are routed by their
+`SessionStart` claim, repository binding first. Removing a checkout from the
+policy and rerunning `setup` drops its bindings and its repository-local
+settings. A schema-1 policy behaves exactly as before. See
+`docs/plugin-capture-multi-destination-routing.md`.
+
 Protect the directory and file before invoking setup:
 
 ```bash
@@ -68,8 +99,8 @@ trusted routing boundary. The agent never infers or overrides it from a Git
 remote, repository file, current directory, host event, environment-provided
 endpoint, Coredoc MCP, or Desktop configuration.
 
-One installation supports one workspace. Changing the policy beneath an
-existing installation returns `POLICY_DRIFT`; it never silently redirects
+One installation has one default workspace. Changing the default destination
+beneath an existing installation returns `POLICY_DRIFT`; it never silently redirects
 queued or live data. To deliberately move to another destination, keep the old
 policy in place, explicitly purge the old installation, replace the policy,
 then run a fresh setup.
@@ -109,7 +140,7 @@ credential-bearing files to diagnose an error.
 | --- | --- |
 | `status` | Reads local ownership, runtime, host configuration, listener, and bounded queue state. It does not enroll, contact the server, or require the policy file. |
 | `doctor` | Adds bounded policy and authenticated server checks to local status. It does not mutate state. |
-| `setup` | Enrolls if needed, installs and health-checks the immutable runtime, and merge-writes marker-owned host settings. Before enrollment or managed-state mutation, it returns `LEGACY_DESKTOP_PRESENT` for the exact Desktop-v1 LaunchAgent, `OWNERSHIP_CONFLICT` for unrecognized state, or `FOREIGN_LISTENER` for an unowned listener. It is safe to rerun after conflicts are resolved. |
+| `setup` | Enrolls each configured destination if needed, installs and health-checks the immutable runtime, merge-writes marker-owned host settings (including repository-local Claude settings for listed checkouts), and probes every destination. Before enrollment or managed-state mutation, it returns `POLICY_INVALID` for a malformed policy, `REPOSITORY_UNRESOLVED` for a listed checkout without a Git origin, `LEGACY_DESKTOP_PRESENT` for the exact Desktop-v1 LaunchAgent, `OWNERSHIP_CONFLICT` for unrecognized state, or `FOREIGN_LISTENER` for an unowned listener. It is safe to rerun after conflicts are resolved and reports `destinations[]` (ids and counts only). |
 | `repair` | Reconciles the same bounded marker-owned setup contract. It refuses unmanaged conflicts, unknown listeners, and unsafe installed state rather than deleting an untrusted runtime tree. |
 | `upgrade` | Activates the runtime shipped by the current plugin with the existing installation credential and restores the prior runtime if activation fails. |
 | `disable` | Stops the LaunchAgent and removes marker-owned host integration while retaining the runtime, identity, credential configuration, and queues. |

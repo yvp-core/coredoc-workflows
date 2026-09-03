@@ -34,6 +34,34 @@ const CLAUDE_UNMANAGED_ROUTE_OVERRIDES = [
   "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
   "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL",
 ];
+// Repository-local Claude settings (`<checkout>/.claude/settings.local.json`)
+// route one listed checkout to its own relay binding. They carry the same
+// keys as the global file minus workspace mode, plus the repository key the
+// capture recorder reads (capture-client.mjs createConfiguredCaptureRecorder).
+const CLAUDE_REPOSITORY_MARKER_PREFIX = "coredoc-workflows/v1:repo-env-";
+const CLAUDE_REPOSITORY_MANAGED_KEYS = [
+  ...CLAUDE_MANAGED_KEYS.filter((key) => key !== "COREDOC_CAPTURE_WORKSPACE_MODE"),
+  "COREDOC_WORKFLOWS_REPO_KEY",
+];
+// Same grammar as `normalizedRepositoryKey` in managed-otel-relay.mjs.
+const REPOSITORY_SEGMENT_RE = /^[a-zA-Z0-9._-]+$/;
+
+function repositoryKey(value, name) {
+  if (typeof value !== "string" || value.length > 256) {
+    fail("INVALID_INPUT", `${name} must be a normalized repository key.`);
+  }
+  const segments = value.split("/");
+  if (
+    segments.length < 2 ||
+    segments.some(
+      (segment) =>
+        segment === "." || segment === ".." || !REPOSITORY_SEGMENT_RE.test(segment),
+    )
+  ) {
+    fail("INVALID_INPUT", `${name} must be a normalized repository key.`);
+  }
+  return value;
+}
 const CODEX_START_PREFIX =
   "# >>> coredoc capture-agent managed otel v1 eof-newline=";
 const CODEX_END_MARKER = "# <<< coredoc capture-agent managed otel v1";
@@ -146,6 +174,130 @@ function claudeStatus(content) {
   } catch {
     return "invalid";
   }
+}
+
+function claudeRepositoryOwnership(env) {
+  const marker = env[CLAUDE_MARKER_KEY];
+  if (marker === `${CLAUDE_REPOSITORY_MARKER_PREFIX}present`) return "present";
+  if (marker === `${CLAUDE_REPOSITORY_MARKER_PREFIX}absent`) return "absent";
+  return undefined;
+}
+
+function claudeRepositoryStatus(content) {
+  try {
+    const settings = jsonObject(content, "Claude repository settings");
+    if (
+      settings.env !== undefined &&
+      (settings.env === null ||
+        typeof settings.env !== "object" ||
+        Array.isArray(settings.env))
+    ) {
+      return "invalid";
+    }
+    const env = settings.env ?? {};
+    const ownership = claudeRepositoryOwnership(env);
+    if (ownership !== undefined) {
+      const expected =
+        env.CLAUDE_CODE_ENABLE_TELEMETRY === "1" &&
+        env.OTEL_METRICS_EXPORTER === "none" &&
+        env.OTEL_LOGS_EXPORTER === "otlp" &&
+        env.OTEL_EXPORTER_OTLP_PROTOCOL === "http/json" &&
+        env.OTEL_EXPORTER_OTLP_ENDPOINT === "http://127.0.0.1:43181" &&
+        typeof env.OTEL_EXPORTER_OTLP_HEADERS === "string" &&
+        /^X-Coredoc-Relay-Binding=[A-Za-z0-9_-]{32,256}$/.test(
+          env.OTEL_EXPORTER_OTLP_HEADERS,
+        ) &&
+        env.COREDOC_CAPTURE_ENDPOINT ===
+          "http://127.0.0.1:43181/capture/v1/events" &&
+        env.COREDOC_CAPTURE_HEADERS === env.OTEL_EXPORTER_OTLP_HEADERS &&
+        typeof env.COREDOC_CAPTURE_BINDING_ID === "string" &&
+        UUID_V4.test(env.COREDOC_CAPTURE_BINDING_ID) &&
+        typeof env.COREDOC_CAPTURE_WORKSPACE_ID === "string" &&
+        UUID_V4.test(env.COREDOC_CAPTURE_WORKSPACE_ID) &&
+        env.COREDOC_CAPTURE_HOST === "claude-code" &&
+        !Object.hasOwn(env, "COREDOC_CAPTURE_WORKSPACE_MODE") &&
+        typeof env.COREDOC_WORKFLOWS_REPO_KEY === "string" &&
+        !CLAUDE_UNMANAGED_ROUTE_OVERRIDES.some((key) => Object.hasOwn(env, key));
+      return expected ? "managed" : "partial";
+    }
+    return [
+      ...CLAUDE_REPOSITORY_MANAGED_KEYS,
+      ...CLAUDE_UNMANAGED_ROUTE_OVERRIDES,
+    ].some((key) => Object.hasOwn(env, key))
+      ? "unmanaged"
+      : "unconfigured";
+  } catch {
+    return "invalid";
+  }
+}
+
+export function renderClaudeRepositorySettings(content, options) {
+  const requested = operation(options?.operation);
+  const settings = jsonObject(content, "Claude repository settings");
+  if (
+    settings.env !== undefined &&
+    (settings.env === null ||
+      typeof settings.env !== "object" ||
+      Array.isArray(settings.env))
+  ) {
+    fail("CONFIG_INVALID", "Claude repository settings env must be a JSON object.");
+  }
+  const envExisted = settings.env !== undefined;
+  const env = { ...(settings.env ?? {}) };
+  const ownership = claudeRepositoryOwnership(env);
+  const hasManagedKeys = CLAUDE_REPOSITORY_MANAGED_KEYS.some((key) =>
+    Object.hasOwn(env, key),
+  );
+  if (requested === "uninstall") {
+    if (ownership === undefined) return content;
+    for (const key of CLAUDE_REPOSITORY_MANAGED_KEYS) delete env[key];
+    const next = { ...settings };
+    if (Object.keys(env).length > 0 || ownership === "present") next.env = env;
+    else delete next.env;
+    return `${JSON.stringify(next, null, 2)}\n`;
+  }
+
+  if (ownership === undefined && hasManagedKeys) {
+    fail(
+      "CONFIG_CONFLICT",
+      "Claude repository settings already have unmanaged or conflicting OpenTelemetry settings.",
+    );
+  }
+  if (
+    CLAUDE_UNMANAGED_ROUTE_OVERRIDES.some((key) => Object.hasOwn(env, key))
+  ) {
+    fail(
+      "CONFIG_CONFLICT",
+      "Claude repository settings already have a logs-specific OpenTelemetry route override.",
+    );
+  }
+
+  const token = ingressToken(options.ingressToken, "ingressToken");
+  const bindingId = uuidV4(options.bindingId, "bindingId");
+  const workspaceId = uuidV4(options.workspaceId, "workspaceId");
+  const repository = repositoryKey(options.repositoryKey, "repositoryKey");
+  const originalEnvState =
+    ownership ?? (envExisted ? "present" : "absent");
+  Object.assign(env, {
+    [CLAUDE_MARKER_KEY]: `${CLAUDE_REPOSITORY_MARKER_PREFIX}${originalEnvState}`,
+    CLAUDE_CODE_ENABLE_TELEMETRY: "1",
+    OTEL_METRICS_EXPORTER: "none",
+    OTEL_LOGS_EXPORTER: "otlp",
+    OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
+    OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:43181",
+    OTEL_EXPORTER_OTLP_HEADERS: `X-Coredoc-Relay-Binding=${token}`,
+    COREDOC_CAPTURE_ENDPOINT:
+      "http://127.0.0.1:43181/capture/v1/events",
+    COREDOC_CAPTURE_HEADERS: `X-Coredoc-Relay-Binding=${token}`,
+    COREDOC_CAPTURE_BINDING_ID: bindingId,
+    COREDOC_CAPTURE_WORKSPACE_ID: workspaceId,
+    COREDOC_CAPTURE_HOST: "claude-code",
+    COREDOC_WORKFLOWS_REPO_KEY: repository,
+  });
+  delete env.COREDOC_CAPTURE_WORKSPACE_MODE;
+  const next = { ...settings, env };
+  const rendered = `${JSON.stringify(next, null, 2)}\n`;
+  return content === rendered ? content : rendered;
 }
 
 export function renderClaudeGlobalSettings(content, options) {
@@ -712,15 +864,25 @@ function uniquePaths(paths) {
   }
 }
 
+function repositorySettingsPaths(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    fail("INVALID_INPUT", "claudeRepositorySettingsPaths must be an array.");
+  }
+  return value.map((path) => requiredAbsolutePath(path, "claudeRepositorySettingsPath"));
+}
+
 export async function inspectHostGlobalConfig({
   claudeSettingsPath,
   codexConfigPaths,
   codexHooksPath,
+  claudeRepositorySettingsPaths,
 } = {}) {
   if (!Array.isArray(codexConfigPaths) || codexConfigPaths.length < 1) {
     fail("INVALID_INPUT", "At least one explicit Codex config path is required.");
   }
-  uniquePaths([claudeSettingsPath, ...codexConfigPaths, codexHooksPath]);
+  const repositoryPaths = repositorySettingsPaths(claudeRepositorySettingsPaths);
+  uniquePaths([claudeSettingsPath, ...codexConfigPaths, codexHooksPath, ...repositoryPaths]);
   const [claude, ...configs] = await Promise.all(
     [claudeSettingsPath, ...codexConfigPaths].map(readSafeSnapshot),
   );
@@ -730,6 +892,17 @@ export async function inspectHostGlobalConfig({
   } catch {
     hooks = null;
   }
+  const repositories = await Promise.all(
+    repositoryPaths.map(async (path) => {
+      let snapshot;
+      try {
+        snapshot = await readSafeSnapshot(path);
+      } catch {
+        return "invalid";
+      }
+      return snapshot.exists ? claudeRepositoryStatus(snapshot.content) : "absent";
+    }),
+  );
   return {
     claude: claude.exists ? claudeStatus(claude.content) : "absent",
     codex: configs.map((snapshot) =>
@@ -741,6 +914,9 @@ export async function inspectHostGlobalConfig({
         : hooks.exists
           ? codexHooksStatus(hooks.content)
           : "absent",
+    ...(claudeRepositorySettingsPaths === undefined
+      ? {}
+      : { claudeRepositories: repositories }),
   };
 }
 
@@ -863,10 +1039,29 @@ export async function prepareHostGlobalConfigTransaction(input = {}) {
   if (typeof includeCodexHooks !== "boolean") {
     fail("INVALID_INPUT", "includeCodexHooks must be a boolean.");
   }
+  const repositories = input.claudeRepositorySettings ?? [];
+  if (!Array.isArray(repositories)) {
+    fail("INVALID_INPUT", "claudeRepositorySettings must be an array.");
+  }
+  const repositoryPaths = repositories.map((entry) =>
+    requiredAbsolutePath(entry?.path, "claudeRepositorySettings.path"),
+  );
+  // Repository settings of checkouts that are no longer listed are removed in
+  // the same transaction as the install, so a dropped repository never keeps
+  // routing to a binding that no longer exists.
+  const removals = input.claudeRepositorySettingsRemovals ?? [];
+  if (!Array.isArray(removals)) {
+    fail("INVALID_INPUT", "claudeRepositorySettingsRemovals must be an array.");
+  }
+  const removalPaths = removals.map((entry) =>
+    requiredAbsolutePath(entry?.path, "claudeRepositorySettingsRemovals.path"),
+  );
   const paths = [
     input.claudeSettingsPath,
     ...input.codexConfigPaths,
     ...(includeCodexHooks ? [input.codexHooksPath] : []),
+    ...repositoryPaths,
+    ...removalPaths,
   ];
   uniquePaths(paths);
   let claudeToken;
@@ -874,11 +1069,21 @@ export async function prepareHostGlobalConfigTransaction(input = {}) {
   if (requested === "install") {
     claudeToken = ingressToken(input.claudeIngressToken, "claudeIngressToken");
     codexToken = ingressToken(input.codexIngressToken, "codexIngressToken");
+    const tokens = new Set([claudeToken, codexToken]);
+    for (const entry of repositories) {
+      const token = ingressToken(entry.ingressToken, "claudeRepositorySettings.ingressToken");
+      if (tokens.has(token)) {
+        fail("INVALID_INPUT", "Every local ingress token must be distinct.");
+      }
+      tokens.add(token);
+    }
     if (claudeToken === codexToken) {
       fail("INVALID_INPUT", "Claude and Codex must use distinct local ingress tokens.");
     }
   }
   const snapshots = await Promise.all(paths.map(readSafeSnapshot));
+  const repositoryOffset = paths.length - repositories.length - removals.length;
+  const removalOffset = paths.length - removals.length;
   const rendered = [
     renderClaudeGlobalSettings(snapshots[0].content, {
       operation: requested,
@@ -909,15 +1114,41 @@ export async function prepareHostGlobalConfigTransaction(input = {}) {
           }),
         ]
       : []),
+    ...repositories.map((entry, index) =>
+      renderClaudeRepositorySettings(snapshots[repositoryOffset + index].content, {
+        operation: requested,
+        ...(requested === "install"
+          ? {
+              ingressToken: entry.ingressToken,
+              bindingId: entry.bindingId,
+              workspaceId: entry.workspaceId,
+              repositoryKey: entry.repositoryKey,
+            }
+          : {}),
+      }),
+    ),
+    ...removals.map((_, index) =>
+      renderClaudeRepositorySettings(snapshots[removalOffset + index].content, {
+        operation: "uninstall",
+      }),
+    ),
   ];
   const kinds = [
     "claude-settings",
     ...input.codexConfigPaths.map(() => "codex-otel"),
     ...(includeCodexHooks ? ["codex-hooks"] : []),
+    ...repositories.map(() => "claude-repository-settings"),
+    ...removals.map(() => "claude-repository-settings"),
   ];
   return preparedTransaction(
     paths.map((path, index) =>
-      planFor(path, kinds[index], snapshots[index], rendered[index], requested),
+      planFor(
+        path,
+        kinds[index],
+        snapshots[index],
+        rendered[index],
+        index >= removalOffset ? "uninstall" : requested,
+      ),
     ),
   );
 }

@@ -18,6 +18,7 @@ import {
   prepareCodexHooksTransaction,
   prepareHostGlobalConfigTransaction,
   renderClaudeGlobalSettings,
+  renderClaudeRepositorySettings,
   renderCodexHooks,
   renderCodexOtelConfig,
 } from "./host-global-config.mjs";
@@ -710,5 +711,153 @@ test("rendered host headers route Claude native and semantic plus Codex native b
       endpoints.captureForwardEndpoint,
       endpoints.nativeForwardEndpoint,
     ],
+  );
+});
+
+const REPOSITORY_TOKEN = "f".repeat(48);
+const REPOSITORY_BINDING_ID = "55555555-5555-4555-8555-555555555555";
+const LOCAL_WORKSPACE_ID = "11111111-1111-4111-8111-111111111111";
+
+test("Claude repository settings route one checkout to its own binding and uninstall cleanly", () => {
+  const before = `${JSON.stringify({ permissions: { allow: ["Bash"] }, env: { KEEP: "yes" } }, null, 2)}\n`;
+  const installed = renderClaudeRepositorySettings(before, {
+    operation: "install",
+    ingressToken: REPOSITORY_TOKEN,
+    bindingId: REPOSITORY_BINDING_ID,
+    workspaceId: LOCAL_WORKSPACE_ID,
+    repositoryKey: "acme/coredoc-parser",
+  });
+  const parsed = JSON.parse(installed);
+  assert.deepEqual(parsed.permissions, { allow: ["Bash"] });
+  assert.equal(parsed.env.KEEP, "yes");
+  assert.equal(parsed.env.COREDOC_CAPTURE_AGENT_MANAGED, "coredoc-workflows/v1:repo-env-present");
+  assert.equal(parsed.env.OTEL_EXPORTER_OTLP_HEADERS, `X-Coredoc-Relay-Binding=${REPOSITORY_TOKEN}`);
+  assert.equal(parsed.env.COREDOC_CAPTURE_HEADERS, `X-Coredoc-Relay-Binding=${REPOSITORY_TOKEN}`);
+  assert.equal(parsed.env.COREDOC_CAPTURE_BINDING_ID, REPOSITORY_BINDING_ID);
+  assert.equal(parsed.env.COREDOC_CAPTURE_WORKSPACE_ID, LOCAL_WORKSPACE_ID);
+  assert.equal(parsed.env.COREDOC_CAPTURE_HOST, "claude-code");
+  assert.equal(parsed.env.COREDOC_WORKFLOWS_REPO_KEY, "acme/coredoc-parser");
+  assert.equal(Object.hasOwn(parsed.env, "COREDOC_CAPTURE_WORKSPACE_MODE"), false);
+  assert.equal(
+    renderClaudeRepositorySettings(installed, {
+      operation: "install",
+      ingressToken: REPOSITORY_TOKEN,
+      bindingId: REPOSITORY_BINDING_ID,
+      workspaceId: LOCAL_WORKSPACE_ID,
+      repositoryKey: "acme/coredoc-parser",
+    }),
+    installed,
+  );
+  assert.deepEqual(
+    JSON.parse(renderClaudeRepositorySettings(installed, { operation: "uninstall" })),
+    JSON.parse(before),
+  );
+  const fresh = renderClaudeRepositorySettings("", {
+    operation: "install",
+    ingressToken: REPOSITORY_TOKEN,
+    bindingId: REPOSITORY_BINDING_ID,
+    workspaceId: LOCAL_WORKSPACE_ID,
+    repositoryKey: "acme/coredoc-parser",
+  });
+  assert.equal(JSON.parse(fresh).env.COREDOC_CAPTURE_AGENT_MANAGED, "coredoc-workflows/v1:repo-env-absent");
+  assert.deepEqual(JSON.parse(renderClaudeRepositorySettings(fresh, { operation: "uninstall" })), {});
+  for (const env of [
+    { OTEL_LOGS_EXPORTER: "otlp" },
+    { OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "https://collector.example/logs" },
+    { COREDOC_WORKFLOWS_REPO_KEY: "someone/else" },
+  ]) {
+    assert.throws(
+      () =>
+        renderClaudeRepositorySettings(JSON.stringify({ env }), {
+          operation: "install",
+          ingressToken: REPOSITORY_TOKEN,
+          bindingId: REPOSITORY_BINDING_ID,
+          workspaceId: LOCAL_WORKSPACE_ID,
+          repositoryKey: "acme/coredoc-parser",
+        }),
+      (error) => error instanceof HostConfigError && error.code === "CONFIG_CONFLICT",
+    );
+  }
+  for (const repositoryKey of ["nested", "../x/y", "a/./b", "acme/repo with space"]) {
+    assert.throws(
+      () =>
+        renderClaudeRepositorySettings("", {
+          operation: "install",
+          ingressToken: REPOSITORY_TOKEN,
+          bindingId: REPOSITORY_BINDING_ID,
+          workspaceId: LOCAL_WORKSPACE_ID,
+          repositoryKey,
+        }),
+      (error) => error instanceof HostConfigError && error.code === "INVALID_INPUT",
+    );
+  }
+});
+
+test("transaction installs, inspects, and rolls back repository-local Claude settings beside the global hosts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "host-global-config-repo-"));
+  const paths = configPaths(root);
+  const checkout = join(root, "checkout");
+  await mkdir(join(root, ".claude"), { recursive: true, mode: 0o700 });
+  await mkdir(join(root, ".codex"), { recursive: true, mode: 0o700 });
+  await mkdir(checkout, { recursive: true, mode: 0o755 });
+  const repositorySettingsPath = join(checkout, ".claude", "settings.local.json");
+  const repositorySettings = [
+    {
+      path: repositorySettingsPath,
+      ingressToken: REPOSITORY_TOKEN,
+      bindingId: REPOSITORY_BINDING_ID,
+      workspaceId: LOCAL_WORKSPACE_ID,
+      repositoryKey: "acme/coredoc-parser",
+    },
+  ];
+
+  const transaction = await prepareHostGlobalConfigTransaction({
+    ...installInput(root),
+    claudeRepositorySettings: repositorySettings,
+  });
+  assert.deepEqual(
+    transaction.summary.map(({ kind, changed }) => [kind, changed]).at(-1),
+    ["claude-repository-settings", true],
+  );
+  await transaction.apply();
+  assert.equal((await lstat(repositorySettingsPath)).mode & 0o777, 0o600);
+  assert.equal((await lstat(join(checkout, ".claude"))).mode & 0o777, 0o700);
+  const inspected = await inspectHostGlobalConfig({
+    ...paths,
+    claudeRepositorySettingsPaths: [repositorySettingsPath],
+  });
+  assert.deepEqual(inspected, {
+    claude: "managed",
+    codex: ["managed", "managed"],
+    codexHooks: "managed",
+    claudeRepositories: ["managed"],
+  });
+  assert.equal(
+    Object.hasOwn(await inspectHostGlobalConfig(paths), "claudeRepositories"),
+    false,
+  );
+
+  const removal = await prepareHostGlobalConfigTransaction({
+    operation: "uninstall",
+    ...paths,
+    claudeRepositorySettings: [{ path: repositorySettingsPath }],
+  });
+  await removal.apply();
+  assert.deepEqual(JSON.parse(await readFile(repositorySettingsPath, "utf8")), {});
+  await removal.rollback();
+  assert.equal(
+    JSON.parse(await readFile(repositorySettingsPath, "utf8")).env.COREDOC_WORKFLOWS_REPO_KEY,
+    "acme/coredoc-parser",
+  );
+
+  await transaction.rollback();
+  await assert.rejects(readFile(repositorySettingsPath), { code: "ENOENT" });
+
+  await assert.rejects(
+    prepareHostGlobalConfigTransaction({
+      ...installInput(root),
+      claudeRepositorySettings: [{ ...repositorySettings[0], ingressToken: CLAUDE_TOKEN }],
+    }),
+    (error) => error instanceof HostConfigError && error.code === "INVALID_INPUT",
   );
 });

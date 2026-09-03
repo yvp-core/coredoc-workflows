@@ -23,6 +23,7 @@ import {
 import {
   persistentDirs,
   resolveRepositoryIdentity,
+  resolveRepositoryRoot,
   stateRoot,
 } from "./project-key.mjs";
 
@@ -108,6 +109,7 @@ export function selectManagedCaptureBinding({
   host,
   bindingNonceHash,
   repositoryIdentity,
+  repositoryRoot = null,
 }) {
   if (!Array.isArray(bindings)) unavailableManagedCodexBinding();
   const eligibleHostBindings = bindings.filter(
@@ -119,23 +121,30 @@ export function selectManagedCaptureBinding({
       // the workspaceMode marker and exact host/nonce match.
       candidate.enabled !== false,
   );
+  // A Codex repository binding for the current checkout wins over the
+  // workspace binding: listed checkouts route to their own destination,
+  // everything else falls back to the workspace-mode default. The match is the
+  // checkout-specific scope key, never the Git origin, so another clone of the
+  // same repository stays on the default. Claude Code never selects here: its
+  // binding comes from the global or repository-local settings file.
+  if (repositoryIdentity != null && host === "codex") {
+    const repositoryBindings = eligibleHostBindings.filter(
+      (candidate) =>
+        candidate.workspaceMode !== true &&
+        candidate.repositoryScopeKey === repositoryIdentity.repositoryScopeKey &&
+        (candidate.repositoryRoot === undefined ||
+          candidate.repositoryRoot === repositoryRoot),
+    );
+    if (repositoryBindings.length > 1) unavailableManagedCodexBinding();
+    if (repositoryBindings.length === 1) {
+      return { mode: "repository", binding: repositoryBindings[0] };
+    }
+  }
   const workspaceBindings = eligibleHostBindings.filter(
     (candidate) => candidate.workspaceMode === true,
   );
-  if (workspaceBindings.length === 1) {
-    return { mode: "workspace", binding: workspaceBindings[0] };
-  }
-  if (workspaceBindings.length > 1 || repositoryIdentity == null) {
-    unavailableManagedCodexBinding();
-  }
-
-  const repositoryBindings = eligibleHostBindings.filter(
-    (candidate) =>
-      candidate.workspaceMode !== true &&
-      candidate.repositoryScopeKey === repositoryIdentity.repositoryScopeKey,
-  );
-  if (repositoryBindings.length !== 1) unavailableManagedCodexBinding();
-  return { mode: "repository", binding: repositoryBindings[0] };
+  if (workspaceBindings.length !== 1) unavailableManagedCodexBinding();
+  return { mode: "workspace", binding: workspaceBindings[0] };
 }
 
 function managedCodexBinding(env, cwd, readRelayConfig) {
@@ -159,6 +168,9 @@ function managedCodexBinding(env, cwd, readRelayConfig) {
     host: "codex",
     bindingNonceHash,
     repositoryIdentity,
+    // The checkout root stays out of the identity object (which must not
+    // carry paths); it is only compared against a pinned binding here.
+    repositoryRoot: resolveRepositoryRoot(cwd),
   });
   return { bindingNonce, repositoryIdentity, ...selected };
 }
