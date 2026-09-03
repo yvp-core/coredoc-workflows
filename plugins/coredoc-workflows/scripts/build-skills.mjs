@@ -57,6 +57,7 @@ export const PARTIALS = Object.freeze({
   FINDING_CONTRACT: "finding-contract.md",
   EXIT_PLAN_MODE_GATE: "plan-review-gate.md",
   PLAN_COMPLETION_AUDIT_REVIEW: "plan-completion-audit.md",
+  PRE_SPEC_ALIGNMENT: "pre-spec-alignment.md",
   QA_METHODOLOGY: "qa-methodology.md",
   REVIEW_ARMY: "review-specialists.md",
   SCOPE_DRIFT: "scope-drift.md",

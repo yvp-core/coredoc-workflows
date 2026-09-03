@@ -5,9 +5,12 @@ description: Review an implementation plan for architecture, data flow, edge cas
 
 # Engineering plan review adapter
 
-Review only the requested plan/spec/path and remain read-only. Repository rules
-and the user's authorization boundary win. Ground claims in source and read-only
-Coredoc graph evidence when available; graph coverage is a lower bound.
+Review only the requested plan/spec/path. A routed review remains read-only and
+returns required artifact revisions to a new specification attempt. A standalone
+review may update the artifact only when the user explicitly authorized that
+write. Repository rules and the user's authorization boundary win. Ground claims
+in source and read-only Coredoc graph evidence when available; graph coverage is
+a lower bound.
 
 {{PREAMBLE}}
 
@@ -33,7 +36,7 @@ flowchart TD
   S -->|right-sized| R[Review applicable risks]
   Q --> R
   R --> V[Map acceptance to validation]
-  V --> U[Update plan and decisions]
+  V --> U[Resolve plan and decisions]
   U --> H[Completion gate]
 ```
 
@@ -130,10 +133,12 @@ handling, test/validation evidence, and user-visible result.
 
 ### 4. Make the plan executable
 
-Update the reviewed artifact only when authorized. Preserve intent IDs and map
-every step to an accepted outcome; remove steps with no current consumer or
-observer. Use a single small Mermaid diagram only for a non-trivial dependency,
-state, or interaction flow, and do not duplicate it in prose.
+For a routed review, report required revisions and return them to a new
+specification attempt; do not update the artifact in the design stage. For a
+standalone review, update the artifact only when explicitly authorized. Preserve
+intent IDs and map every step to an accepted outcome; remove steps with no current
+consumer or observer. Use a single small Mermaid diagram only for a non-trivial
+dependency, state, or interaction flow, and do not duplicate it in prose.
 
 ## Implementation Tasks
 
@@ -147,9 +152,12 @@ disjoint workstreams exist. Otherwise state: `Sequential implementation, no
 parallelization opportunity.` For parallel lanes, show module ownership and
 dependencies in one table or Mermaid graph and flag shared-module conflicts.
 
-Record accepted decisions in the spec's ADR/decision section; unresolved
-decisions retain an owner and one concrete question. Propose TODO updates only
-for accepted nonblocking follow-ups, and ask before writing them.
+Verify that accepted decisions are recorded in the spec: as an ADR only when the
+choice meets the spec skill's ADR threshold, otherwise in scope or contract
+prose. In a routed review, a missing record is a requested spec revision rather
+than a design-stage edit. Unresolved decisions retain an owner and one concrete
+question. Propose TODO updates only for accepted nonblocking follow-ups, and ask
+before writing them.
 
 ## Plan review completion gate
 
@@ -159,7 +167,8 @@ Before handoff, read and apply
 1. premises were checked against current code and release context;
 2. scope/non-goals and existing reusable mechanisms are explicit;
 3. every accepted outcome maps to implementation and validation;
-4. reachable failure modes, rollout, rollback, and public consumers are covered;
+4. reachable failure modes and public consumers are covered, plus rollout and
+   rollback where release or data context requires them;
 5. findings follow policy and no nonblocking observation silently expanded scope;
 6. unresolved user decisions are visible rather than defaulted.
 

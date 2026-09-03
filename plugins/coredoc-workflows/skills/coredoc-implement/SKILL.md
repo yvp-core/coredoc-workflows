@@ -12,11 +12,17 @@ is not always a new test.
 
 1. Establish the implementation context:
 
-   - **Routed:** start from the accepted specification, design verdict, and
+   - **Routed:** start from the reviewed specification, design verdict, and
      repository evidence already available in the current context. Do not repeat
      completed discovery. Re-read an artifact or source only when required detail
      is missing, context was compacted, or the code changed after the earlier
-     stage.
+     stage. For a gated large change, verify that the user gave a fresh approval
+     after seeing the reviewed direction and material deltas through the
+     explicit Accept and implement / Revise decision. The same affirmative reply
+     authorizes implementation. The original change request, pre-spec alignment
+     approval, spec existence, an already accepted status, or positive review
+     verdict is not implementation authorization; stop when that post-review
+     approval is absent.
    - **Direct:** read the request and repository rules, then inspect only the
      runtime path, existing validation, and nearest consumers needed for this
      change.
@@ -67,6 +73,15 @@ is not always a new test.
 
    If more than one mode applies, combine only their necessary checks. Do not ask
    the user to choose when repository evidence makes the choice clear.
+
+   For an approved gated change, finish the read-only preflight above and state
+   the proof plan before changing any file. If they reveal a mismatch, stop with
+   the specification still `status: draft`. If the reviewed frontmatter is
+   `status: draft`, change it to `status: accepted` as the implementation stage's
+   first repository write, before any code or test edit. If an unchanged artifact
+   is already accepted from a prior session, preserve that status; fresh
+   post-review approval is still required.
+
 3. Apply the over-scope gate. If an item has no current observer or consumer,
    protects an unreachable state, duplicates an authoritative implementation,
    or hardens a deprecated path outside its support window, stop and request a

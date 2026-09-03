@@ -61,7 +61,13 @@ export const SCENARIOS = Object.freeze([
   },
   {
     id: "large-shared-contract",
-    task: "Create a new pricing rules subsystem with a shared public API used by discount and checkout behavior.",
+    task: [
+      "Create an in-process pricing-rules subsystem that owns membership-tier discount lookup.",
+      "Keep discountFor(tier) as the backward-compatible public API and keep checkoutTotal and renewalTotal as its consumers.",
+      "Preserve the current tier percentages and unknown-tier fallback of 0.",
+      "Keep lookup synchronous and in memory; add no persistence, network service, configuration migration, promotion changes, or API removal.",
+      "Release it as one backward-compatible change; rollback is a revert of the module and consumer changes.",
+    ].join(" "),
     stopAtApprovalGate: true,
   },
 ]);
@@ -74,19 +80,21 @@ function words(text) {
 export function intentLayerSpecPassed(content) {
   const required = [
     /\bUC-\d+\b/u,
-    /\bBR-\d+\b/u,
-    /\bLIM-\d+\b/u,
     /\bAC-\d+\b/u,
-    /\bADR-\d+\b/u,
-    /business rules?/iu,
-    /limitations?/iu,
     /acceptance/iu,
     /observer/iu,
     /(?:traces? to|->)/iu,
     /non-goals/iu,
-    /rollout[\s\S]*rollback/iu,
+    /(?:release|rollout)/iu,
+    /rollback/iu,
   ];
-  return required.every((pattern) => pattern.test(content));
+  // A BR/LIM/ADR heading followed by nothing, a bare placeholder, or a table row
+  // whose ID cell is followed by a placeholder cell (`...`, `TBD`, `N/A`) in any
+  // column. Placeholders are delimited by `|` or line end, never by `\b`, because
+  // `...` has no word boundary against the next space.
+  const inventedEmptySection =
+    /(?:Business rules?|Limitations?|Decisions \(ADR\))[^\S\n]*\n(?:[^\S\n]*\n)*(?:[^\S\n]*(?=#{1,6}\s)|[^\S\n]*(?![\s\S])|\s*(?:\|[^\n]*\|[^\S\n]*\n\s*\|[- :|]+\|[^\S\n]*\n)?\s*(?:\|\s*(?:BR|LIM|ADR)-\d+\s*\|(?:[^\n|]*\|)*?\s*(?:\.\.\.|TBD|N\/A)\s*\||(?:\.\.\.|TBD)[^\S\n]*(?:\n|$)))/imu;
+  return required.every((pattern) => pattern.test(content)) && !inventedEmptySection.test(content);
 }
 
 function routeSummary(route) {
@@ -435,15 +443,12 @@ function snapshotSkillFile(pluginRoot, skill) {
 }
 
 function livePrompt(scenario, pluginRoot) {
-  const gateInstruction = scenario.stopAtApprovalGate
-    ? "Complete only the prerequisite specification and plan-review stages, then stop at the user-approval gate without implementing or reviewing code."
-    : "Complete the routed task, including proportionate validation.";
   return [
     "This is an explicit local workflow benchmark in a synthetic repository.",
     `Requested change: ${scenario.task}`,
     `Read and follow the workflow router at ${snapshotSkillFile(pluginRoot, ROUTER_SKILL)}.`,
     `For each routed stage, read its SKILL.md below ${join(pluginRoot, "skills")}.`,
-    gateInstruction,
+    "Complete the routed workflow only as far as its own authorization gates permit.",
     "Do not use ambient skills, Coredoc MCP, external context, network tools, delegation, or subagents.",
     "The user declines optional skill suggestions. Make reasonable fixture-local assumptions instead of asking optional questions.",
     "Do not run route-task, stage-run, finish-run, capture, telemetry, or feedback commands; the harness owns timing and telemetry.",

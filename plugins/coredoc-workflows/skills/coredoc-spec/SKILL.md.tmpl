@@ -16,7 +16,13 @@ location. A remote issue, worktree, commit, or implementation requires explicit 
 ```mermaid
 flowchart LR
   G[Ground current state] --> I[Resolve material intent]
-  I --> M[Model rules and flows]
+  I --> A[Align domain and solution]
+  A -->|open owner decision| Q[Ask current frontier and wait]
+  Q --> A
+  A -->|interactive frontier empty| C[Confirm shared picture]
+  C -->|revise| A
+  C -->|confirmed| M[Model rules and flows]
+  A -->|mature input| M
   M --> V[Verify scope and observability]
   V --> D[Deliver final spec]
 ```
@@ -62,15 +68,11 @@ Proceed when the request plus repository evidence answers these questions:
 | Risk | Reachable failures, trust/data boundaries, rollout and rollback? |
 | Ownership | Which public/cross-cutting decisions belong to the user? |
 
-Ask at most three numbered, highest-impact questions per round. Ask only when an
-answer changes behavior, scope, contract, rollout, or acceptance; otherwise make
-and label a reversible assumption. Offer 2–3 concise options for a user-owned
-decision. Do not manufacture measurements or force another round when the table
-is already answered.
-
-When option effort could materially change the user's choice, apply
-`<plugin-root>/resources/methodology/estimate-buckets.md` to the question only;
-keep the persisted specification to its coarse `size` field.
+Use the table to identify missing facts and decisions, not to begin a separate
+interview. Resolve repository-verifiable facts yourself. Label routine,
+low-impact implementation details as reversible assumptions; carry every
+material user-owned choice into the alignment checkpoint below instead of
+defaulting it. That checkpoint owns the question order and compact format.
 
 Challenge scope before modeling it. Preserve explicitly accepted outcomes and
 decisions without silently widening them. For raw ideas and unaccepted proposals,
@@ -80,7 +82,9 @@ integration needs a current consumer and observable requirement in this slice;
 otherwise defer it. Leave owner-controlled distribution, authority, and contract
 choices unresolved when selecting one would materially expand the result.
 
-### 3. Model intent, not implementation noise
+{{PRE_SPEC_ALIGNMENT}}
+
+### 4. Model intent, not implementation noise
 
 Use stable IDs within the document so the intent can later form a graph beside
 the code graph:
@@ -90,6 +94,13 @@ the code graph:
 - `LIM-n`: business, legal, compatibility, capacity, or operational limitation.
 - `AC-n`: pass/fail acceptance criterion and its observer.
 - `ADR-n`: decision with context, alternatives, consequences, and status.
+
+These semantic kinds are tools, not quotas. Omit an inapplicable kind instead of
+inventing a row to make the document look complete. Create an ADR only when the
+choice would be costly to change later, its rationale would not be obvious from
+the resulting code, and credible alternatives were actually evaluated; otherwise
+keep the accepted choice in ordinary scope or contract prose. Keep the persisted
+specification to its coarse `size` field; do not add question-time effort detail.
 
 Connect them explicitly (`UC-1 -> BR-2 -> AC-3`). A rule needs a current source
 or decision owner and a named observer; do not turn a code detail into a business
@@ -117,7 +128,7 @@ three or more branches/states/interactions are materially clearer than prose.
 Label nodes with the IDs above and add prose only for semantics the diagram
 cannot encode. Do not duplicate the same flow in bullets and a diagram.
 
-### 4. Verify the draft
+### 5. Verify the draft
 
 Before delivery, check:
 
@@ -146,9 +157,23 @@ measured threshold, record the method so it is reproducible. `L`/`XL` work must
 also state how each critical acceptance check could pass while behavior is
 broken; repair any self-satisfying check.
 
-Present a draft only when confirmation could change a material decision. Ask
-what is wrong or missing, incorporate the answer, and retain only the final
-artifact.
+Pre-spec alignment avoids a second generic confirmation round, but it does not
+authorize silently choosing material detail discovered while elaborating the
+specification. If elaboration exposes a new user-owned decision or materially
+changes the aligned picture, return to the alignment checkpoint and resolve it;
+do not add a generic mid-spec approval round.
+
+Keep `status: draft` through plan review. In a gated routed workflow, the fresh
+affirmative post-review reply defined by the router both accepts the reviewed
+specification and authorizes implementation. After its read-only preflight and
+proof-plan announcement, the implementation stage changes a draft frontmatter to
+`status: accepted` as its first repository write, before any code or test edit;
+it preserves an unchanged accepted status from a prior session. A requested
+revision returns to specification and review instead. For standalone
+specification delivery without an implementation stage, deliver the draft as
+the handoff and set `status: accepted` only when the user explicitly approves
+the completed draft; do not add a confirmation round to obtain it. Alignment
+approval or a review verdict alone never accepts the specification.
 
 Run the privacy gate over the exact final file:
 
@@ -187,17 +212,8 @@ status: draft | accepted
 
 [Optional single Mermaid diagram using UC/BR/LIM IDs]
 
-### Business rules
-
-| ID | Condition | Required outcome | Source / owner | Observer |
-| --- | --- | --- | --- | --- |
-| BR-1 | ... | ... | code evidence or decision owner | UC/AC |
-
-### Limitations
-
-| ID | Constraint | Reason | Affected flow |
-| --- | --- | --- | --- |
-| LIM-1 | ... | ... | UC/BR |
+[Add `BR-*` business rules or `LIM-*` limitations only when a concrete rule or
+constraint needs its own traceable identity. Omit empty headings and tables.]
 
 ## Scope
 
@@ -219,13 +235,13 @@ status: draft | accepted
 
 **Validation:** [cheapest decisive checks, then repository-required gates]
 **Reachable failure modes:** [failure -> handling -> user-visible result]
-**Rollout/rollback:** [release sequence, monitoring, undo]
+[When release or data context requires staged delivery, monitoring, migration,
+or special recovery, add **Rollout/rollback:** [release sequence, signals,
+undo]. Otherwise omit it.]
 
-## Decisions (ADR)
-
-| ID | Status | Context and alternatives | Decision | Consequences / supersedes |
-| --- | --- | --- | --- | --- |
-| ADR-1 | proposed/accepted/superseded | ... | ... | ... |
+[Only when a decision passes the three-part ADR threshold, add a
+`## Decisions (ADR)` section with ID, status, context/alternatives, decision,
+and consequences. Otherwise omit it entirely.]
 
 ## Unresolved decisions
 
