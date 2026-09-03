@@ -32,6 +32,7 @@ import {
 import { managedRelayConfig } from "./managed-otel-relay.mjs";
 import {
   resolveRepositoryIdentity,
+  resolveRepositoryRoot,
   resolveRepositoryScopeKey,
 } from "./project-key.mjs";
 
@@ -50,6 +51,7 @@ const IDENTITY_FIELDS = new Set([
 const IDENTITY_OPTIONAL_FIELDS = new Set(["repositories"]);
 const REPOSITORY_IDENTITY_FIELDS = new Set([
   "path",
+  "repositoryRoot",
   "repositoryKey",
   "repositoryScopeKey",
   "serverOrigin",
@@ -236,6 +238,7 @@ function repositoryIdentityEntry(value) {
   }
   return Object.freeze({
     path: exactAbsolute(candidate.path),
+    repositoryRoot: exactAbsolute(candidate.repositoryRoot),
     repositoryKey: candidate.repositoryKey,
     repositoryScopeKey: candidate.repositoryScopeKey,
     serverOrigin: candidate.serverOrigin,
@@ -380,11 +383,16 @@ function reconcileRepositories(identity, policy, randomUUID, randomLocalToken) {
       } catch {
         fail("REPOSITORY_UNRESOLVED");
       }
-      if (resolved?.normalizedRepositoryKey === undefined) {
+      const repositoryRoot = resolveRepositoryRoot(path);
+      if (
+        resolved?.normalizedRepositoryKey === undefined ||
+        typeof repositoryRoot !== "string"
+      ) {
         fail("REPOSITORY_UNRESOLVED");
       }
       repositories.push({
         path,
+        repositoryRoot,
         repositoryKey: resolved.normalizedRepositoryKey,
         repositoryScopeKey: resolveRepositoryScopeKey(path),
         serverOrigin: destination.serverOrigin,
@@ -721,7 +729,11 @@ function repositoryBinding(host, identity, entry, cloudToken) {
     workspaceId: entry.workspaceId,
     repositoryKey: entry.repositoryKey,
     ...(host === "codex"
-      ? { repositoryScopeKey: entry.repositoryScopeKey, profileName: null }
+      ? {
+          repositoryScopeKey: entry.repositoryScopeKey,
+          repositoryRoot: entry.repositoryRoot,
+          profileName: null,
+        }
       : {}),
     ...forwardEndpoints(entry),
     cloudAuthorization: `Bearer ${cloudToken}`,
@@ -1419,8 +1431,12 @@ export function createCaptureAgentSetup({
         const droppedRepositories = (existingIdentity?.repositories ?? []).filter(
           ({ path }) => !kept.has(path),
         );
-        const commit = () =>
-          performSetup({
+        // Once performSetup starts it owns every minted token's rollback;
+        // before that, each enrollment level revokes the token it minted.
+        let setupStarted = false;
+        const commit = () => {
+          setupStarted = true;
+          return performSetup({
             policy,
             identity,
             identityBefore,
@@ -1431,6 +1447,7 @@ export function createCaptureAgentSetup({
             lifecycleBefore,
             command,
           });
+        };
         const enroll = (index) => {
           if (index === pending.length) return commit();
           const destination = pending[index];
@@ -1447,17 +1464,18 @@ export function createCaptureAgentSetup({
               try {
                 return await enroll(index + 1);
               } catch (error) {
-                // A later destination failed before setup committed. performSetup
-                // revokes every minted token itself and reports a rollback state;
-                // anything without one never reached performSetup, so this
-                // level revokes its own token as the error unwinds.
-                if (error?.rollback !== undefined) throw error;
+                // A later destination failed before setup started: every
+                // level revokes the token it minted as the error unwinds
+                // (the enrollment session is only valid inside this callback).
+                if (setupStarted) throw error;
                 credentials.delete(destinationKey(destination));
+                let revokeFailed = error?.code === "ROLLBACK_FAILED";
                 try {
                   await session.revokeInstallationToken();
                 } catch {
-                  fail("ROLLBACK_FAILED", { rollback: "failed" });
+                  revokeFailed = true;
                 }
+                if (revokeFailed) fail("ROLLBACK_FAILED", { rollback: "failed" });
                 const mapped = mappedError(error);
                 mapped.rollback = "restored";
                 throw mapped;

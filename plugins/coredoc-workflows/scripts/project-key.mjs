@@ -337,6 +337,15 @@ export function requireRepositoryCandidate(identity) {
   return identity.normalizedRepositoryKey;
 }
 
+/**
+ * Canonical root of the checkout (worktree) containing `cwd`, or `null`
+ * outside Git. Linked worktrees share a scope key but have distinct roots.
+ */
+export function resolveRepositoryRoot(cwd = process.cwd()) {
+  const metadata = gitMetadata(cwd);
+  return metadata ? canonicalPath(metadata.root) : null;
+}
+
 /** Stable, non-secret identity used below a readable project namespace. */
 export function resolveRepositoryScopeKey(cwd = process.cwd()) {
   const metadata = gitMetadata(cwd);

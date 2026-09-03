@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   stat,
   unlink,
   writeFile,
@@ -2271,4 +2272,59 @@ test("a destination that fails to enroll revokes the tokens already minted for e
   assert.equal(context.events.includes("lifecycle:setup"), false);
   await assert.rejects(readFile(paths.relayConfigPath), { code: "ENOENT" });
   await assert.rejects(readFile(context.repositorySettingsPath), { code: "ENOENT" });
+});
+
+test("Codex repository bindings are pinned to the listed checkout root", async () => {
+  const context = await multiDestinationHarness();
+  await context.setup.setup();
+  const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+  const relay = JSON.parse(await readFile(paths.relayConfigPath, "utf8"));
+  const codexRepository = relay.bindings.find(
+    ({ host, workspaceMode }) => host === "codex" && workspaceMode !== true,
+  );
+  const identity = JSON.parse(await readFile(paths.identityPath, "utf8"));
+  assert.equal(typeof codexRepository.repositoryRoot, "string");
+  assert.equal(codexRepository.repositoryRoot, identity.repositories[0].repositoryRoot);
+  assert.equal(codexRepository.repositoryRoot, await realpath(context.repository));
+});
+
+test("a third destination failing to enroll revokes every token minted before it", async () => {
+  const second = await listedRepository();
+  const third = await listedRepository();
+  const context = await harness({
+    policy: {
+      schemaVersion: 2,
+      destinations: [
+        { id: "cloud", serverOrigin: POLICY.serverOrigin, workspaceId: POLICY.workspaceId, default: true },
+        { id: "second", serverOrigin: "http://127.0.0.1:3001", workspaceId: LOCAL_WORKSPACE_ID, repositories: [second] },
+        { id: "third", serverOrigin: "http://127.0.0.1:3002", workspaceId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", repositories: [third] },
+      ],
+    },
+    uuids: [
+      INSTALLATION_ID, CLAUDE_BINDING_ID, CODEX_BINDING_ID,
+      REPO_CLAUDE_BINDING_ID, REPO_CODEX_BINDING_ID,
+      "77777777-7777-4777-8777-777777777777", "88888888-8888-4888-8888-888888888888",
+    ],
+    tokens: [CLAUDE_TOKEN, CODEX_TOKEN, REPO_CLAUDE_TOKEN, "f".repeat(48)],
+    cloudTokens: [CLOUD_TOKEN, LOCAL_CLOUD_TOKEN, `cdt_${"c".repeat(64)}`],
+    enrollmentErrors: [
+      undefined,
+      undefined,
+      Object.assign(new Error("browser closed"), { code: "OAUTH_DENIED" }),
+    ],
+  });
+
+  await assert.rejects(
+    context.setup.setup(),
+    (error) =>
+      error instanceof CaptureAgentSetupError &&
+      error.code === "OAUTH_DENIED" &&
+      error.rollback === "restored",
+  );
+  assert.equal(context.enrollmentCount(), 3);
+  assert.equal(
+    context.events.filter((event) => event === "tokens:revoke-installation").length,
+    2,
+  );
+  assert.equal(context.events.includes("lifecycle:setup"), false);
 });

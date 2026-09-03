@@ -134,6 +134,8 @@ Each critical check could pass while behaviour is broken if the fake endpoints i
 
 ## Implementation notes
 
+- Codex repository bindings carry `repositoryRoot` (the canonical checkout root) beside the scope key, and both the relay claim and the hook client require it to match. Linked worktrees share a repository scope key, so without the root a sibling worktree of a listed checkout would be routed with it. Claude Code is path-scoped already through the repository-local settings file.
+- A destination that fails to enroll after earlier ones succeeded revokes every token minted in that run before the error surfaces (`rollback: "restored"`); once `performSetup` starts, it owns the rollback of all tokens.
 - Codex native records that arrive before the session's `SessionStart` claim fall back to the default destination (`managed-otel-relay.mjs` `handleCodexNative`); buffering-until-claim is kept only for repository-only configs. The claim hook runs at session start, so the window is the hook latency.
 - The identity file gains an optional `repositories` list; identities written by the single-destination release stay readable.
 - The runtime manifest (`runtime/capture-agent-manifest.json`) must be re-hashed whenever a file in the bundled closure changes; this change touched `scripts/capture-client.mjs` and `scripts/managed-otel-relay.mjs`.

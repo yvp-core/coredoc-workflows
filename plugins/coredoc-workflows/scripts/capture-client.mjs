@@ -23,6 +23,7 @@ import {
 import {
   persistentDirs,
   resolveRepositoryIdentity,
+  resolveRepositoryRoot,
   stateRoot,
 } from "./project-key.mjs";
 
@@ -108,6 +109,7 @@ export function selectManagedCaptureBinding({
   host,
   bindingNonceHash,
   repositoryIdentity,
+  repositoryRoot = null,
 }) {
   if (!Array.isArray(bindings)) unavailableManagedCodexBinding();
   const eligibleHostBindings = bindings.filter(
@@ -129,7 +131,9 @@ export function selectManagedCaptureBinding({
     const repositoryBindings = eligibleHostBindings.filter(
       (candidate) =>
         candidate.workspaceMode !== true &&
-        candidate.repositoryScopeKey === repositoryIdentity.repositoryScopeKey,
+        candidate.repositoryScopeKey === repositoryIdentity.repositoryScopeKey &&
+        (candidate.repositoryRoot === undefined ||
+          candidate.repositoryRoot === repositoryRoot),
     );
     if (repositoryBindings.length > 1) unavailableManagedCodexBinding();
     if (repositoryBindings.length === 1) {
@@ -164,6 +168,9 @@ function managedCodexBinding(env, cwd, readRelayConfig) {
     host: "codex",
     bindingNonceHash,
     repositoryIdentity,
+    // The checkout root stays out of the identity object (which must not
+    // carry paths); it is only compared against a pinned binding here.
+    repositoryRoot: resolveRepositoryRoot(cwd),
   });
   return { bindingNonce, repositoryIdentity, ...selected };
 }

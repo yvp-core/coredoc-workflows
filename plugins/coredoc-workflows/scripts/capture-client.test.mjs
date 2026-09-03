@@ -27,6 +27,7 @@ import {
 } from "./managed-otel-relay.mjs";
 import {
   resolveRepositoryIdentity,
+  resolveRepositoryRoot,
   resolveRepositoryScopeKey,
 } from "./project-key.mjs";
 
@@ -1389,6 +1390,53 @@ test("Claude Code never selects a repository binding by Git origin", () => {
         repositoryScopeKey: "repo-111111111111111111111111",
         normalizedRepositoryKey: "acme/listed",
       },
+    }).binding,
+    workspace,
+  );
+});
+
+test("a repository binding pinned to a checkout root is not selected from a sibling worktree", () => {
+  const root = mkdtempSync(join(tmpdir(), "capture-client-worktree-"));
+  const listed = join(root, "listed");
+  const sibling = join(root, "sibling");
+  mkdirSync(join(listed, ".git", "worktrees", "sibling"), { recursive: true });
+  writeFileSync(join(listed, ".git", "worktrees", "sibling", "commondir"), "../..\n");
+  mkdirSync(sibling, { recursive: true });
+  writeFileSync(join(sibling, ".git"), `gitdir: ${join(listed, ".git", "worktrees", "sibling")}\n`);
+  const listedIdentity = resolveRepositoryIdentity(listed);
+  const siblingIdentity = resolveRepositoryIdentity(sibling);
+  const listedRoot = resolveRepositoryRoot(listed);
+  const siblingRoot = resolveRepositoryRoot(sibling);
+  assert.equal(siblingIdentity.repositoryScopeKey, listedIdentity.repositoryScopeKey);
+  assert.notEqual(siblingRoot, listedRoot);
+  assert.equal(Object.hasOwn(listedIdentity, "repositoryRoot"), false);
+  const workspace = workspaceBinding();
+  const repository = {
+    ...workspaceBinding({ bindingId: "33333333-3333-4333-8333-333333333333" }),
+    workspaceMode: false,
+    workspaceId: "ws-local",
+    repositoryKey: "acme/listed",
+    repositoryScopeKey: listedIdentity.repositoryScopeKey,
+    repositoryRoot: listedRoot,
+  };
+  const options = {
+    bindings: [workspace, repository],
+    host: "codex",
+    bindingNonceHash: workspace.bindingNonceHash,
+  };
+  assert.equal(
+    selectManagedCaptureBinding({
+      ...options,
+      repositoryIdentity: listedIdentity,
+      repositoryRoot: listedRoot,
+    }).binding,
+    repository,
+  );
+  assert.equal(
+    selectManagedCaptureBinding({
+      ...options,
+      repositoryIdentity: siblingIdentity,
+      repositoryRoot: siblingRoot,
     }).binding,
     workspace,
   );

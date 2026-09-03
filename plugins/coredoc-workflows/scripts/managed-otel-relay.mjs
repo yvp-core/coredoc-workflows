@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:http";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -41,7 +41,10 @@ import {
   setCodexAttributionClaim,
   writeCodexAttributionState,
 } from "./codex-attribution-state.mjs";
-import { resolveRepositoryScopeKey } from "./project-key.mjs";
+import {
+  resolveRepositoryRoot,
+  resolveRepositoryScopeKey,
+} from "./project-key.mjs";
 
 const CONFIG_VERSION = 1;
 const MAX_BINDINGS = 128;
@@ -223,6 +226,7 @@ export function relayBinding(input) {
       "workspaceMode",
       "repositoryKey",
       "repositoryScopeKey",
+      "repositoryRoot",
       "profileName",
       "nativeForwardEndpoint",
       "captureForwardEndpoint",
@@ -250,6 +254,7 @@ export function relayBinding(input) {
     (workspaceMode &&
       (value.repositoryKey !== undefined ||
         value.repositoryScopeKey !== undefined ||
+        value.repositoryRoot !== undefined ||
         value.profileName !== undefined))
   ) {
     fail("INVALID_CONFIG");
@@ -277,8 +282,22 @@ export function relayBinding(input) {
               /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value.profileName))
               ? value.profileName
               : fail("INVALID_CONFIG"),
+          // Optional checkout root: pins the binding to one worktree, because
+          // linked worktrees share the repository scope key.
+          ...(value.repositoryRoot === undefined
+            ? {}
+            : {
+                repositoryRoot:
+                  typeof value.repositoryRoot === "string" &&
+                  value.repositoryRoot.length <= 4096 &&
+                  isAbsolute(value.repositoryRoot) &&
+                  resolve(value.repositoryRoot) === value.repositoryRoot
+                    ? value.repositoryRoot
+                    : fail("INVALID_CONFIG"),
+              }),
         }
       : value.repositoryScopeKey === undefined &&
+        value.repositoryRoot === undefined &&
         value.profileName === undefined
       ? {}
       : fail("INVALID_CONFIG")),
@@ -2031,15 +2050,20 @@ export function createManagedRelay({
     // A repository binding for the claimed cwd wins; the workspace-mode
     // binding is the fallback for every session outside a listed repository.
     let repositoryScopeKey;
+    let repositoryRoot;
     try {
       repositoryScopeKey = resolveRepositoryScopeKey(body.cwd);
+      repositoryRoot = resolveRepositoryRoot(body.cwd);
     } catch {
       repositoryScopeKey = null;
+      repositoryRoot = null;
     }
     const binding = bindings.find(
       (candidate) =>
         candidate.workspaceMode !== true &&
-        candidate.repositoryScopeKey === repositoryScopeKey
+        candidate.repositoryScopeKey === repositoryScopeKey &&
+        (candidate.repositoryRoot === undefined ||
+          candidate.repositoryRoot === repositoryRoot)
     );
     const workspaceBinding = bindings.find(
       (candidate) => candidate.workspaceMode === true
