@@ -119,23 +119,28 @@ export function selectManagedCaptureBinding({
       // the workspaceMode marker and exact host/nonce match.
       candidate.enabled !== false,
   );
+  // A repository binding for the current checkout wins over the workspace
+  // binding: listed repositories route to their own destination, everything
+  // else falls back to the workspace-mode default.
+  if (repositoryIdentity != null) {
+    const repositoryBindings = eligibleHostBindings.filter(
+      (candidate) =>
+        candidate.workspaceMode !== true &&
+        (host === "codex"
+          ? candidate.repositoryScopeKey === repositoryIdentity.repositoryScopeKey
+          : candidate.repositoryKey !== undefined &&
+            candidate.repositoryKey === repositoryIdentity.normalizedRepositoryKey),
+    );
+    if (repositoryBindings.length > 1) unavailableManagedCodexBinding();
+    if (repositoryBindings.length === 1) {
+      return { mode: "repository", binding: repositoryBindings[0] };
+    }
+  }
   const workspaceBindings = eligibleHostBindings.filter(
     (candidate) => candidate.workspaceMode === true,
   );
-  if (workspaceBindings.length === 1) {
-    return { mode: "workspace", binding: workspaceBindings[0] };
-  }
-  if (workspaceBindings.length > 1 || repositoryIdentity == null) {
-    unavailableManagedCodexBinding();
-  }
-
-  const repositoryBindings = eligibleHostBindings.filter(
-    (candidate) =>
-      candidate.workspaceMode !== true &&
-      candidate.repositoryScopeKey === repositoryIdentity.repositoryScopeKey,
-  );
-  if (repositoryBindings.length !== 1) unavailableManagedCodexBinding();
-  return { mode: "repository", binding: repositoryBindings[0] };
+  if (workspaceBindings.length !== 1) unavailableManagedCodexBinding();
+  return { mode: "workspace", binding: workspaceBindings[0] };
 }
 
 function managedCodexBinding(env, cwd, readRelayConfig) {

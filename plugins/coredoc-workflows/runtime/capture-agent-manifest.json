@@ -40,7 +40,7 @@
     },
     {
       "path": "scripts/capture-client.mjs",
-      "sha256": "bc3ce10133831d598523ee666d0477cb9a4da5c9ae39661bc8a2edc712674fff"
+      "sha256": "98c1c3480a6d0921c697ba1f1079a89397c9db09a4059f734d6e0b021a1c54ab"
     },
     {
       "path": "scripts/capture-health-report.mjs",
@@ -56,7 +56,7 @@
     },
     {
       "path": "scripts/managed-otel-relay.mjs",
-      "sha256": "0bbc01efcfe78950f128a15bcf6475d3b1f04d50fb7fcf92a0e78a2f8096c8fc"
+      "sha256": "c1396992652d976dfe332d1571c02d4f50003e45a82bdd190c84ae3bdbe651f1"
     },
     {
       "path": "scripts/native-otel-sanitizer.mjs",

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
@@ -25,6 +26,7 @@ import {
   createCaptureAgentLifecycle,
 } from "./capture-agent-lifecycle.mjs";
 import { resolveWorkflowRuntime } from "./capture-client.mjs";
+import { resolveRepositoryScopeKey } from "./project-key.mjs";
 import { claimCodexSession } from "./codex-session-claim.mjs";
 
 const POLICY = {
@@ -285,6 +287,9 @@ function fakeLifecycle(
 }
 
 async function harness({
+  policy = POLICY,
+  uuids: uuidValues = [INSTALLATION_ID, CLAUDE_BINDING_ID, CODEX_BINDING_ID],
+  tokens: tokenValues = [CLAUDE_TOKEN, CODEX_TOKEN],
   cloudTokens = [CLOUD_TOKEN],
   observeLoadedRelay = false,
   enrollmentErrors = [],
@@ -306,7 +311,7 @@ async function harness({
   const homeDir = await mkdtemp(join(tmpdir(), "capture-agent-setup-"));
   const events = [];
   const paths = captureAgentSetupPaths({ homeDir, env: {} });
-  let activePolicy = POLICY;
+  let activePolicy = policy;
   let policyFailure = null;
   let loadedCloudAuthorization = null;
   const lifecycle = fakeLifecycle(events, {
@@ -410,8 +415,8 @@ async function harness({
         : json({ status: "unauthorized" }, 401))
     );
   };
-  const uuids = [INSTALLATION_ID, CLAUDE_BINDING_ID, CODEX_BINDING_ID];
-  const tokens = [CLAUDE_TOKEN, CODEX_TOKEN];
+  const uuids = [...uuidValues];
+  const tokens = [...tokenValues];
   const setup = createCaptureAgentSetup({
     homeDir,
     env: {},
@@ -2016,4 +2021,228 @@ test("setup CLI emits bounded actionable error codes without messages or secrets
     });
     assert.doesNotMatch(stderr, /PRIVATE|cdt_|Users/);
   }
+});
+
+const LOCAL_WORKSPACE_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const LOCAL_CLOUD_TOKEN = `cdt_${"b".repeat(64)}`;
+const REPO_CLAUDE_BINDING_ID = "55555555-5555-4555-8555-555555555555";
+const REPO_CODEX_BINDING_ID = "66666666-6666-4666-8666-666666666666";
+const REPO_CLAUDE_TOKEN = "e".repeat(48);
+const LOCAL_ORIGIN = "http://127.0.0.1:3000";
+
+async function listedRepository() {
+  const directory = await mkdtemp(join(tmpdir(), "capture-agent-listed-repo-"));
+  execFileSync("git", ["init", "-q"], { cwd: directory, stdio: "ignore" });
+  execFileSync(
+    "git",
+    ["remote", "add", "origin", "https://github.com/acme/coredoc-parser.git"],
+    { cwd: directory, stdio: "ignore" },
+  );
+  return directory;
+}
+
+function multiDestinationPolicy(repositoryPath) {
+  return {
+    schemaVersion: 2,
+    destinations: [
+      {
+        id: "onprem",
+        serverOrigin: POLICY.serverOrigin,
+        workspaceId: POLICY.workspaceId,
+        default: true,
+      },
+      {
+        id: "local",
+        serverOrigin: LOCAL_ORIGIN,
+        workspaceId: LOCAL_WORKSPACE_ID,
+        repositories: [repositoryPath],
+      },
+    ],
+  };
+}
+
+async function multiDestinationHarness(overrides = {}) {
+  const repository = await listedRepository();
+  const context = await harness({
+    policy: multiDestinationPolicy(repository),
+    uuids: [
+      INSTALLATION_ID,
+      CLAUDE_BINDING_ID,
+      CODEX_BINDING_ID,
+      REPO_CLAUDE_BINDING_ID,
+      REPO_CODEX_BINDING_ID,
+    ],
+    tokens: [CLAUDE_TOKEN, CODEX_TOKEN, REPO_CLAUDE_TOKEN],
+    cloudTokens: [CLOUD_TOKEN, LOCAL_CLOUD_TOKEN],
+    ...overrides,
+  });
+  return {
+    ...context,
+    repository,
+    repositorySettingsPath: join(repository, ".claude", "settings.local.json"),
+  };
+}
+
+test("setup routes a listed checkout to a loopback destination beside the default workspace", async () => {
+  const context = await multiDestinationHarness();
+  const result = await context.setup.setup();
+  const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+
+  assert.equal(result.status, "ready");
+  assert.equal(context.enrollmentCount(), 2);
+  assert.deepEqual(
+    result.destinations.map(({ id, default: isDefault, repositories, status }) => [id, isDefault, repositories, status]),
+    [["onprem", true, 0, "configured"], ["local", false, 1, "configured"]],
+  );
+  assert.doesNotMatch(JSON.stringify(result), /cdt_|Users|capture-agent|11111111|listed-repo/);
+  assert.deepEqual(
+    [...new Set(context.requests.map(({ url }) => new URL(url).origin))].sort(),
+    [LOCAL_ORIGIN, POLICY.serverOrigin].sort(),
+  );
+
+  const relay = JSON.parse(await readFile(paths.relayConfigPath, "utf8"));
+  assert.equal(relay.bindings.length, 4);
+  const workspaceBindings = relay.bindings.filter(({ workspaceMode }) => workspaceMode === true);
+  const repositoryBindings = relay.bindings.filter(({ workspaceMode }) => workspaceMode !== true);
+  assert.equal(workspaceBindings.length, 2);
+  assert.equal(workspaceBindings.every(({ cloudAuthorization }) => cloudAuthorization === `Bearer ${CLOUD_TOKEN}`), true);
+  assert.deepEqual(repositoryBindings.map(({ host }) => host).sort(), ["claude-code", "codex"]);
+  for (const binding of repositoryBindings) {
+    assert.equal(binding.workspaceId, LOCAL_WORKSPACE_ID);
+    assert.equal(binding.repositoryKey, "acme/coredoc-parser");
+    assert.equal(binding.cloudAuthorization, `Bearer ${LOCAL_CLOUD_TOKEN}`);
+    assert.equal(
+      binding.nativeForwardEndpoint,
+      `${LOCAL_ORIGIN}/api/v1/workspaces/${LOCAL_WORKSPACE_ID}/otel/v1/logs`,
+    );
+  }
+  const codexRepository = repositoryBindings.find(({ host }) => host === "codex");
+  assert.equal(codexRepository.bindingId, REPO_CODEX_BINDING_ID);
+  assert.equal(codexRepository.repositoryScopeKey, resolveRepositoryScopeKey(context.repository));
+  assert.equal(codexRepository.bindingNonceHash, relay.bindings.find(({ host, workspaceMode }) => host === "codex" && workspaceMode).bindingNonceHash);
+  const claudeRepository = repositoryBindings.find(({ host }) => host === "claude-code");
+  assert.equal(claudeRepository.bindingId, REPO_CLAUDE_BINDING_ID);
+
+  const identity = JSON.parse(await readFile(paths.identityPath, "utf8"));
+  assert.equal(identity.repositories.length, 1);
+  assert.equal(identity.repositories[0].path, context.repository);
+  assert.equal(identity.repositories[0].serverOrigin, LOCAL_ORIGIN);
+  assert.equal(identity.repositories[0].claude.bindingNonce, REPO_CLAUDE_TOKEN);
+
+  assert.equal((await stat(context.repositorySettingsPath)).mode & 0o777, 0o600);
+  const repositorySettings = JSON.parse(await readFile(context.repositorySettingsPath, "utf8"));
+  assert.equal(repositorySettings.env.OTEL_EXPORTER_OTLP_HEADERS, `X-Coredoc-Relay-Binding=${REPO_CLAUDE_TOKEN}`);
+  assert.equal(repositorySettings.env.COREDOC_CAPTURE_WORKSPACE_ID, LOCAL_WORKSPACE_ID);
+  assert.equal(repositorySettings.env.COREDOC_WORKFLOWS_REPO_KEY, "acme/coredoc-parser");
+  assert.equal(Object.hasOwn(repositorySettings.env, "COREDOC_CAPTURE_WORKSPACE_MODE"), false);
+  const globalSettings = JSON.parse(await readFile(paths.claudeSettingsPath, "utf8"));
+  assert.equal(globalSettings.env.COREDOC_CAPTURE_WORKSPACE_ID, POLICY.workspaceId);
+
+  const inListed = resolveWorkflowRuntime({
+    env: { COREDOC_HOME: paths.coredocHome, CODEX_SESSION_ID: "listed-session" },
+    cwd: context.repository,
+  });
+  assert.equal(inListed.env.COREDOC_CAPTURE_WORKSPACE_ID, LOCAL_WORKSPACE_ID);
+  assert.equal(inListed.env.COREDOC_CAPTURE_BINDING_ID, REPO_CODEX_BINDING_ID);
+  assert.equal(inListed.env.COREDOC_CAPTURE_WORKSPACE_MODE, undefined);
+  const elsewhere = resolveWorkflowRuntime({
+    env: { COREDOC_HOME: paths.coredocHome, CODEX_SESSION_ID: "other-session" },
+    cwd: context.homeDir,
+  });
+  assert.equal(elsewhere.env.COREDOC_CAPTURE_WORKSPACE_ID, POLICY.workspaceId);
+  assert.equal(elsewhere.env.COREDOC_CAPTURE_WORKSPACE_MODE, "1");
+
+  const status = await context.setup.status();
+  assert.equal(status.status, "ready");
+  assert.deepEqual(status.native.claudeRepositories, ["managed"]);
+  assert.equal(status.destinations.length, 2);
+  const doctor = await context.setup.doctor();
+  assert.equal(doctor.checks.cloud, "ready");
+  assert.deepEqual(doctor.destinations.map(({ status: value }) => value), ["ready", "ready"]);
+
+  const rerun = await context.setup.setup();
+  assert.equal(rerun.status, "ready");
+  assert.equal(context.enrollmentCount(), 2);
+  assert.deepEqual(JSON.parse(await readFile(paths.relayConfigPath, "utf8")), relay);
+});
+
+test("a destination that fails its post-health probe rolls back every destination and revokes both tokens", async () => {
+  const context = await multiDestinationHarness();
+  context.setProbeResponses([json({ status: "ready" }), json({ error: "down" }, 503)]);
+  const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+
+  await assert.rejects(
+    context.setup.setup(),
+    (error) =>
+      error instanceof CaptureAgentSetupError &&
+      error.code === "CLOUD_HEALTH_MISMATCH" &&
+      error.rollback === "restored",
+  );
+  assert.equal(context.enrollmentCount(), 2);
+  assert.equal(
+    context.events.filter((event) => event === "tokens:revoke-installation").length,
+    2,
+  );
+  await assert.rejects(readFile(paths.relayConfigPath), { code: "ENOENT" });
+  await assert.rejects(readFile(context.repositorySettingsPath), { code: "ENOENT" });
+  assert.equal(context.events.includes("lifecycle:uninstall:false"), true);
+});
+
+test("dropping a listed checkout from the policy keeps the install owned and the next setup drops its bindings", async () => {
+  const context = await multiDestinationHarness();
+  await context.setup.setup();
+  const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+  context.setPolicy(POLICY);
+
+  // status reports what the identity is bound to, without loading the policy.
+  const status = await context.setup.status();
+  assert.equal(status.status, "ready");
+  assert.equal(status.relay, "ready");
+  assert.deepEqual(
+    status.destinations.map(({ default: isDefault, repositories }) => [isDefault, repositories]),
+    [[true, 0], [false, 1]],
+  );
+
+  const result = await context.setup.setup();
+  assert.equal(result.status, "ready");
+  assert.equal(context.enrollmentCount(), 2);
+  const relay = JSON.parse(await readFile(paths.relayConfigPath, "utf8"));
+  assert.equal(relay.bindings.length, 2);
+  assert.equal(relay.bindings.every(({ workspaceMode }) => workspaceMode === true), true);
+  const identity = JSON.parse(await readFile(paths.identityPath, "utf8"));
+  assert.equal(Object.hasOwn(identity, "repositories"), false);
+  assert.deepEqual(JSON.parse(await readFile(context.repositorySettingsPath, "utf8")), {});
+  assert.deepEqual(
+    (await context.setup.status()).destinations.map(({ default: isDefault }) => isDefault),
+    [true],
+  );
+
+  const uninstalled = await context.setup.uninstall();
+  assert.equal(uninstalled.status, "uninstalled");
+});
+
+test("uninstall removes repository-local Claude settings together with the global host configuration", async () => {
+  const context = await multiDestinationHarness();
+  await context.setup.setup();
+  const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+
+  const result = await context.setup.uninstall();
+  assert.equal(result.status, "uninstalled");
+  assert.deepEqual(JSON.parse(await readFile(context.repositorySettingsPath, "utf8")), {});
+  const globalSettings = JSON.parse(await readFile(paths.claudeSettingsPath, "utf8"));
+  assert.equal(Object.hasOwn(globalSettings.env ?? {}, "COREDOC_CAPTURE_ENDPOINT"), false);
+});
+
+test("a listed checkout without a git remote fails before enrollment", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "capture-agent-unresolved-repo-"));
+  execFileSync("git", ["init", "-q"], { cwd: directory, stdio: "ignore" });
+  const context = await harness({
+    policy: multiDestinationPolicy(directory),
+    cloudTokens: [CLOUD_TOKEN, LOCAL_CLOUD_TOKEN],
+  });
+  await assert.rejects(
+    context.setup.setup(),
+    (error) => error instanceof CaptureAgentSetupError && error.code === "REPOSITORY_UNRESOLVED",
+  );
+  assert.equal(context.enrollmentCount(), 0);
 });

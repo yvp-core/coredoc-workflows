@@ -19,6 +19,8 @@ import {
 import { enrollCaptureAgent } from "./capture-agent-enrollment.mjs";
 import {
   captureAgentPolicyPath,
+  destinationKey,
+  destinationPolicy,
   loadCaptureAgentPolicy,
   validateCaptureAgentPolicy,
 } from "./capture-agent-policy.mjs";
@@ -28,6 +30,10 @@ import {
   prepareHostGlobalConfigTransaction,
 } from "./host-global-config.mjs";
 import { managedRelayConfig } from "./managed-otel-relay.mjs";
+import {
+  resolveRepositoryIdentity,
+  resolveRepositoryScopeKey,
+} from "./project-key.mjs";
 
 const IDENTITY_MARKER = "coredoc-workflows.capture-agent-installation.v1";
 const IDENTITY_FIELDS = new Set([
@@ -39,6 +45,20 @@ const IDENTITY_FIELDS = new Set([
   "claude",
   "codex",
 ]);
+// `repositories` is optional so identities written before multi-destination
+// routing stay readable; an absent list means no listed repositories.
+const IDENTITY_OPTIONAL_FIELDS = new Set(["repositories"]);
+const REPOSITORY_IDENTITY_FIELDS = new Set([
+  "path",
+  "repositoryKey",
+  "repositoryScopeKey",
+  "serverOrigin",
+  "workspaceId",
+  "claude",
+  "codex",
+]);
+const REPOSITORY_CODEX_FIELDS = new Set(["bindingId"]);
+const REPOSITORY_SCOPE_KEY = /^repo-[a-f0-9]{24}$/;
 const BINDING_FIELDS = new Set(["bindingId", "bindingNonce"]);
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LOCAL_TOKEN = /^[A-Za-z0-9_-]{32,256}$/;
@@ -91,6 +111,7 @@ const SAFE_ERROR_CODES = new Set([
   "POLICY_UNAVAILABLE",
   "POLICY_UNSAFE",
   "POLICY_DRIFT",
+  "REPOSITORY_UNRESOLVED",
   "PURGE_INCOMPLETE",
   "ROLLBACK_FAILED",
   "SUPERVISOR_UNAVAILABLE",
@@ -196,8 +217,52 @@ function identityBinding(value) {
   });
 }
 
+function repositoryIdentityEntry(value) {
+  const candidate = exactObject(value, REPOSITORY_IDENTITY_FIELDS);
+  const codex = exactObject(candidate.codex, REPOSITORY_CODEX_FIELDS);
+  if (
+    typeof candidate.repositoryKey !== "string" ||
+    candidate.repositoryKey.length === 0 ||
+    candidate.repositoryKey.length > 256 ||
+    typeof candidate.repositoryScopeKey !== "string" ||
+    !REPOSITORY_SCOPE_KEY.test(candidate.repositoryScopeKey) ||
+    typeof candidate.serverOrigin !== "string" ||
+    typeof candidate.workspaceId !== "string" ||
+    !UUID_V4.test(candidate.workspaceId) ||
+    typeof codex.bindingId !== "string" ||
+    !UUID_V4.test(codex.bindingId)
+  ) {
+    fail("UNSAFE_STATE");
+  }
+  return Object.freeze({
+    path: exactAbsolute(candidate.path),
+    repositoryKey: candidate.repositoryKey,
+    repositoryScopeKey: candidate.repositoryScopeKey,
+    serverOrigin: candidate.serverOrigin,
+    workspaceId: candidate.workspaceId.toLowerCase(),
+    claude: identityBinding(candidate.claude),
+    codex: Object.freeze({ bindingId: codex.bindingId.toLowerCase() }),
+  });
+}
+
+function identityObject(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    fail("UNSAFE_STATE");
+  }
+  const keys = Object.keys(value);
+  if (
+    keys.some(
+      (field) => !IDENTITY_FIELDS.has(field) && !IDENTITY_OPTIONAL_FIELDS.has(field),
+    ) ||
+    [...IDENTITY_FIELDS].some((field) => !Object.hasOwn(value, field))
+  ) {
+    fail("UNSAFE_STATE");
+  }
+  return value;
+}
+
 function installationIdentity(value, policy) {
-  const candidate = exactObject(value, IDENTITY_FIELDS);
+  const candidate = identityObject(value);
   if (
     candidate.schemaVersion !== 1 ||
     candidate.marker !== IDENTITY_MARKER ||
@@ -222,13 +287,29 @@ function installationIdentity(value, policy) {
   }
   const claude = identityBinding(candidate.claude);
   const codex = identityBinding(candidate.codex);
+  if (candidate.repositories !== undefined && !Array.isArray(candidate.repositories)) {
+    fail("UNSAFE_STATE");
+  }
+  const repositories = Object.freeze(
+    (candidate.repositories ?? []).map(repositoryIdentityEntry),
+  );
+  const bindingIds = [
+    candidate.installationId.toLowerCase(),
+    claude.bindingId,
+    codex.bindingId,
+    ...repositories.flatMap((entry) => [entry.claude.bindingId, entry.codex.bindingId]),
+  ];
+  const claudeNonces = [
+    claude.bindingNonce,
+    ...repositories.map((entry) => entry.claude.bindingNonce),
+  ];
   if (
-    new Set([
-      candidate.installationId.toLowerCase(),
-      claude.bindingId,
-      codex.bindingId,
-    ]).size !== 3 ||
-    claude.bindingNonce === codex.bindingNonce
+    new Set(bindingIds).size !== bindingIds.length ||
+    new Set(claudeNonces).size !== claudeNonces.length ||
+    claudeNonces.includes(codex.bindingNonce) ||
+    new Set(repositories.map(({ path }) => path)).size !== repositories.length ||
+    new Set(repositories.map(({ repositoryScopeKey }) => repositoryScopeKey)).size !==
+      repositories.length
   ) {
     fail("UNSAFE_STATE");
   }
@@ -240,6 +321,7 @@ function installationIdentity(value, policy) {
     installationId: candidate.installationId.toLowerCase(),
     claude,
     codex,
+    repositories,
   });
 }
 
@@ -262,6 +344,93 @@ function makeIdentity(policy, randomUUID, randomLocalToken) {
     },
     policy,
   );
+}
+
+function identityDocument(identity) {
+  const { repositories, ...rest } = identity;
+  return `${JSON.stringify(
+    repositories.length === 0 ? rest : { ...rest, repositories },
+  )}\n`;
+}
+
+/**
+ * Align the identity's listed-repository bindings with the active policy.
+ * Existing entries keep their binding ids and nonces; a checkout that is no
+ * longer listed (or moved to another destination) is dropped and a newly
+ * listed one gets fresh bindings.
+ */
+function reconcileRepositories(identity, policy, randomUUID, randomLocalToken) {
+  const repositories = [];
+  for (const destination of policy.destinations) {
+    if (destination.default) continue;
+    for (const path of destination.repositories) {
+      const existing = identity.repositories.find(
+        (entry) =>
+          entry.path === path &&
+          entry.serverOrigin === destination.serverOrigin &&
+          entry.workspaceId === destination.workspaceId,
+      );
+      if (existing) {
+        repositories.push(existing);
+        continue;
+      }
+      let resolved;
+      try {
+        resolved = resolveRepositoryIdentity(path);
+      } catch {
+        fail("REPOSITORY_UNRESOLVED");
+      }
+      if (resolved?.normalizedRepositoryKey === undefined) {
+        fail("REPOSITORY_UNRESOLVED");
+      }
+      repositories.push({
+        path,
+        repositoryKey: resolved.normalizedRepositoryKey,
+        repositoryScopeKey: resolveRepositoryScopeKey(path),
+        serverOrigin: destination.serverOrigin,
+        workspaceId: destination.workspaceId,
+        claude: { bindingId: randomUUID(), bindingNonce: randomLocalToken() },
+        codex: { bindingId: randomUUID() },
+      });
+    }
+  }
+  const unchanged =
+    repositories.length === identity.repositories.length &&
+    repositories.every((entry, index) => entry === identity.repositories[index]);
+  if (unchanged) return identity;
+  return installationIdentity({ ...identity, repositories }, policy);
+}
+
+function repositorySettingsPath(entry) {
+  return join(entry.path, ".claude", "settings.local.json");
+}
+
+function repositorySettingsInstall(identity) {
+  return identity.repositories.map((entry) => ({
+    path: repositorySettingsPath(entry),
+    ingressToken: entry.claude.bindingNonce,
+    bindingId: entry.claude.bindingId,
+    workspaceId: entry.workspaceId,
+    repositoryKey: entry.repositoryKey,
+  }));
+}
+
+function repositorySettingsRemoval(identity) {
+  return identity.repositories.map((entry) => ({
+    path: repositorySettingsPath(entry),
+  }));
+}
+
+/** Every destination the identity is bound to, default first, deduplicated. */
+function identityDestinations(identity) {
+  const seen = new Map();
+  for (const entry of [identity, ...identity.repositories]) {
+    const key = destinationKey(entry);
+    if (!seen.has(key)) {
+      seen.set(key, { serverOrigin: entry.serverOrigin, workspaceId: entry.workspaceId });
+    }
+  }
+  return seen;
 }
 
 async function safeDirectory(path, fs, uid, { create = false } = {}) {
@@ -540,69 +709,120 @@ function workspaceBinding(host, identity, policy, cloudToken) {
   };
 }
 
-function buildRelayConfig({ identity, policy, cloudToken }) {
-  if (typeof cloudToken !== "string" || !CLOUD_TOKEN.test(cloudToken)) {
+function repositoryBinding(host, identity, entry, cloudToken) {
+  const local = host === "claude-code" ? entry.claude : entry.codex;
+  return {
+    schemaVersion: 1,
+    bindingId: local.bindingId,
+    bindingNonceHash: sha256(
+      host === "claude-code" ? entry.claude.bindingNonce : identity.codex.bindingNonce,
+    ),
+    host,
+    workspaceId: entry.workspaceId,
+    repositoryKey: entry.repositoryKey,
+    ...(host === "codex"
+      ? { repositoryScopeKey: entry.repositoryScopeKey, profileName: null }
+      : {}),
+    ...forwardEndpoints(entry),
+    cloudAuthorization: `Bearer ${cloudToken}`,
+  };
+}
+
+function credentialToken(credentials, entry) {
+  const token = credentials.get(destinationKey(entry))?.token;
+  if (typeof token !== "string" || !CLOUD_TOKEN.test(token)) {
     fail("UNSAFE_STATE");
   }
+  return token;
+}
+
+function buildRelayConfig({ identity, credentials }) {
+  const defaultToken = credentialToken(credentials, identity);
   return managedRelayConfig({
     schemaVersion: 1,
     bindings: [
-      workspaceBinding("claude-code", identity, policy, cloudToken),
-      workspaceBinding("codex", identity, policy, cloudToken),
+      workspaceBinding("claude-code", identity, identity, defaultToken),
+      workspaceBinding("codex", identity, identity, defaultToken),
+      ...identity.repositories.flatMap((entry) => {
+        const token = credentialToken(credentials, entry);
+        return [
+          repositoryBinding("claude-code", identity, entry, token),
+          repositoryBinding("codex", identity, entry, token),
+        ];
+      }),
     ],
   });
 }
 
-function ownedRelayConfig(value, identity, policy) {
+/**
+ * Every binding in the persisted relay config must be one this identity
+ * created; the two default workspace bindings must be present. Listed
+ * repositories that the identity gained since the config was written are
+ * allowed to be absent (setup adds them). Returns one cloud token per
+ * destination the config carries.
+ */
+function ownedRelayConfig(value, identity) {
   let config;
   try {
     config = managedRelayConfig(value);
   } catch {
     fail("OWNERSHIP_CONFLICT");
   }
-  if (config.bindings.length !== 2) fail("OWNERSHIP_CONFLICT");
-  const claude = config.bindings.filter(
-    ({ host, workspaceMode }) => host === "claude-code" && workspaceMode === true,
+  // Build the expected bindings through the relay's own normalizer so the
+  // comparison below is independent of key order.
+  const placeholder = `cdt_${"0".repeat(64)}`;
+  const keys = new Map([
+    [identity.claude.bindingId, destinationKey(identity)],
+    [identity.codex.bindingId, destinationKey(identity)],
+    ...identity.repositories.flatMap((entry) => [
+      [entry.claude.bindingId, destinationKey(entry)],
+      [entry.codex.bindingId, destinationKey(entry)],
+    ]),
+  ]);
+  const expected = new Map(
+    managedRelayConfig({
+      schemaVersion: 1,
+      bindings: [
+        workspaceBinding("claude-code", identity, identity, placeholder),
+        workspaceBinding("codex", identity, identity, placeholder),
+        ...identity.repositories.flatMap((entry) => [
+          repositoryBinding("claude-code", identity, entry, placeholder),
+          repositoryBinding("codex", identity, entry, placeholder),
+        ]),
+      ],
+    }).bindings.map((binding) => [
+      binding.bindingId,
+      { binding, key: keys.get(binding.bindingId) },
+    ]),
   );
-  const codex = config.bindings.filter(
-    ({ host, workspaceMode }) => host === "codex" && workspaceMode === true,
-  );
-  const allowed = config.bindings.every(
-    (binding) =>
-      binding.workspaceId === policy.workspaceId &&
-      binding.workspaceMode === true,
-  );
-  const authorizations = new Set(
-    config.bindings.map(({ cloudAuthorization }) => cloudAuthorization),
-  );
-  if (
-    !allowed ||
-    claude.length !== 1 ||
-    codex.length !== 1 ||
-    claude[0].bindingId !== identity.claude.bindingId ||
-    codex[0].bindingId !== identity.codex.bindingId ||
-    claude[0].bindingNonceHash !== sha256(identity.claude.bindingNonce) ||
-    codex[0].bindingNonceHash !== sha256(identity.codex.bindingNonce) ||
-    authorizations.size !== 1
-  ) {
+  const authorizations = new Map();
+  for (const binding of config.bindings) {
+    const match = expected.get(binding.bindingId);
+    if (match === undefined) fail("OWNERSHIP_CONFLICT");
+    const { cloudAuthorization, ...actual } = binding;
+    const { cloudAuthorization: _ignored, ...wanted } = match.binding;
+    if (JSON.stringify(actual) !== JSON.stringify(wanted)) {
+      fail("OWNERSHIP_CONFLICT");
+    }
+    const known = authorizations.get(match.key);
+    if (known !== undefined && known !== cloudAuthorization) {
+      fail("OWNERSHIP_CONFLICT");
+    }
+    authorizations.set(match.key, cloudAuthorization);
+  }
+  const present = new Set(config.bindings.map(({ bindingId }) => bindingId));
+  if (!present.has(identity.claude.bindingId) || !present.has(identity.codex.bindingId)) {
     fail("OWNERSHIP_CONFLICT");
   }
-  const authorization = [...authorizations][0];
-  const token = authorization?.startsWith("Bearer ")
-    ? authorization.slice("Bearer ".length)
-    : "";
-  if (!CLOUD_TOKEN.test(token)) fail("OWNERSHIP_CONFLICT");
-  const expectedEndpoints = forwardEndpoints(policy);
-  if (
-    config.bindings.some(
-      (binding) =>
-        binding.nativeForwardEndpoint !== expectedEndpoints.nativeForwardEndpoint ||
-        binding.captureForwardEndpoint !== expectedEndpoints.captureForwardEndpoint,
-    )
-  ) {
-    fail("OWNERSHIP_CONFLICT");
+  const tokens = new Map();
+  for (const [key, authorization] of authorizations) {
+    const token = authorization.startsWith("Bearer ")
+      ? authorization.slice("Bearer ".length)
+      : "";
+    if (!CLOUD_TOKEN.test(token)) fail("OWNERSHIP_CONFLICT");
+    tokens.set(key, token);
   }
-  return { config, token };
+  return { config, token: tokens.get(destinationKey(identity)), tokens };
 }
 
 async function profileConfigPaths(paths, fs) {
@@ -851,6 +1071,51 @@ export function createCaptureAgentSetup({
   const activeLifecycle =
     lifecycle ?? createCaptureAgentLifecycle({ env, homeDir: paths.homeDir });
 
+  // Re-validating the loaded value keeps injected test policies (plain
+  // schema-1 objects) on the same normalized shape as a loaded file.
+  async function activePolicy() {
+    return validateCaptureAgentPolicy(await activeLoadPolicy());
+  }
+
+  // Probe every destination that has a token; a destination the persisted
+  // relay does not carry a token for yet is skipped (setup adds it).
+  async function probeDestinations(policy, tokens, options = {}) {
+    for (const destination of policy.destinations) {
+      const token = tokens.get(destinationKey(destination));
+      if (token === undefined) {
+        if (destination.default) fail("UNSAFE_STATE");
+        continue;
+      }
+      await probeCloudCredential({
+        policy: destinationPolicy(destination),
+        token,
+        fetchImpl,
+        requestTimeoutMs,
+        createRequestSignal,
+        ...options,
+      });
+    }
+  }
+
+  function destinationsReport(policy, statuses = new Map()) {
+    // Redacted: destination ids and counts only, never origins or workspace ids.
+    return policy.destinations.map((destination) => ({
+      id: destination.id,
+      default: destination.default,
+      repositories: destination.repositories.length,
+      status: statuses.get(destinationKey(destination)) ?? "configured",
+    }));
+  }
+
+  function identityDestinationsReport(identity) {
+    return [...identityDestinations(identity)].map(([key]) => ({
+      default: key === destinationKey(identity),
+      repositories: identity.repositories.filter(
+        (entry) => destinationKey(entry) === key,
+      ).length,
+    }));
+  }
+
   async function compensateLifecycle(before, setupResult) {
     if (!setupResult) return;
     if (before.status === "not-installed") {
@@ -875,8 +1140,8 @@ export function createCaptureAgentSetup({
     identityBefore,
     relayBefore,
     codexIngressBefore,
-    session,
-    cloudToken,
+    credentials,
+    droppedRepositories = [],
     lifecycleBefore,
     command,
   }) {
@@ -889,17 +1154,13 @@ export function createCaptureAgentSetup({
     let stateApplied = false;
     let claims = "configured";
     try {
-      const relayConfig = buildRelayConfig({
-        identity,
-        policy,
-        cloudToken,
-      });
+      const relayConfig = buildRelayConfig({ identity, credentials });
       stateTx = stateTransaction(
         [
           transactionPlan(
             paths.identityPath,
             identityBefore,
-            `${JSON.stringify(identity)}\n`,
+            identityDocument(identity),
           ),
           transactionPlan(
             paths.relayConfigPath,
@@ -929,6 +1190,10 @@ export function createCaptureAgentSetup({
         claudeBindingId: identity.claude.bindingId,
         workspaceId: policy.workspaceId,
         codexIngressToken: identity.codex.bindingNonce,
+        claudeRepositorySettings: repositorySettingsInstall(identity),
+        claudeRepositorySettingsRemovals: repositorySettingsRemoval({
+          repositories: droppedRepositories,
+        }),
       });
       try {
         hooksTx = await prepareHooksConfig({
@@ -964,13 +1229,10 @@ export function createCaptureAgentSetup({
       ) {
         fail("HEALTH_MISMATCH");
       }
-      await probeCloudCredential({
+      await probeDestinations(
         policy,
-        token: cloudToken,
-        fetchImpl,
-        requestTimeoutMs,
-        createRequestSignal,
-      });
+        new Map([...credentials].map(([key, { token }]) => [key, token])),
+      );
       return {
         schemaVersion: 1,
         command,
@@ -981,6 +1243,7 @@ export function createCaptureAgentSetup({
         },
         native: "ready",
         claims,
+        destinations: destinationsReport(policy),
       };
     } catch (error) {
       const rollbackErrors = [];
@@ -996,7 +1259,8 @@ export function createCaptureAgentSetup({
       await compensateLifecycle(lifecycleBefore, lifecycleResult).catch((rollbackError) =>
         rollbackErrors.push(rollbackError),
       );
-      if (session) {
+      for (const { session } of credentials.values()) {
+        if (!session) continue;
         await session.revokeInstallationToken().catch((rollbackError) =>
           rollbackErrors.push(rollbackError),
         );
@@ -1015,7 +1279,7 @@ export function createCaptureAgentSetup({
       paths,
       async () => {
         await ensureNoPurgePending();
-        const policy = await activeLoadPolicy();
+        const policy = await activePolicy();
         let identityBefore = await safeSnapshot(paths.identityPath, fs, uid);
         const relayBefore = await safeSnapshot(paths.relayConfigPath, fs, uid);
         const codexIngressBefore = await safeSnapshot(
@@ -1101,63 +1365,90 @@ export function createCaptureAgentSetup({
           identity: provisionalIdentity ? null : existingIdentity,
         });
 
-        const identity =
-          existingIdentity ?? makeIdentity(policy, randomUUID, randomLocalToken);
+        // The persisted relay must be owned by the identity that wrote it
+        // (before this run adds or drops listed repositories).
+        const ownedBefore =
+          existingIdentity && relayBefore.exists
+            ? ownedRelayConfig(await readRelay(relayBefore), existingIdentity)
+            : null;
+        const identity = reconcileRepositories(
+          existingIdentity ?? makeIdentity(policy, randomUUID, randomLocalToken),
+          policy,
+          randomUUID,
+          randomLocalToken,
+        );
         if (existingIdentity === null) {
           await atomicWrite(
             paths.identityPath,
-            `${JSON.stringify(identity)}\n`,
+            identityDocument(identity),
             identityBefore,
             fs,
             uid,
           );
           identityBefore = await safeSnapshot(paths.identityPath, fs, uid);
         }
-        if (existingIdentity && relayBefore.exists && !provisionalIdentity) {
-          const owned = ownedRelayConfig(await readRelay(relayBefore), identity, policy);
-          try {
-            await probeCloudCredential({
-              policy,
-              token: owned.token,
-              fetchImpl,
-              requestTimeoutMs,
-              createRequestSignal,
-              distinguishAuthRejection: true,
-            });
-            return await performSetup({
-              policy,
-              identity,
-              identityBefore,
-              relayBefore,
-              codexIngressBefore,
-              session: null,
-              cloudToken: owned.token,
-              lifecycleBefore,
-              command,
-            });
-          } catch (error) {
-            if (error?.code !== "CLOUD_AUTH_REJECTED") throw error;
+
+        // One cloud credential per destination: reuse a persisted token that
+        // still authenticates, browser-enroll every other destination in
+        // sequence, then commit once with the full set.
+        const credentials = new Map();
+        if (ownedBefore !== null) {
+          for (const destination of policy.destinations) {
+            const key = destinationKey(destination);
+            const token = ownedBefore.tokens.get(key);
+            if (token === undefined) continue;
+            try {
+              await probeCloudCredential({
+                policy: destinationPolicy(destination),
+                token,
+                fetchImpl,
+                requestTimeoutMs,
+                createRequestSignal,
+                distinguishAuthRejection: true,
+              });
+              credentials.set(key, { token, session: null });
+            } catch (error) {
+              if (error?.code !== "CLOUD_AUTH_REJECTED") throw error;
+            }
           }
         }
-
-        return enrollment({
-          policy,
-          installationId: identity.installationId,
-          requestTimeoutMs,
-          createRequestSignal,
-          completeEnrollment: (session) =>
-            performSetup({
-              policy,
-              identity,
-              identityBefore,
-              relayBefore,
-              codexIngressBefore,
-              session,
-              cloudToken: session.installationToken.token,
-              lifecycleBefore,
-              command,
-            }),
-        });
+        const pending = policy.destinations.filter(
+          (destination) => !credentials.has(destinationKey(destination)),
+        );
+        const kept = new Set(identity.repositories.map(({ path }) => path));
+        const droppedRepositories = (existingIdentity?.repositories ?? []).filter(
+          ({ path }) => !kept.has(path),
+        );
+        const commit = () =>
+          performSetup({
+            policy,
+            identity,
+            identityBefore,
+            relayBefore,
+            codexIngressBefore,
+            credentials,
+            droppedRepositories,
+            lifecycleBefore,
+            command,
+          });
+        const enroll = (index) => {
+          if (index === pending.length) return commit();
+          const destination = pending[index];
+          return enrollment({
+            policy: destinationPolicy(destination),
+            installationId: identity.installationId,
+            requestTimeoutMs,
+            createRequestSignal,
+            completeEnrollment: (session) => {
+              credentials.set(destinationKey(destination), {
+                token: session.installationToken.token,
+                session,
+              });
+              return enroll(index + 1);
+            },
+          });
+        };
+        return enroll(0);
       },
       { fs, uid, processAlive, randomLockToken },
     );
@@ -1194,7 +1485,7 @@ export function createCaptureAgentSetup({
         relay = "conflict";
       } else {
         try {
-          ownedRelayConfig(await readRelay(relayFile.snapshot), identity, storedPolicy);
+          ownedRelayConfig(await readRelay(relayFile.snapshot), identity);
           relay = "ready";
         } catch {
           relay = "conflict";
@@ -1218,16 +1509,26 @@ export function createCaptureAgentSetup({
       }
     }
     const codexConfigPaths = await profileConfigPaths(paths, fs);
+    const repositorySettingsPaths =
+      identity === null
+        ? []
+        : identity.repositories.map(repositorySettingsPath);
     const [lifecycleStatus, host] = await Promise.all([
       activeLifecycle.status(),
       inspectHostConfig({
         claudeSettingsPath: paths.claudeSettingsPath,
         codexConfigPaths,
         codexHooksPath: paths.codexHooksPath,
+        ...(repositorySettingsPaths.length === 0
+          ? {}
+          : { claudeRepositorySettingsPaths: repositorySettingsPaths }),
       }),
     ]);
+    const claudeRepositories = host.claudeRepositories ?? [];
     const nativeReady =
-      host.claude === "managed" && host.codex.every((value) => value === "managed");
+      host.claude === "managed" &&
+      host.codex.every((value) => value === "managed") &&
+      claudeRepositories.every((value) => value === "managed");
     const desktopLaunchAgent =
       lifecycleStatus.desktopLaunchAgent ??
       (lifecycleStatus.launchAgent === "desktop-v1"
@@ -1314,7 +1615,9 @@ export function createCaptureAgentSetup({
       native: {
         claude: host.claude,
         codex: host.codex,
+        claudeRepositories,
       },
+      destinations: identity === null ? [] : identityDestinationsReport(identity),
       claims:
         host.codexHooks === "managed"
           ? "configured"
@@ -1336,37 +1639,55 @@ export function createCaptureAgentSetup({
     const result = await status();
     let cloud = "not-configured";
     let policyCheck = result.installation === "ready" ? "unavailable" : "not-configured";
+    const destinationStatuses = new Map();
+    let policy = null;
     if (result.installation === "ready" && result.relay === "ready") {
+      let owned = null;
       try {
-        const policy = await activeLoadPolicy();
+        policy = await activePolicy();
         const identitySnapshot = await safeSnapshot(paths.identityPath, fs, uid);
         const relaySnapshot = await safeSnapshot(paths.relayConfigPath, fs, uid);
         const identity = await readIdentity(identitySnapshot, policy);
-        const owned = ownedRelayConfig(
-          await readRelay(relaySnapshot),
-          identity,
-          policy,
-        );
-        await probeCloudCredential({
-          policy,
-          token: owned.token,
-          fetchImpl,
-          requestTimeoutMs,
-          createRequestSignal,
-          distinguishAuthRejection: true,
-        });
+        owned = ownedRelayConfig(await readRelay(relaySnapshot), identity);
         policyCheck = "ready";
-        cloud = "ready";
       } catch (error) {
         policyCheck = error?.code === "POLICY_DRIFT" ? "drift" : "unavailable";
-        cloud =
-          error?.code === "CLOUD_AUTH_REJECTED"
-            ? "auth-rejected"
-            : "unavailable";
+        cloud = "unavailable";
+      }
+      if (owned !== null) {
+        cloud = "ready";
+        for (const destination of policy.destinations) {
+          const key = destinationKey(destination);
+          const token = owned.tokens.get(key);
+          let state = "not-configured";
+          if (token !== undefined) {
+            try {
+              await probeCloudCredential({
+                policy: destinationPolicy(destination),
+                token,
+                fetchImpl,
+                requestTimeoutMs,
+                createRequestSignal,
+                distinguishAuthRejection: true,
+              });
+              state = "ready";
+            } catch (error) {
+              state =
+                error?.code === "CLOUD_AUTH_REJECTED"
+                  ? "auth-rejected"
+                  : "unavailable";
+            }
+          }
+          destinationStatuses.set(key, state);
+          if (state !== "ready" && cloud === "ready") cloud = state;
+        }
       }
     }
     return {
       ...result,
+      ...(policy === null
+        ? {}
+        : { destinations: destinationsReport(policy, destinationStatuses) }),
       command: "doctor",
       checks: {
         policy: policyCheck,
@@ -1389,7 +1710,7 @@ export function createCaptureAgentSetup({
     );
     const storedIdentity = await readIdentity(identityBefore);
     const policy = requirePolicy
-      ? await activeLoadPolicy()
+      ? await activePolicy()
       : storedIdentity
         ? validateCaptureAgentPolicy({
             schemaVersion: 1,
@@ -1408,11 +1729,7 @@ export function createCaptureAgentSetup({
     ) {
       fail("NOT_INSTALLED");
     }
-    const owned = ownedRelayConfig(
-      await readRelay(relayBefore),
-      identity,
-      policy,
-    );
+    const owned = ownedRelayConfig(await readRelay(relayBefore), identity);
     validateCodexIngressOwnership({
       snapshot: codexIngressBefore,
       identity,
@@ -1421,11 +1738,12 @@ export function createCaptureAgentSetup({
       policy,
       identity,
       token: owned.token,
+      tokens: owned.tokens,
       snapshots: { identityBefore, relayBefore, codexIngressBefore },
     };
   }
 
-  async function prepareHostRemoval({ strictHooks = false } = {}) {
+  async function prepareHostRemoval(identity, { strictHooks = false } = {}) {
     const codexConfigPaths = await profileConfigPaths(paths, fs);
     const native = await prepareHostConfig({
       operation: "uninstall",
@@ -1433,6 +1751,7 @@ export function createCaptureAgentSetup({
       codexConfigPaths,
       codexHooksPath: paths.codexHooksPath,
       includeCodexHooks: false,
+      claudeRepositorySettings: repositorySettingsRemoval(identity),
     });
     let hooks = null;
     try {
@@ -1495,12 +1814,7 @@ export function createCaptureAgentSetup({
         const local = await ownedLocalState();
         const before = await activeLifecycle.status();
         if (before.launchAgent !== "plugin-v1") fail("NOT_INSTALLED");
-        await probeCloudCredential({
-          policy: local.policy,
-          token: local.token,
-          fetchImpl,
-          requestTimeoutMs,
-          createRequestSignal,
+        await probeDestinations(local.policy, local.tokens, {
           distinguishAuthRejection: true,
         });
         const result = await activeLifecycle.upgrade();
@@ -1512,13 +1826,7 @@ export function createCaptureAgentSetup({
         ) {
           fail("HEALTH_MISMATCH");
         }
-        await probeCloudCredential({
-          policy: local.policy,
-          token: local.token,
-          fetchImpl,
-          requestTimeoutMs,
-          createRequestSignal,
-        });
+        await probeDestinations(local.policy, local.tokens);
         return {
           schemaVersion: 1,
           command: "upgrade",
@@ -1540,11 +1848,11 @@ export function createCaptureAgentSetup({
       paths,
       async () => {
         await ensureNoPurgePending();
-        await ownedLocalState({ requirePolicy: false });
+        const local = await ownedLocalState({ requirePolicy: false });
         const lifecycleStatus = await activeLifecycle.status();
         if (lifecycleStatus.launchAgent !== "plugin-v1") fail("NOT_INSTALLED");
         const lifecycleBefore = await activeLifecycle.preflightDisable();
-        const transactions = await prepareHostRemoval();
+        const transactions = await prepareHostRemoval(local.identity);
         const host = await applyHostRemoval(transactions);
         let disabled;
         try {
@@ -1571,12 +1879,12 @@ export function createCaptureAgentSetup({
     );
   }
 
-  async function uninstallLocal() {
+  async function uninstallLocal(identity) {
     const preflight = await activeLifecycle.preflightUninstall({
       discardPending: false,
     });
     const host = await applyHostRemoval(
-      await prepareHostRemoval({ strictHooks: true }),
+      await prepareHostRemoval(identity, { strictHooks: true }),
     );
     let lifecycleResult;
     try {
@@ -1770,8 +2078,10 @@ export function createCaptureAgentSetup({
     ) {
       fail("POLICY_DRIFT");
     }
+    const identitySnapshot = await safeSnapshot(paths.identityPath, fs, uid);
+    const identity = (await readIdentity(identitySnapshot)) ?? { repositories: [] };
     const host = await applyHostRemoval(
-      await prepareHostRemoval({ strictHooks: true }),
+      await prepareHostRemoval(identity, { strictHooks: true }),
     );
     try {
       return await finishConfirmedPurge(record, host.claims);
@@ -1781,7 +2091,7 @@ export function createCaptureAgentSetup({
   }
 
   async function purgeUninstall(local) {
-    const transactions = await prepareHostRemoval({ strictHooks: true });
+    const transactions = await prepareHostRemoval(local.identity, { strictHooks: true });
     const preflight = await activeLifecycle.preflightUninstall({
       discardPending: true,
     });
@@ -1893,7 +2203,7 @@ export function createCaptureAgentSetup({
           return resumeConfirmedPurge(pending);
         }
         const local = await ownedLocalState({ requirePolicy: purge });
-        if (!purge) return uninstallLocal();
+        if (!purge) return uninstallLocal(local.identity);
         return purgeUninstall(local);
       },
       { fs, uid, processAlive, randomLockToken },

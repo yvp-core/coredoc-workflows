@@ -359,10 +359,14 @@ ledger.
 
 Managed capture is disabled until an operator creates a mode-0600
 `~/.coredoc/capture-agent-policy.json` and explicitly runs
-`coredoc-workflows capture setup`. The policy has exactly three fields: schema
-version 1, one canonical HTTPS server origin, and one workspace UUID. Neither a
-repository, current working directory, host payload, Coredoc MCP, nor Coredoc
-Desktop can select another destination. Coredoc Desktop is not required.
+`coredoc-workflows capture setup`. A schema-1 policy has exactly three fields:
+one canonical HTTPS server origin and one workspace UUID. A schema-2 policy
+lists destinations: one default plus, optionally, loopback or HTTPS
+destinations that each own specific absolute checkout paths, so sessions in
+those checkouts reach their own server while everything else keeps the default.
+Neither a repository, current working directory, host payload, Coredoc MCP, nor
+Coredoc Desktop can select a destination the policy does not list. Coredoc
+Desktop is not required.
 
 Setup requires supported macOS. It may open a browser for PKCE enrollment,
 mints one installation-scoped telemetry credential, copies the hash-verified

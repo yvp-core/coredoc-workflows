@@ -1311,3 +1311,97 @@ test("does not retry enqueue when a successful drain frees no capacity", async (
     durable: false,
   });
 });
+
+test("a listed repository binding wins over the workspace binding for its checkout only", () => {
+  const listed = gitInit(mkdtempSync(join(tmpdir(), "capture-client-listed-repo-")));
+  const other = gitInit(mkdtempSync(join(tmpdir(), "capture-client-other-repo-")));
+  const listedIdentity = resolveRepositoryIdentity(listed);
+  const otherIdentity = resolveRepositoryIdentity(other);
+  const workspace = workspaceBinding();
+  const repository = {
+    ...workspaceBinding({ bindingId: "33333333-3333-4333-8333-333333333333" }),
+    workspaceMode: false,
+    workspaceId: "ws-local",
+    repositoryKey: "acme/listed",
+    repositoryScopeKey: listedIdentity.repositoryScopeKey,
+  };
+  const options = {
+    bindings: [workspace, repository],
+    host: "codex",
+    bindingNonceHash: workspace.bindingNonceHash,
+  };
+
+  const inListed = selectManagedCaptureBinding({
+    ...options,
+    repositoryIdentity: listedIdentity,
+  });
+  assert.equal(inListed.mode, "repository");
+  assert.equal(inListed.binding, repository);
+
+  const elsewhere = selectManagedCaptureBinding({
+    ...options,
+    repositoryIdentity: otherIdentity,
+  });
+  assert.equal(elsewhere.mode, "workspace");
+  assert.equal(elsewhere.binding, workspace);
+
+  const outsideGit = selectManagedCaptureBinding({
+    ...options,
+    repositoryIdentity: null,
+  });
+  assert.equal(outsideGit.mode, "workspace");
+
+  assert.throws(
+    () =>
+      selectManagedCaptureBinding({
+        ...options,
+        bindings: [
+          workspace,
+          repository,
+          { ...repository, bindingId: "44444444-4444-4444-8444-444444444444" },
+        ],
+        repositoryIdentity: listedIdentity,
+      }),
+    /managed Codex relay binding is unavailable/,
+  );
+});
+
+test("Claude repository bindings match on the normalized repository key", () => {
+  const repository = {
+    ...workspaceBinding({
+      bindingId: "33333333-3333-4333-8333-333333333333",
+      host: "claude-code",
+    }),
+    workspaceMode: false,
+    workspaceId: "ws-local",
+    repositoryKey: "acme/listed",
+  };
+  const workspace = workspaceBinding({ host: "claude-code" });
+  const options = {
+    bindings: [workspace, repository],
+    host: "claude-code",
+    bindingNonceHash: workspace.bindingNonceHash,
+  };
+  assert.equal(
+    selectManagedCaptureBinding({
+      ...options,
+      repositoryIdentity: {
+        state: "unmapped",
+        repositoryScopeKey: "repo-111111111111111111111111",
+        normalizedRepositoryKey: "acme/listed",
+      },
+    }).binding,
+    repository,
+  );
+  assert.equal(
+    selectManagedCaptureBinding({
+      ...options,
+      repositoryIdentity: {
+        state: "unmapped",
+        repositoryScopeKey: "repo-111111111111111111111111",
+        normalizedRepositoryKey: "acme/other",
+      },
+    }).binding,
+    workspace,
+  );
+});

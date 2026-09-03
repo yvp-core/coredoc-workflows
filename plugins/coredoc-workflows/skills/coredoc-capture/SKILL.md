@@ -26,11 +26,19 @@ Desktop. Plugin ownership uses `ai.coredoc.workflows.capture-relay` and
 Before `setup`, `repair`, `upgrade`, authenticated `doctor`, or
 `uninstall --purge`, require an operator-provisioned mode-0600 policy at
 `~/.coredoc/capture-agent-policy.json` (or the same filename directly below an
-explicit absolute `COREDOC_HOME`). It contains exactly `schemaVersion: 1`, one
-canonical HTTPS `serverOrigin`, and one RFC-4122 `workspaceId`. Never install
-placeholder values, infer them from a repository, environment variable, or
-MCP, or read credentials while checking the file. A missing or changed policy
-does not prevent local `status`, `disable`, or default `uninstall`.
+explicit absolute `COREDOC_HOME`). Schema 1 contains exactly one canonical
+HTTPS `serverOrigin` and one RFC-4122 `workspaceId`. Schema 2 lists
+`destinations`: one `default` plus optional destinations that each own absolute
+checkout paths, so sessions in those checkouts route to their own server
+(loopback `http://127.0.0.1:<port>` is allowed there; `localhost` is not).
+Never install placeholder values, infer them from a repository, environment
+variable, or MCP, or read credentials while checking the file. If setup reports
+`POLICY_INVALID` the file is malformed or unsafe; `REPOSITORY_UNRESOLVED` means
+a listed checkout has no Git `origin`. Both fail before enrollment; fix the
+policy and rerun. Never remove a repository-local `.claude/settings.local.json`
+by hand: rerunning `setup` after the checkout leaves the policy removes it. A
+missing or changed policy does not prevent local `status`, `disable`, or
+default `uninstall`.
 
 ## Choose the smallest command
 
