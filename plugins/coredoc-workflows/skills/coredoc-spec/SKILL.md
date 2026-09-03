@@ -94,7 +94,13 @@ instructions, not as reference material: follow it from its first step.
 ```mermaid
 flowchart LR
   G[Ground current state] --> I[Resolve material intent]
-  I --> M[Model rules and flows]
+  I --> A[Align domain and solution]
+  A -->|open owner decision| Q[Ask current frontier and wait]
+  Q --> A
+  A -->|interactive frontier empty| C[Confirm shared picture]
+  C -->|revise| A
+  C -->|confirmed| M[Model rules and flows]
+  A -->|mature input| M
   M --> V[Verify scope and observability]
   V --> D[Deliver final spec]
 ```
@@ -140,15 +146,11 @@ Proceed when the request plus repository evidence answers these questions:
 | Risk | Reachable failures, trust/data boundaries, rollout and rollback? |
 | Ownership | Which public/cross-cutting decisions belong to the user? |
 
-Ask at most three numbered, highest-impact questions per round. Ask only when an
-answer changes behavior, scope, contract, rollout, or acceptance; otherwise make
-and label a reversible assumption. Offer 2–3 concise options for a user-owned
-decision. Do not manufacture measurements or force another round when the table
-is already answered.
-
-When option effort could materially change the user's choice, apply
-`<plugin-root>/resources/methodology/estimate-buckets.md` to the question only;
-keep the persisted specification to its coarse `size` field.
+Use the table to identify missing facts and decisions, not to begin a separate
+interview. Resolve repository-verifiable facts yourself. Label routine,
+low-impact implementation details as reversible assumptions; carry every
+material user-owned choice into the alignment checkpoint below instead of
+defaulting it. That checkpoint owns the question order and compact format.
 
 Challenge scope before modeling it. Preserve explicitly accepted outcomes and
 decisions without silently widening them. For raw ideas and unaccepted proposals,
@@ -158,7 +160,104 @@ integration needs a current consumer and observable requirement in this slice;
 otherwise defer it. Leave owner-controlled distribution, authority, and contract
 choices unresolved when selecting one would materially expand the result.
 
-### 3. Model intent, not implementation noise
+### 3. Align the domain and solution before elaborating
+
+Do not start the detailed use-case, rule, limitation, acceptance, ADR, or
+file-by-file implementation plan until the user and agent have the same material
+picture. Run two lenses over one shared working model:
+
+- **Decision dependencies:** separate repository facts from user-owned choices,
+  record which choices depend on others, and expose only choices that can be
+  answered from the evidence and decisions already settled.
+- **Domain model:** sharpen ambiguous terms, identify relevant actors/entities,
+  ownership, relationships, invariants, and lifecycle, and probe them with
+  concrete scenarios. Cross-check every claimed current behavior against code
+  and repository documentation.
+
+These are concurrent lenses, not separate interviews or competing artifacts.
+Resolve repository-verifiable facts yourself. Ask the user only for decisions
+that materially change the outcome, boundary, public contract, data ownership/lifecycle,
+migration, consistency or performance posture, security/retention, compatibility,
+rollout, or acceptance. If repository constraints leave one viable path, explain
+the constraint and proceed; do not invent alternatives merely to ask a question.
+
+#### Decide whether interaction is needed
+
+A user-provided mature PRD, specification, or equally concrete description may
+pass this checkpoint without a question when all applicable material points are
+already resolved: observable outcome, smallest in-scope slice, non-goals,
+domain terminology and ownership, affected consumers/contracts, important data
+and lifecycle behavior, operational constraints, and rollout/rollback. Repository
+grounding must reveal no material contradiction or stale premise, and the agent
+must not be introducing a new user-owned trade-off. Length and formatting alone
+do not make input mature.
+
+When those conditions hold, show a compact extracted understanding and continue
+without a ceremonial approval question. If evidence changes the proposed
+boundary or leaves a material choice open, interaction is required even for a
+long PRD.
+
+For an interactive checkpoint, map decision dependencies internally and ask only
+the choices that are answerable now. Ask the smallest useful round, with no more
+than three independent decisions. If one answer changes another question's
+options, ask the prerequisite alone, wait, then recompute the answerable set. Use
+concrete scenarios to make fuzzy domain boundaries observable. For each known
+choice, use the host's structured input tool with one decision, 2–3 real options,
+one recommended option with a concrete reason, and the trade-off that could
+change the answer. This compact contract overrides any generic decision-brief
+format elsewhere in the plugin for pre-spec alignment. Do not add ELI10 sections,
+completeness scores, effort estimates, or separate stakes/pros/cons blocks; put
+the relevant consequence directly in each option. Use prose only when the answer
+is open-ended or the structured input tool is unavailable.
+
+#### Show the shared picture
+
+Before any required question, present a concise alignment brief containing only
+applicable fields:
+
+- desired observable outcome and what means done;
+- verified current behavior and relevant repository evidence;
+- smallest scope and explicit non-goals;
+- canonical terms, actors/entities, ownership, relationships, and invariants;
+- proposed system/data flow, public contracts, storage or lifecycle changes at
+  the detail needed to expose material choices;
+- affected consumers and important operational constraints;
+- accepted assumptions/decisions and unresolved user-owned decisions.
+
+This is not the specification or a file-by-file implementation plan. Keep it
+compact enough that the user can correct the overall direction. After an answer,
+update the shared model and re-show only material changes before the next
+dependent question. If a required decision remains unanswered, stop and wait:
+do not write the spec artifact, manufacture UC/BR/LIM/AC/ADR rows, start plan
+review, or begin implementation. When the host cannot collect the answer in the
+current turn, a standalone invocation returns `NEEDS_CONTEXT`. A routed workflow
+always returns `NEEDS_CONTEXT` before asking, closes the current spec attempt as
+blocked, and restarts the same stage after the answer, including when a
+structured input tool resumes the host turn. Each question—including every
+decision in a round and the final confirmation below—is its own blocked attempt:
+close the attempt as `blocked`, ask exactly one question, stop, and restart the
+same stage after the answer before exposing another question.
+
+When no interactive decisions remain, present the complete updated brief
+and ask one final **Proceed with this understanding / Revise it** decision, with
+the recommended answer. Stop and wait for that confirmation; in a routed
+workflow it follows the same `NEEDS_CONTEXT` blocked-attempt lifecycle as a
+design question. Answering the last
+design question does not implicitly approve the assembled picture. A revision
+reopens the affected dependent choices. This final confirmation is not required
+for the mature-input path above because the user already supplied the complete
+authoritative picture and no material reinterpretation was introduced.
+
+Read existing repository-native glossaries and decision records when present.
+Do not create a new documentation convention or update domain/ADR files during
+alignment unless the user explicitly requested those writes. Carry accepted
+terminology and decisions into the specification instead.
+
+Approval at this checkpoint authorizes only elaborating the aligned picture into
+a specification. It does not mark that future specification accepted, satisfy a
+post-review implementation gate, or authorize code changes.
+
+### 4. Model intent, not implementation noise
 
 Use stable IDs within the document so the intent can later form a graph beside
 the code graph:
@@ -168,6 +267,13 @@ the code graph:
 - `LIM-n`: business, legal, compatibility, capacity, or operational limitation.
 - `AC-n`: pass/fail acceptance criterion and its observer.
 - `ADR-n`: decision with context, alternatives, consequences, and status.
+
+These semantic kinds are tools, not quotas. Omit an inapplicable kind instead of
+inventing a row to make the document look complete. Create an ADR only when the
+choice would be costly to change later, its rationale would not be obvious from
+the resulting code, and credible alternatives were actually evaluated; otherwise
+keep the accepted choice in ordinary scope or contract prose. Keep the persisted
+specification to its coarse `size` field; do not add question-time effort detail.
 
 Connect them explicitly (`UC-1 -> BR-2 -> AC-3`). A rule needs a current source
 or decision owner and a named observer; do not turn a code detail into a business
@@ -195,7 +301,7 @@ three or more branches/states/interactions are materially clearer than prose.
 Label nodes with the IDs above and add prose only for semantics the diagram
 cannot encode. Do not duplicate the same flow in bullets and a diagram.
 
-### 4. Verify the draft
+### 5. Verify the draft
 
 Before delivery, check:
 
@@ -224,9 +330,23 @@ measured threshold, record the method so it is reproducible. `L`/`XL` work must
 also state how each critical acceptance check could pass while behavior is
 broken; repair any self-satisfying check.
 
-Present a draft only when confirmation could change a material decision. Ask
-what is wrong or missing, incorporate the answer, and retain only the final
-artifact.
+Pre-spec alignment avoids a second generic confirmation round, but it does not
+authorize silently choosing material detail discovered while elaborating the
+specification. If elaboration exposes a new user-owned decision or materially
+changes the aligned picture, return to the alignment checkpoint and resolve it;
+do not add a generic mid-spec approval round.
+
+Keep `status: draft` through plan review. In a gated routed workflow, the fresh
+affirmative post-review reply defined by the router both accepts the reviewed
+specification and authorizes implementation. After its read-only preflight and
+proof-plan announcement, the implementation stage changes a draft frontmatter to
+`status: accepted` as its first repository write, before any code or test edit;
+it preserves an unchanged accepted status from a prior session. A requested
+revision returns to specification and review instead. For standalone
+specification delivery without an implementation stage, deliver the draft as
+the handoff and set `status: accepted` only when the user explicitly approves
+the completed draft; do not add a confirmation round to obtain it. Alignment
+approval or a review verdict alone never accepts the specification.
 
 Run the privacy gate over the exact final file:
 
@@ -265,17 +385,8 @@ status: draft | accepted
 
 [Optional single Mermaid diagram using UC/BR/LIM IDs]
 
-### Business rules
-
-| ID | Condition | Required outcome | Source / owner | Observer |
-| --- | --- | --- | --- | --- |
-| BR-1 | ... | ... | code evidence or decision owner | UC/AC |
-
-### Limitations
-
-| ID | Constraint | Reason | Affected flow |
-| --- | --- | --- | --- |
-| LIM-1 | ... | ... | UC/BR |
+[Add `BR-*` business rules or `LIM-*` limitations only when a concrete rule or
+constraint needs its own traceable identity. Omit empty headings and tables.]
 
 ## Scope
 
@@ -297,13 +408,13 @@ status: draft | accepted
 
 **Validation:** [cheapest decisive checks, then repository-required gates]
 **Reachable failure modes:** [failure -> handling -> user-visible result]
-**Rollout/rollback:** [release sequence, monitoring, undo]
+[When release or data context requires staged delivery, monitoring, migration,
+or special recovery, add **Rollout/rollback:** [release sequence, signals,
+undo]. Otherwise omit it.]
 
-## Decisions (ADR)
-
-| ID | Status | Context and alternatives | Decision | Consequences / supersedes |
-| --- | --- | --- | --- | --- |
-| ADR-1 | proposed/accepted/superseded | ... | ... | ... |
+[Only when a decision passes the three-part ADR threshold, add a
+`## Decisions (ADR)` section with ID, status, context/alternatives, decision,
+and consequences. Otherwise omit it entirely.]
 
 ## Unresolved decisions
 

@@ -28,5 +28,17 @@ Before declaring an engineering plan ready:
 7. End with the accepted decisions, residual risks, non-goals, validation
    commands, and readiness verdict.
 
-Do not start implementation merely because the review is complete. Implementation
-requires a separate user request.
+Do not start implementation merely because the review is complete. For a gated
+large change, present the reviewed direction and material deltas first, then
+ask one explicit **Accept and implement / Revise** decision. Only an
+unambiguous acceptance of that decision counts: it both accepts the reviewed
+specification and authorizes implementation. An acknowledgement, a partial
+answer, or an acceptance with a requested change is a revision request. Routed
+plan review never marks the specification accepted. After approval, the
+implementation stage completes its read-only preflight and proof-plan
+announcement. If the reviewed frontmatter is `status: draft`, implementation
+sets it to `status: accepted` as its first repository write before any code or
+test edit; an unchanged accepted status from a prior session is preserved. A
+requested revision returns to specification and review. The original change
+request, pre-spec alignment approval, spec existence, or a positive review
+verdict is not that approval.

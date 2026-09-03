@@ -145,18 +145,12 @@ test("requires a focused test only for new observable behavior", () => {
   }
 });
 
-test("requires observable intent-layer traceability from the large spec", () => {
+test("requires observable intent traceability without forcing limitations or ADRs", () => {
   const complete = `
 ## Use cases
-UC-1 reaches BR-1 and LIM-1.
-## Business rules
-BR-1 defines the outcome and traces to AC-1.
-## Limitations
-LIM-1 is a compatibility constraint.
+UC-1 traces to AC-1.
 ## Acceptance
 AC-1 names an observer and decisive check.
-## Decisions
-ADR-1 records the public API decision.
 ## Scope
 Non-goals are explicit.
 ## Release
@@ -164,8 +158,50 @@ Rollout is staged and rollback restores the previous API.
 `;
 
   assert.equal(intentLayerSpecPassed(complete), true);
-  assert.equal(intentLayerSpecPassed(complete.replace(/ADR-1/u, "decision")), false);
   assert.equal(intentLayerSpecPassed(complete.replace(/observer/u, "check")), false);
+  assert.equal(
+    intentLayerSpecPassed(
+      complete.replace(
+        "## Release\nRollout is staged and rollback restores the previous API.",
+        "Rollback restores the previous API.",
+      ),
+    ),
+    false,
+  );
+  assert.equal(
+    intentLayerSpecPassed(
+      complete.replace(
+        "## Release\nRollout is staged and rollback restores the previous API.",
+        "## Release\nRollout is staged.",
+      ),
+    ),
+    false,
+  );
+
+  const invented = [
+    "## Decisions (ADR)\n| ID | Decision |\n| --- | --- |\n| ADR-1 | TBD |",
+    "## Business rules\n| ID | Condition | Outcome |\n| --- | --- | --- |\n| BR-1 | ... | ... |",
+    "## Decisions (ADR)\n| ID | Status | Context | Decision |\n| --- | --- | --- | --- |\n| ADR-1 | proposed/accepted/superseded | ... | ... |",
+    "## Decisions (ADR)\n| ID | Status | Decision |\n| --- | --- | --- |\n| ADR-1 | proposed | TBD |",
+    "## Limitations\n| ID | Constraint |\n| --- | --- |\n| LIM-1 | N/A |",
+    "## Limitations\nTBD",
+    "## Limitations\n...",
+    "## Decisions (ADR)\n\n## Notes\nnothing decided",
+    "## Limitations\n",
+  ];
+  for (const section of invented) {
+    assert.equal(intentLayerSpecPassed(`${complete}\n${section}\n`), false, section);
+  }
+
+  const genuine = [
+    "## Business rules\n| ID | Condition | Outcome |\n| --- | --- | --- |\n| BR-1 | unknown tier | discount 0 |",
+    "## Decisions (ADR)\n| ID | Status | Decision |\n| --- | --- | --- |\n| ADR-1 | accepted | keep lookup synchronous |",
+    "## Decisions (ADR)\nNone.",
+    "The limitations of this approach are TBD in a later slice.",
+  ];
+  for (const section of genuine) {
+    assert.equal(intentLayerSpecPassed(`${complete}\n${section}\n`), true, section);
+  }
 });
 
 test("rejects content-bearing fields from persisted results", () => {

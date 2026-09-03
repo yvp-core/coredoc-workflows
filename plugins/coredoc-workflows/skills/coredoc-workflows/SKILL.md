@@ -105,15 +105,44 @@ same stage as the next attempt. Never infer stage boundaries from `PreToolUse` o
 On Codex, every `coredoc-workflows stage-run` and `coredoc-workflows finish-run`
 command requires the same elevated execution as routing.
 
-For a large change, write the spec in the repository's documented local
-location and review it before implementation. A gated stage has
-`gate: user-approval`: close the design stage before pausing and start the
-gated implementation stage only after explicit approval. Do not run `coredoc-workflows finish-run` while paused.
+For a large change, the spec stage must align the user's intent, the relevant
+domain model, and the proposed solution shape before writing the specification.
+When `coredoc-spec` exposes an unresolved user-owned decision, do not write the
+spec or finish the stage as successful. Return `NEEDS_CONTEXT` and follow the
+blocked-attempt lifecycle above: close that attempt as blocked, ask, stop, and
+restart the spec stage from the updated shared picture after the answer.
+A completed interactive frontier still requires confirmation of the assembled
+alignment brief before spec writing; the last design answer is not that
+confirmation.
+A mature user-provided PRD may pass without a ceremonial question only under the
+skill's alignment criteria.
+
+Write the aligned spec in the repository's documented local location and review
+it before implementation. A gated stage has `gate: user-approval`: after review,
+show the reviewed direction, material changes from the alignment brief,
+unresolved decisions, and residual risks. Close the design stage before pausing,
+then ask one explicit **Accept and implement / Revise** decision with the
+structured input tool when available; otherwise ask the same concise two-option
+question in prose and wait.
+Only a fresh affirmative user reply to that decision counts: it both
+accepts the reviewed specification and authorizes the gated implementation
+stage. An acknowledgement, a partial answer, or an acceptance with a requested
+change is a revision request. Open the gated implementation stage, complete its
+read-only preflight, and announce its proof plan. If the reviewed specification
+is still `status: draft`, update it to `status: accepted` as the first repository
+write, before any code or test edit; preserve an unchanged accepted status from a
+prior session. Plan review never marks the specification accepted. A request for
+revision returns to specification and review; if
+elaboration exposed a new material user-owned decision, return to pre-spec
+alignment rather than adding a generic approval round. The initial change
+request, pre-spec alignment approval, spec existence, an already accepted
+status, or a successful review verdict does not count.
+Do not run `coredoc-workflows finish-run` while paused.
 In the same host session, resume the same `runId` without routing again. If the
 session ends, `SessionEnd` marks only
 an actually open stage `abandoned` and closes the run. In a new session, route
-again, reuse the local spec, re-execute spec/design context, obtain approval, and
-continue.
+again, reuse the local spec, re-execute spec/design context, obtain fresh
+approval regardless of its existing status, and continue.
 
 ## Finish and hand off
 

@@ -494,6 +494,27 @@ test("router and implementation skills preserve the large-change approval lifecy
     router,
     /Do not run `coredoc-workflows finish-run` while\s+paused/,
   );
+  assert.match(
+    router,
+    /ask one explicit \*\*Accept and implement \/ Revise\*\* decision[\s\S]*fresh affirmative user reply to that decision counts[\s\S]*both\s+accepts the reviewed specification and authorizes the gated implementation/i,
+  );
+  assert.match(
+    router,
+    /acknowledgement, a partial answer, or an acceptance with a requested\s+change is a revision request/i,
+  );
+  assert.match(
+    router,
+    /structured input tool when available; otherwise ask the same concise two-option\s+question in prose and wait/i,
+  );
+  assert.match(
+    router,
+    /read-only preflight[\s\S]*announce its proof plan[\s\S]*still `status: draft`[\s\S]*`status: accepted` as the first repository\s+write[\s\S]*preserve an unchanged accepted status/i,
+  );
+  assert.match(
+    router,
+    /initial\s+change\s+request,\s+pre-spec\s+alignment\s+approval,\s+spec\s+existence,\s+an\s+already\s+accepted\s+status,\s+or\s+a\s+successful\s+review\s+verdict\s+does\s+not\s+count/i,
+  );
+  assert.match(router, /obtain fresh\s+approval regardless of its existing status/i);
   assert.match(router, /runStateStatus/);
   assert.match(router, /fails closed/);
   assert.match(router, /same host session/i);
@@ -509,6 +530,24 @@ test("router and implementation skills preserve the large-change approval lifecy
   assert.match(router, /submit_session_feedback/);
   assert.match(router, /never by a skill name/);
   assert.match(implementation, /acceptance criteria/i);
+  assert.match(
+    implementation,
+    /fresh approval[\s\S]*reviewed direction and material deltas through the\s+explicit Accept and implement \/ Revise decision/i,
+  );
+  assert.match(implementation, /same affirmative reply\s+authorizes implementation/i);
+  assert.match(
+    implementation,
+    /finish the read-only preflight[\s\S]*state\s+the proof plan before changing any file[\s\S]*frontmatter is\s+`status: draft`[\s\S]*`status: accepted` as the implementation stage's\s+first repository write[\s\S]*already accepted from a prior session, preserve that status[\s\S]*fresh\s+post-review approval is still required/i,
+  );
+  assert.match(implementation, /start from the reviewed specification/i);
+  assert.match(
+    implementation,
+    /reveal a mismatch, stop with\s+the specification still `status: draft`/i,
+  );
+  assert.match(
+    implementation,
+    /original\s+change[\s\S]*pre-spec\s+alignment\s+approval[\s\S]*an\s+already\s+accepted\s+status[\s\S]*positive\s+review[\s\S]*not\s+implementation\s+authorization/i,
+  );
   assert.match(
     implementation,
     /Routed:.*repository evidence already available.*Do not repeat\s+completed discovery/is,
@@ -575,7 +614,7 @@ test("router owns exact task attribution and explicit stage capture boundaries",
   );
   assert.match(
     router,
-    /close the design stage.*before pausing.*start the\s+gated implementation stage only after explicit approval/is,
+    /close the design stage.*before pausing.*fresh affirmative user reply[\s\S]*accepts the reviewed specification[\s\S]*authorizes the gated implementation/is,
   );
   assert.match(
     router,
@@ -653,9 +692,10 @@ test("router runs managed capture boundary commands outside the Codex sandbox", 
 });
 
 test("plan review keeps risk-based validation, interaction, and completion gates", async () => {
-  const [body, antiShortcut] = await Promise.all([
+  const [body, antiShortcut, completionGate] = await Promise.all([
     skill("coredoc-plan-review"),
     readFile(join(METHODOLOGY_ROOT, "anti-shortcut.md"), "utf8"),
+    readFile(join(METHODOLOGY_ROOT, "plan-review-gate.md"), "utf8"),
   ]);
 
   assert.match(body, /resources\/methodology\/review-policy\.md/);
@@ -675,6 +715,24 @@ test("plan review keeps risk-based validation, interaction, and completion gates
   assert.match(body, /reachable/i);
   assert.match(body, /accepted scenarios and invariants/i);
   assert.match(body, /Do not prescribe one new test per edit or acceptance criterion/);
+  assert.match(
+    completionGate,
+    /ask one explicit \*\*Accept and implement \/ Revise\*\* decision[\s\S]*unambiguous acceptance of that decision counts: it both accepts the reviewed\s+specification and authorizes implementation/i,
+  );
+  assert.match(
+    completionGate,
+    /Routed\s+plan review never marks the specification accepted[\s\S]*read-only preflight and proof-plan\s+announcement[\s\S]*frontmatter is `status: draft`[\s\S]*`status: accepted` as its first repository write[\s\S]*unchanged accepted status from a prior session is preserved/i,
+  );
+  assert.match(body, /routed review remains read-only[\s\S]*new specification attempt/i);
+  assert.match(body, /standalone\s+review may update the artifact only when the user explicitly authorized/i);
+  assert.match(body, /missing record is a requested spec revision rather\s+than a design-stage edit/i);
+  assert.match(
+    completionGate,
+    /original\s+change\s+request,\s+pre-spec\s+alignment\s+approval,\s+spec\s+existence,\s+or\s+a\s+positive\s+review\s+verdict\s+is\s+not\s+that\s+approval/i,
+  );
+  assert.match(body, /as\s+an\s+ADR\s+only\s+when\s+the\s+choice\s+meets\s+the\s+spec\s+skill's\s+ADR\s+threshold/i);
+  assert.match(body, /rollout and\s+rollback where release or data context requires them/i);
+  assert.doesNotMatch(body, /Record accepted decisions in the spec's ADR\/decision section/);
   assert.doesNotMatch(body, /100% coverage is the goal/);
   assert.doesNotMatch(body, /DRY violations—be aggressive/);
   assert.doesNotMatch(body, /Build it now in this PR/);
@@ -689,6 +747,83 @@ test("spec defaults to a local final artifact without spawning or remote filing"
   assert.doesNotMatch(body, /Spawn the agent/);
 });
 
+test("spec aligns one grounded domain and solution model before elaboration", async () => {
+  const [body, alignment, router] = await Promise.all([
+    skill("coredoc-spec"),
+    readFile(join(METHODOLOGY_ROOT, "pre-spec-alignment.md"), "utf8"),
+    skill("coredoc-workflows"),
+  ]);
+
+  const ground = body.indexOf("### 1. Ground current state");
+  const align = body.indexOf("### 3. Align the domain and solution before elaborating");
+  const model = body.indexOf("### 4. Model intent, not implementation noise");
+  assert.ok(ground >= 0 && ground < align && align < model);
+  assert.ok(body.includes(alignment), "generated spec lost the shared alignment method");
+
+  assert.match(alignment, /Decision dependencies:[\s\S]*Domain model:/i);
+  assert.match(alignment, /concurrent lenses, not separate interviews or competing artifacts/i);
+  assert.match(alignment, /Resolve repository-verifiable facts yourself/i);
+  assert.match(alignment, /choices that can be\s+answered from the evidence and decisions already settled/i);
+  assert.match(alignment, /recompute the answerable set/i);
+  assert.match(
+    alignment,
+    /one decision, 2–3 real options[\s\S]*recommended option with a concrete reason[\s\S]*trade-off that could\s+change the answer/i,
+  );
+  assert.match(
+    alignment,
+    /compact contract overrides any generic decision-brief\s+format elsewhere in the plugin/i,
+  );
+  assert.match(
+    alignment,
+    /Do not add ELI10 sections,\s+completeness scores, effort estimates, or separate stakes\/pros\/cons blocks/i,
+  );
+  assert.match(alignment, /user-provided mature PRD[\s\S]*may[\s\S]*without a question/i);
+  assert.match(alignment, /Length and formatting alone\s+do not make input mature/i);
+  assert.match(alignment, /canonical terms, actors\/entities, ownership, relationships, and invariants/i);
+  assert.match(alignment, /concrete scenarios/i);
+  assert.match(alignment, /Cross-check every claimed current behavior against code/i);
+  assert.match(alignment, /Before any required question, present a concise alignment brief/i);
+  assert.match(
+    alignment,
+    /no interactive decisions remain[\s\S]*complete updated brief[\s\S]*Proceed with this understanding \/ Revise it/i,
+  );
+  assert.match(
+    alignment,
+    /answering the last\s+design question does not implicitly approve the assembled picture/i,
+  );
+  assert.match(alignment, /final confirmation is not required[\s\S]*mature-input path/i);
+  assert.match(
+    alignment,
+    /decision remains unanswered[\s\S]*do not write the spec artifact[\s\S]*start plan\s+review, or begin implementation/i,
+  );
+  assert.match(
+    alignment,
+    /routed workflow\s+always returns `NEEDS_CONTEXT` before asking[\s\S]*closes the current spec attempt as\s+blocked[\s\S]*restarts the same stage after the answer/i,
+  );
+  assert.match(
+    alignment,
+    /Each question—including every\s+decision in a round and the final confirmation below—is its own blocked attempt[\s\S]*ask exactly one question, stop, and restart the\s+same stage after the answer/i,
+  );
+  assert.match(
+    alignment,
+    /Stop and wait for that confirmation; in a routed\s+workflow it follows the same `NEEDS_CONTEXT` blocked-attempt lifecycle/i,
+  );
+  assert.match(
+    alignment,
+    /authorizes only elaborating[\s\S]*does not[\s\S]*satisfy a\s+post-review implementation gate/i,
+  );
+  assert.match(router, /spec stage must align the user's intent[\s\S]*before writing the specification/i);
+  assert.match(
+    router,
+    /unresolved user-owned decision[\s\S]*do not write the\s+spec or finish the stage as successful[\s\S]*Return `NEEDS_CONTEXT`[\s\S]*close that attempt as blocked[\s\S]*restart the spec stage/i,
+  );
+  assert.match(router, /mature user-provided PRD may pass without a ceremonial question/i);
+  assert.match(
+    router,
+    /interactive frontier[\s\S]*requires confirmation of the assembled\s+alignment brief[\s\S]*last design answer is not that\s+confirmation/i,
+  );
+});
+
 test("spec preserves an observable intent graph without test-per-criterion ceremony", async () => {
   const body = await skill("coredoc-spec");
 
@@ -696,16 +831,37 @@ test("spec preserves an observable intent graph without test-per-criterion cerem
     assert.match(body, new RegExp("`" + id + "`"), id);
   }
   assert.match(body, /UC-1 -> BR-2 -> AC-3/);
-  assert.match(body, /Business rules/);
-  assert.match(body, /Limitations/);
-  assert.match(body, /Decisions \(ADR\)/);
+  assert.match(body, /semantic kinds are tools, not quotas/i);
+  assert.match(body, /Omit an inapplicable kind instead of\s+inventing a row/i);
+  assert.match(body, /Omit empty headings and tables/i);
+  assert.match(body, /Otherwise omit it entirely/i);
+  assert.match(
+    body,
+    /Create an ADR only when the\s+choice would be costly to change later[\s\S]*rationale would not be obvious[\s\S]*credible alternatives were actually evaluated/i,
+  );
   assert.match(body, /rule needs a current source[\s\S]*named observer/i);
   assert.match(body, /Acceptance criteria\s+are outcomes, not an automatic request for one new test each/i);
-  assert.match(body, /resources\/methodology\/estimate-buckets\.md/);
+  assert.doesNotMatch(body, /resources\/methodology\/estimate-buckets\.md/);
   assert.match(body, /acceptance names observable behaviors and predicates, not test counts or\s+invented percentage targets/i);
   assert.match(body, /three or more branches\/states\/interactions/);
   assert.match(body, /Do not duplicate the same flow in bullets and a diagram/);
   assert.match(body, /every in-scope outcome maps to at least one use case\/rule and observable `AC`/);
+  assert.match(
+    body,
+    /Keep `status: draft` through plan review[\s\S]*fresh\s+affirmative post-review reply[\s\S]*both accepts the reviewed\s+specification and authorizes implementation[\s\S]*read-only preflight and\s+proof-plan announcement[\s\S]*changes a draft frontmatter to\s+`status: accepted` as its first repository write[\s\S]*preserves an unchanged accepted status from a prior session/i,
+  );
+  assert.match(
+    body,
+    /standalone\s+specification\s+delivery[\s\S]*deliver\s+the\s+draft\s+as\s+the\s+handoff[\s\S]*do\s+not\s+add\s+a\s+confirmation\s+round\s+to\s+obtain\s+it/i,
+  );
+  assert.match(
+    body,
+    /elaboration exposes a new user-owned decision[\s\S]*return to the alignment checkpoint[\s\S]*do not add a generic mid-spec approval/i,
+  );
+  assert.match(
+    body,
+    /When release or data context requires[\s\S]*Rollout\/rollback:[\s\S]*Otherwise omit it/i,
+  );
 });
 
 test("spec challenges proposal scope and verifies model contracts before elaboration", async () => {
