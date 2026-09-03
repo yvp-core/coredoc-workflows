@@ -11,10 +11,10 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { declaredWorkflowStagesV2 } from "../runtime/capture/contract.mjs";
-import { cacheDir } from "./project-key.mjs";
+import { stateRoot } from "./project-key.mjs";
 
 const SESSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
 const MAX_EVENT_BYTES = 4_096;
@@ -43,9 +43,13 @@ export function hasWorkflowSessionAttribution(sessionId) {
 }
 
 function stateDirectory(env = process.env) {
-  // Runs are disposable, so they live under the project's cache/ — namespaced by
-  // project so unrelated repositories never share a directory. See project-key.mjs.
-  return env.COREDOC_WORKFLOWS_STATE_DIR ?? join(cacheDir(process.cwd(), env), "runs");
+  // One host session can move between a workspace root, repositories, and
+  // worktrees. Its active workflow must therefore not be addressed through the
+  // current cwd or a project key that can change while the run is open.
+  return (
+    env.COREDOC_WORKFLOWS_STATE_DIR ??
+    join(resolve(stateRoot(env)), "workflow-runs")
+  );
 }
 
 function sessionKey(sessionId) {
@@ -324,7 +328,13 @@ function activeStageRun(sessionId, env) {
   }
   const state = readWorkflowRun(sessionId, { env });
   if (!state || state.status !== "active") {
-    return { result: { status: "inactive" } };
+    return {
+      result: {
+        status: "inactive",
+        reason: "active-run-unavailable",
+        action: "route-again",
+      },
+    };
   }
   if (
     state.stageCaptureVersion !== 1 ||

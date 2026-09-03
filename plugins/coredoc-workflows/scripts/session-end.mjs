@@ -64,7 +64,15 @@ async function main() {
   let input = "";
   for await (const chunk of process.stdin) input += chunk;
   const event = JSON.parse(input || "{}");
-  if (event?.hook_event_name !== "SessionEnd") return;
+  // Claude supplies the parent's session_id to hooks running inside subagents
+  // and distinguishes those invocations with agent_id. A child teardown must
+  // never abandon the parent workflow run.
+  if (
+    event?.hook_event_name !== "SessionEnd" ||
+    Object.hasOwn(event, "agent_id")
+  ) {
+    return;
+  }
   await finishWorkflowSession({ sessionId: event.session_id });
 }
 

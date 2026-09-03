@@ -21,7 +21,9 @@ Classify each delegated item and use the scoped plugin agent name:
 | specialist, red-team, or adversarial review | `coredoc-workflows:coredoc-reviewer` |
 
 Keep user decisions and authorization in the parent conversation. Never delegate
-them. Do not permit nested delegation.
+them. The parent exclusively owns `coredoc-workflows route-task`, `stage-run`,
+and `finish-run`; every dispatch prompt must tell the subagent not to invoke
+those lifecycle commands. Do not permit nested delegation.
 
 Use the lower of the applicable policy cap and the host's lower concurrency
 limit. Apply the non-review fan-out cap by dispatching one batch in one message

@@ -11,17 +11,20 @@
  * usual place. `~/.coredoc` is platform-neutral and is already where the CLI
  * keeps its credentials and session, so state lives under one discoverable root.
  *
- * **Mixing.** State was not namespaced per project, so several repositories
- * shared one directory. Runs, browser sessions and reports from unrelated work
- * landed together.
+ * **Mixing.** Project-scoped state was not namespaced per project, so browser
+ * sessions and reports from unrelated repositories landed together. Active
+ * workflow coordination is the exception: one host session can span several
+ * repositories, so it lives in the root-level `workflow-runs/` directory.
  *
  * Layout:
  *
  *   ~/.coredoc/
  *     credentials.json          owned by the CLI, mode 0600
  *     session.json              owned by the CLI
+ *     workflow-runs/            DISPOSABLE — active session coordination
  *     <project-key>/
- *       cache/                  DISPOSABLE — runs, browser state, reports.
+ *       cache/                  DISPOSABLE — project-scoped run data,
+ *                               browser state, reports.
  *                               Safe to delete; nothing here must survive.
  *       state/                  must survive — anything longitudinal
  *

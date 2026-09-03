@@ -623,6 +623,23 @@ test("router owns exact task attribution and explicit stage capture boundaries",
   assert.match(router, /successful finish.*every routed stage.*closed\s+successfully/is);
   assert.match(router, /SessionEnd.*only.*actually open stage.*abandoned/is);
   assert.match(router, /Never infer stage boundaries\s+from `PreToolUse` or\s+`PostToolUse`/i);
+  assert.match(
+    router,
+    /parent coordinator exclusively owns.*`route-task`.*`stage-run`.*`finish-run`/is,
+  );
+  assert.match(
+    router,
+    /status: inactive.*stop.*do not continue the stage method.*route-task.*again/is,
+  );
+
+  const dispatch = await readFile(
+    join(METHODOLOGY_ROOT, "subagent-dispatch.md"),
+    "utf8",
+  );
+  assert.match(
+    dispatch,
+    /parent exclusively owns.*route-task.*stage-run.*finish-run.*every dispatch prompt/is,
+  );
 
   assert.match(readme, /explicit router boundary commands/i);
   assert.match(readme, /exact task-owning context/i);

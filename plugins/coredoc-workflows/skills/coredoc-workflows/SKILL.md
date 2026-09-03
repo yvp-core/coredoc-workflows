@@ -102,6 +102,13 @@ and `BLOCKED` to `blocked`. On `NEEDS_CONTEXT`, finish the current stage as
 same stage as the next attempt. Never infer stage boundaries from `PreToolUse` or
 `PostToolUse`.
 
+The parent coordinator exclusively owns `route-task`, `stage-run`, and
+`finish-run`. Never delegate those lifecycle commands, and explicitly prohibit
+them in every subagent dispatch prompt. If `stage-run` returns
+`status: inactive`, stop: do not continue the stage method or claim recorded
+progress. Run `route-task` again, then reopen the stage returned by the new
+route.
+
 On Codex, every `coredoc-workflows stage-run` and `coredoc-workflows finish-run`
 command requires the same elevated execution as routing.
 

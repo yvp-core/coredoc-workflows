@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "../test/test-api.mjs";
@@ -134,6 +134,30 @@ test("persists a boundary before delivery and returns only bounded status", asyn
   ]);
 });
 
+test("reports an actionable result when no active workflow can be found", async () => {
+  const env = {
+    COREDOC_WORKFLOWS_STATE_DIR: mkdtempSync(
+      join(tmpdir(), "coredoc-stage-run-inactive-"),
+    ),
+  };
+
+  assert.deepEqual(
+    await runWorkflowStage(
+      {
+        action: "start",
+        sessionId: "session-without-active-run",
+        stageId: "spec",
+      },
+      { env },
+    ),
+    {
+      status: "inactive",
+      reason: "active-run-unavailable",
+      action: "route-again",
+    },
+  );
+});
+
 test("CLI applies a stage boundary to the native Codex session", () => {
   const codexSessionId = "33333333-3333-4333-8333-333333333333";
   const env = {
@@ -177,6 +201,77 @@ test("CLI applies a stage boundary to the native Codex session", () => {
     readWorkflowRun(codexSessionId, { env }).stageProgress.tdd.stageId,
     "tdd",
   );
+});
+
+test("CLI keeps one attributed workflow active when the working directory changes", () => {
+  const root = mkdtempSync(join(tmpdir(), "coredoc-stage-cwd-"));
+  const stateHome = join(root, "state-home");
+  const routeCwd = join(root, "workspace");
+  const stageCwd = join(routeCwd, "repository");
+  mkdirSync(stageCwd, { recursive: true });
+  const env = {
+    ...process.env,
+    COREDOC_WORKFLOWS_SESSION_ID: "session-stage-cwd-change",
+    COREDOC_WORKFLOWS_STATE_HOME: stateHome,
+    COREDOC_CAPTURE_ENDPOINT: "",
+    COREDOC_CAPTURE_HEADERS: "",
+    OTEL_EXPORTER_OTLP_ENDPOINT: "",
+    OTEL_EXPORTER_OTLP_HEADERS: "",
+  };
+  delete env.COREDOC_WORKFLOWS_STATE_DIR;
+  delete env.COREDOC_WORKFLOWS_REPO_KEY;
+
+  const routed = spawnSync(
+    process.execPath,
+    [
+      new URL("./route-task.mjs", import.meta.url).pathname,
+      "--intent",
+      "change",
+    ],
+    { cwd: routeCwd, encoding: "utf8", env },
+  );
+  assert.equal(routed.status, 0, routed.stderr);
+  assert.equal(JSON.parse(routed.stdout).runStateStatus, "started");
+
+  const started = spawnSync(
+    process.execPath,
+    [
+      new URL("./stage-run.mjs", import.meta.url).pathname,
+      "start",
+      "--stage-id",
+      "implement",
+    ],
+    { cwd: routeCwd, encoding: "utf8", env },
+  );
+  assert.equal(started.status, 0, started.stderr || started.stdout);
+  assert.equal(JSON.parse(started.stdout).status, "started");
+
+  const finished = spawnSync(
+    process.execPath,
+    [
+      new URL("./stage-run.mjs", import.meta.url).pathname,
+      "finish",
+      "--stage-id",
+      "implement",
+      "--outcome",
+      "success",
+    ],
+    { cwd: stageCwd, encoding: "utf8", env },
+  );
+  assert.equal(finished.status, 0, finished.stderr || finished.stdout);
+  assert.equal(JSON.parse(finished.stdout).status, "finished");
+
+  const finalized = spawnSync(
+    process.execPath,
+    [
+      new URL("./finish-run.mjs", import.meta.url).pathname,
+      "--outcome",
+      "failed",
+    ],
+    { cwd: stageCwd, encoding: "utf8", env },
+  );
+  assert.equal(finalized.status, 0, finalized.stderr || finalized.stdout);
+  assert.equal(JSON.parse(finalized.stdout).status, "finished");
 });
 
 test("replays exact stored events and then records the explicit finish", async () => {
