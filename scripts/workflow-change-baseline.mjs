@@ -93,7 +93,7 @@ export function intentLayerSpecPassed(content) {
   // column. Placeholders are delimited by `|` or line end, never by `\b`, because
   // `...` has no word boundary against the next space.
   const inventedEmptySection =
-    /(?:Business rules?|Limitations?|Decisions \(ADR\))[^\S\n]*\n(?:\s*\n)*(?:[^\S\n]*(?=#{1,6}\s)|[^\S\n]*(?![\s\S])|\s*(?:\|[^\n]*\|[^\S\n]*\n\s*\|[- :|]+\|[^\S\n]*\n)?\s*(?:\|\s*(?:BR|LIM|ADR)-\d+\s*\|(?:[^\n|]*\|)*?\s*(?:\.\.\.|TBD|N\/A)\s*\||(?:\.\.\.|TBD)[^\S\n]*(?:\n|$)))/imu;
+    /(?:Business rules?|Limitations?|Decisions \(ADR\))[^\S\n]*\n(?:[^\S\n]*\n)*(?:[^\S\n]*(?=#{1,6}\s)|[^\S\n]*(?![\s\S])|\s*(?:\|[^\n]*\|[^\S\n]*\n\s*\|[- :|]+\|[^\S\n]*\n)?\s*(?:\|\s*(?:BR|LIM|ADR)-\d+\s*\|(?:[^\n|]*\|)*?\s*(?:\.\.\.|TBD|N\/A)\s*\||(?:\.\.\.|TBD)[^\S\n]*(?:\n|$)))/imu;
   return required.every((pattern) => pattern.test(content)) && !inventedEmptySection.test(content);
 }
 
