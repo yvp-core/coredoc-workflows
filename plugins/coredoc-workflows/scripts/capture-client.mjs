@@ -119,17 +119,17 @@ export function selectManagedCaptureBinding({
       // the workspaceMode marker and exact host/nonce match.
       candidate.enabled !== false,
   );
-  // A repository binding for the current checkout wins over the workspace
-  // binding: listed repositories route to their own destination, everything
-  // else falls back to the workspace-mode default.
-  if (repositoryIdentity != null) {
+  // A Codex repository binding for the current checkout wins over the
+  // workspace binding: listed checkouts route to their own destination,
+  // everything else falls back to the workspace-mode default. The match is the
+  // checkout-specific scope key, never the Git origin, so another clone of the
+  // same repository stays on the default. Claude Code never selects here: its
+  // binding comes from the global or repository-local settings file.
+  if (repositoryIdentity != null && host === "codex") {
     const repositoryBindings = eligibleHostBindings.filter(
       (candidate) =>
         candidate.workspaceMode !== true &&
-        (host === "codex"
-          ? candidate.repositoryScopeKey === repositoryIdentity.repositoryScopeKey
-          : candidate.repositoryKey !== undefined &&
-            candidate.repositoryKey === repositoryIdentity.normalizedRepositoryKey),
+        candidate.repositoryScopeKey === repositoryIdentity.repositoryScopeKey,
     );
     if (repositoryBindings.length > 1) unavailableManagedCodexBinding();
     if (repositoryBindings.length === 1) {

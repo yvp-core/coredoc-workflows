@@ -40,7 +40,7 @@
     },
     {
       "path": "scripts/capture-client.mjs",
-      "sha256": "98c1c3480a6d0921c697ba1f1079a89397c9db09a4059f734d6e0b021a1c54ab"
+      "sha256": "f5f6af3c85ae2c6597eb21834a1e07c5379d362d7957a76245f4a08e185eee6c"
     },
     {
       "path": "scripts/capture-health-report.mjs",

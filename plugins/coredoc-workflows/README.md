@@ -365,8 +365,8 @@ lists destinations: one default plus, optionally, loopback or HTTPS
 destinations that each own specific absolute checkout paths, so sessions in
 those checkouts reach their own server while everything else keeps the default.
 Neither a repository, current working directory, host payload, Coredoc MCP, nor
-Coredoc Desktop can select a destination the policy does not list. Coredoc
-Desktop is not required.
+Coredoc Desktop can select a destination the policy does not list.
+Coredoc Desktop is not required.
 
 Setup requires supported macOS. It may open a browser for PKCE enrollment,
 mints one installation-scoped telemetry credential, copies the hash-verified

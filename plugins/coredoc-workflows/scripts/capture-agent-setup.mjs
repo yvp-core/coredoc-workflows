@@ -1439,12 +1439,29 @@ export function createCaptureAgentSetup({
             installationId: identity.installationId,
             requestTimeoutMs,
             createRequestSignal,
-            completeEnrollment: (session) => {
+            completeEnrollment: async (session) => {
               credentials.set(destinationKey(destination), {
                 token: session.installationToken.token,
                 session,
               });
-              return enroll(index + 1);
+              try {
+                return await enroll(index + 1);
+              } catch (error) {
+                // A later destination failed before setup committed. performSetup
+                // revokes every minted token itself and reports a rollback state;
+                // anything without one never reached performSetup, so this
+                // level revokes its own token as the error unwinds.
+                if (error?.rollback !== undefined) throw error;
+                credentials.delete(destinationKey(destination));
+                try {
+                  await session.revokeInstallationToken();
+                } catch {
+                  fail("ROLLBACK_FAILED", { rollback: "failed" });
+                }
+                const mapped = mappedError(error);
+                mapped.rollback = "restored";
+                throw mapped;
+              }
             },
           });
         };

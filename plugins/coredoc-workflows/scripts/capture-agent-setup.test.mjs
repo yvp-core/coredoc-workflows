@@ -2246,3 +2246,29 @@ test("a listed checkout without a git remote fails before enrollment", async () 
   );
   assert.equal(context.enrollmentCount(), 0);
 });
+
+test("a destination that fails to enroll revokes the tokens already minted for earlier destinations", async () => {
+  const context = await multiDestinationHarness({
+    enrollmentErrors: [
+      undefined,
+      Object.assign(new Error("browser timed out"), { code: "OAUTH_TIMEOUT" }),
+    ],
+  });
+  const paths = captureAgentSetupPaths({ homeDir: context.homeDir, env: {} });
+
+  await assert.rejects(
+    context.setup.setup(),
+    (error) =>
+      error instanceof CaptureAgentSetupError &&
+      error.code === "OAUTH_TIMEOUT" &&
+      error.rollback === "restored",
+  );
+  assert.equal(context.enrollmentCount(), 2);
+  assert.equal(
+    context.events.filter((event) => event === "tokens:revoke-installation").length,
+    1,
+  );
+  assert.equal(context.events.includes("lifecycle:setup"), false);
+  await assert.rejects(readFile(paths.relayConfigPath), { code: "ENOENT" });
+  await assert.rejects(readFile(context.repositorySettingsPath), { code: "ENOENT" });
+});

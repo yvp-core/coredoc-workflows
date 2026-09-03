@@ -1366,7 +1366,7 @@ test("a listed repository binding wins over the workspace binding for its checko
   );
 });
 
-test("Claude repository bindings match on the normalized repository key", () => {
+test("Claude Code never selects a repository binding by Git origin", () => {
   const repository = {
     ...workspaceBinding({
       bindingId: "33333333-3333-4333-8333-333333333333",
@@ -1377,29 +1377,17 @@ test("Claude repository bindings match on the normalized repository key", () => 
     repositoryKey: "acme/listed",
   };
   const workspace = workspaceBinding({ host: "claude-code" });
-  const options = {
-    bindings: [workspace, repository],
-    host: "claude-code",
-    bindingNonceHash: workspace.bindingNonceHash,
-  };
+  // Another clone of the same repository (same origin, different checkout)
+  // must stay on the workspace binding.
   assert.equal(
     selectManagedCaptureBinding({
-      ...options,
+      bindings: [workspace, repository],
+      host: "claude-code",
+      bindingNonceHash: workspace.bindingNonceHash,
       repositoryIdentity: {
         state: "unmapped",
         repositoryScopeKey: "repo-111111111111111111111111",
         normalizedRepositoryKey: "acme/listed",
-      },
-    }).binding,
-    repository,
-  );
-  assert.equal(
-    selectManagedCaptureBinding({
-      ...options,
-      repositoryIdentity: {
-        state: "unmapped",
-        repositoryScopeKey: "repo-111111111111111111111111",
-        normalizedRepositoryKey: "acme/other",
       },
     }).binding,
     workspace,
