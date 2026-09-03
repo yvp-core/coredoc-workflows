@@ -61,6 +61,13 @@ before every routed skill has been observed. If the session ends while paused,
 the repository-local specification, and re-executes the required spec and design
 context stages before requesting approval.
 
+Active run coordination is session-scoped under `~/.coredoc/workflow-runs`, so
+changing directories between a workspace root, repository, or worktree does not
+lose the run and does not require `coredoc.config.json`. The starting repository
+root and Git snapshot remain metadata on the run. The parent coordinator owns
+route/stage/finish boundaries; a subagent `SessionEnd` never closes its parent's
+run.
+
 Before a large route begins, the router checks whether the base Coredoc MCP
 server, a local alias, or a hosted wrapper with a delimited `Coredoc` server
 segment is available. Missing graph capability is reported and the workflow

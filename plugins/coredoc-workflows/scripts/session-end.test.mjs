@@ -87,6 +87,7 @@ test("SessionEnd queues an open stage abandonment before run finish at one times
       input: JSON.stringify({
         hook_event_name: "SessionEnd",
         session_id: sessionId,
+        agent_type: "custom-main-agent",
         prompt: "PROMPT_SENTINEL",
         cwd: "/private/PATH_SENTINEL",
         tool_output: "OUTPUT_SENTINEL",
@@ -138,6 +139,61 @@ test("SessionEnd queues an open stage abandonment before run finish at one times
     false,
   );
   assert.equal(readWorkflowRun(sessionId, { env }), null);
+});
+
+test("a subagent SessionEnd cannot abandon the parent workflow run", () => {
+  const sessionId = "session-parent-with-subagent";
+  const env = {
+    ...process.env,
+    COREDOC_WORKFLOWS_STATE_DIR: mkdtempSync(
+      join(tmpdir(), "coredoc-workflow-subagent-end-state-"),
+    ),
+    COREDOC_CAPTURE_ENDPOINT: "",
+    COREDOC_CAPTURE_HEADERS: "",
+    OTEL_EXPORTER_OTLP_ENDPOINT: "",
+    OTEL_EXPORTER_OTLP_HEADERS: "",
+  };
+  startWorkflowRun(
+    {
+      sessionId,
+      runId: "cdr-20260903-a1b2c3",
+      workflowId: "change:normal",
+      intent: "change",
+      risk: "normal",
+      declaredStages: [{ stageId: "spec", after: [] }],
+      at: "2026-09-03T10:00:00.000Z",
+    },
+    {
+      env,
+      snapshot: () => ({
+        available: false,
+        repoRoot: "",
+        head: "",
+        fingerprint: "",
+      }),
+    },
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [new URL("./session-end.mjs", import.meta.url).pathname],
+    {
+      encoding: "utf8",
+      env,
+      input: JSON.stringify({
+        hook_event_name: "SessionEnd",
+        session_id: sessionId,
+        agent_id: "country-config-scout",
+        agent_type: "coredoc-scout",
+        cwd: "/private/other-repository",
+        reason: "other",
+      }),
+      timeout: 2_500,
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readWorkflowRun(sessionId, { env })?.status, "active");
 });
 
 test("SessionEnd does not synthesize a stage when none is open", async () => {
