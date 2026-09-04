@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   EnrollmentError,
   enrollCaptureAgent,
+  openSystemBrowser,
   validateInstallationTokenPayload,
 } from "./capture-agent-enrollment.mjs";
 
@@ -543,3 +544,89 @@ for (const [name, payload, expected] of [
     );
   });
 }
+
+const LOOPBACK_POLICY = {
+  schemaVersion: 1,
+  serverOrigin: "http://127.0.0.1:3000",
+  workspaceId: POLICY.workspaceId,
+};
+
+test("a loopback HTTP policy accepts localhost-advertised OAuth endpoints on the same port", async () => {
+  const harness = successfulHarness({
+    metadata: {
+      issuer: "http://localhost:3000",
+      authorization_endpoint: "http://localhost:3000/authorize",
+      token_endpoint: "http://localhost:3000/token",
+      registration_endpoint: "http://localhost:3000/register",
+    },
+  });
+  const result = await enrollCaptureAgent({
+    policy: LOOPBACK_POLICY,
+    installationId: INSTALLATION_ID,
+    fetchImpl: harness.fetchImpl,
+    createCallbackListener: harness.createCallbackListener,
+    openBrowser: harness.openBrowser,
+  });
+  assert.deepEqual(result, TOKEN_PAYLOAD);
+  const authorize = new URL(harness.authorizeUrl());
+  assert.equal(authorize.origin, "http://localhost:3000");
+  assert.equal(
+    harness.requests.some(({ url }) => new URL(url).origin === "http://localhost:3000" && new URL(url).pathname === "/token"),
+    true,
+  );
+});
+
+for (const [name, metadata, policy] of [
+  [
+    "a loopback policy with an endpoint on another port",
+    {
+      issuer: "http://127.0.0.1:3000",
+      authorization_endpoint: "http://127.0.0.1:3001/authorize",
+      token_endpoint: "http://127.0.0.1:3000/token",
+    },
+    LOOPBACK_POLICY,
+  ],
+  [
+    "a loopback policy with a non-loopback endpoint",
+    {
+      issuer: "http://127.0.0.1:3000",
+      authorization_endpoint: "http://10.0.0.5:3000/authorize",
+      token_endpoint: "http://127.0.0.1:3000/token",
+    },
+    LOOPBACK_POLICY,
+  ],
+  [
+    "an HTTPS policy with plain HTTP endpoints on its own host",
+    {
+      issuer: POLICY.serverOrigin,
+      authorization_endpoint: `${POLICY.serverOrigin.replace("https:", "http:")}/authorize`,
+      token_endpoint: `${POLICY.serverOrigin}/token`,
+    },
+    POLICY,
+  ],
+]) {
+  test(`fails closed on ${name}`, async () => {
+    const harness = successfulHarness({ metadata });
+    await assert.rejects(
+      enrollCaptureAgent({
+        policy,
+        installationId: INSTALLATION_ID,
+        fetchImpl: harness.fetchImpl,
+        createCallbackListener: harness.createCallbackListener,
+        openBrowser: harness.openBrowser,
+      }),
+      (error) => error instanceof EnrollmentError && error.code === "DISCOVERY_INVALID",
+    );
+  });
+}
+
+test("the system browser opens loopback HTTP authorization URLs and refuses other plain HTTP", async () => {
+  await assert.rejects(
+    openSystemBrowser("http://10.0.0.5:3000/authorize"),
+    (error) => error instanceof EnrollmentError && error.code === "BROWSER_OPEN_FAILED",
+  );
+  await assert.rejects(
+    openSystemBrowser("http://attacker.example/authorize"),
+    (error) => error instanceof EnrollmentError && error.code === "BROWSER_OPEN_FAILED",
+  );
+});

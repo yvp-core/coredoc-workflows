@@ -76,7 +76,8 @@ session keeps the default destination:
 Exactly one destination is `default` and it lists no repositories; every other
 destination lists at least one absolute checkout path with a Git `origin`
 remote, and a checkout belongs to one destination. `http:` origins are accepted
-for `127.0.0.1` and `[::1]` only, never `localhost`. Setup enrolls each
+for `127.0.0.1` and `[::1]` only, never `localhost`, although such a server
+may advertise its OAuth endpoints as `localhost` on the same port. Setup enrolls each
 destination separately under the same installation id, writes the default
 workspace bindings plus one repository binding per host per listed checkout,
 installs a marker-owned `.claude/settings.local.json` in each listed checkout,
