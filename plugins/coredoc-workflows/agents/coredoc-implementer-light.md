@@ -1,7 +1,7 @@
 ---
 name: coredoc-implementer-light
 description: Apply one fully specified mechanical change such as a known pattern, boilerplate, test scaffold, or bounded rename. Use only when files and the pattern are explicit.
-tools: Read, Write, Edit, Glob, Grep, Bash
+disallowedTools: Agent
 model: sonnet
 effort: low
 ---

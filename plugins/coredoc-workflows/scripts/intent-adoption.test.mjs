@@ -96,16 +96,20 @@ test("intent-context methodology states the exact-ID-first protocol", async () =
   assert.match(body, /file:line/);
 });
 
-test("representative handoffs carry and refresh the observed intent revision", async () => {
+test("representative handoffs carry and refresh per-item intent versions", async () => {
   const body = await readFile(METHODOLOGY_PATH, "utf8");
 
-  assert.match(body, /observedIntentRevision/);
-  assert.match(body, /intentRevision/);
+  assert.match(body, /intentVersions/);
+  assert.match(body, /`version`/);
   assert.match(body, phrase("refresh the exact routed IDs"));
   assert.match(body, /no_relevant_change/);
+  assert.match(body, /supersededById/);
   assert.match(body, /authority|payload/);
   assert.match(body, /missing/i);
   assert.match(body, /do not[^.]*broad\s+(lookup|discovery)/i);
+
+  // The overlay-wide revision and the removed CLI subcommand are gone for good.
+  assert.doesNotMatch(body, /intentRevision|observedIntentRevision|intent impact/);
 });
 
 test("methodology defines every SDLC stage contract without merging evidence planes", async () => {
@@ -126,7 +130,7 @@ test("methodology defines every SDLC stage contract without merging evidence pla
   assert.match(body, /passed[^\n]*failed[^\n]*inconclusive[^\n]*not_assessed/i);
   assert.match(body, phrase("never substitute for execution"));
   assert.match(body, phrase("code graph only"));
-  assert.match(body, phrase("intent revision stays unchanged"));
+  assert.match(body, phrase("intent versions stay unchanged"));
   assert.match(body, /unknown, never unaffected/i);
 });
 
@@ -173,11 +177,56 @@ test("methodology shows a runnable CLI and an accurate MCP surface", async () =>
     "intentIds",
     "query",
     "nodeIds",
+    "domain",
+    "feature",
     "includeCandidates",
+    "effectivity",
+    "observed",
     "limit",
-    "detailLevel",
   ]) {
     assert.match(body, new RegExp(`\`${parameter}\``), parameter);
+  }
+
+  // `detailLevel` and `format` are local-only; passing them to the cloud tool is
+  // a refusal, so the methodology has to say which surface takes them.
+  const refusal = sentences(body).find(
+    (sentence) => /cloud tool refuses/i.test(sentence) && /detailLevel/.test(sentence),
+  );
+  assert.ok(refusal, "state that the cloud tool refuses `detailLevel`");
+  assert.match(refusal, /format/, refusal);
+});
+
+// Writes are proposals. The maintainer decides, records releases, and moves the
+// tree; the agent never does any of those on its own judgement.
+test("methodology bounds the write surface to proposals and previews", async () => {
+  const body = await readFile(METHODOLOGY_PATH, "utf8");
+
+  // `intent_anchor` is always named with its verb, so the closer may be a space.
+  for (const tool of ["intent_propose", "intent_anchor", "intent_release"]) {
+    assert.match(body, new RegExp(`\`${tool}[ \`]`), tool);
+  }
+  assert.match(
+    body,
+    /NEVER calls `intent_review`, never records or rolls\s+back a release/,
+  );
+  assert.match(body, phrase("Never record availability"));
+  assert.match(body, /anchorSuggestions|Anchor suggestions/);
+});
+
+// The two write-stage consumers reference it on a condition, not as a step that
+// always runs, and keep the shared absent-capability sentence in that block.
+test("spec and review reference the write stage conditionally", async () => {
+  for (const name of ["coredoc-spec", "coredoc-review"]) {
+    const body = await skill(name);
+    const block = body
+      .split(/\n\s*\n/)
+      .find((candidate) => /intent_propose|write capability/i.test(candidate));
+    assert.ok(block, `${name} must reference the intent write stage`);
+    assert.match(block, /If [\s\S]{0,120}(intent_propose|write capability)/i, name);
+    assert.ok(
+      block.replace(/\s+/g, " ").includes(ABSENT_CAPABILITY_SENTENCE),
+      `${name} must keep the absent-capability sentence in the write-stage block`,
+    );
   }
 });
 

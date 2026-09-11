@@ -271,7 +271,7 @@ test("serves authenticated agent health v2 without changing exact binding health
     configPath: path,
     agentHealth: {
       token: "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
-      runtimeVersion: "0.11.5",
+      runtimeVersion: "0.12.0",
       runtimeDigest: "a".repeat(64),
       protocolVersion: 1,
       configSchemaVersion: 1,
@@ -296,7 +296,7 @@ test("serves authenticated agent health v2 without changing exact binding health
   assert.deepEqual(await v2.json(), {
     schemaVersion: 2,
     state: "degraded",
-    runtimeVersion: "0.11.5",
+    runtimeVersion: "0.12.0",
     runtimeDigest: "a".repeat(64),
     protocolVersion: 1,
     configSchemaVersion: 1,
@@ -350,7 +350,7 @@ test("authenticated health v2 surfaces artifact-only repository attribution fail
     configPath: path,
     agentHealth: {
       token: "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
-      runtimeVersion: "0.11.5",
+      runtimeVersion: "0.12.0",
       runtimeDigest: "a".repeat(64),
       protocolVersion: 1,
       configSchemaVersion: 1,
@@ -387,7 +387,7 @@ test("loads agent health identity only from a matching mode-0600 lifecycle state
       marker: "coredoc-workflows.capture-agent.v1",
       healthToken: "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
       current: {
-        version: "0.11.5",
+        version: "0.12.0",
         digest: "a".repeat(64),
       },
       previous: null,
@@ -397,12 +397,12 @@ test("loads agent health identity only from a matching mode-0600 lifecycle state
   assert.deepEqual(
     readCaptureAgentHealthContext({
       statePath,
-      runtimeVersion: "0.11.5",
+      runtimeVersion: "0.12.0",
       runtimeDigest: "a".repeat(64),
     }),
     {
       token: "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
-      runtimeVersion: "0.11.5",
+      runtimeVersion: "0.12.0",
       runtimeDigest: "a".repeat(64),
       protocolVersion: 1,
       configSchemaVersion: 1,
@@ -413,7 +413,7 @@ test("loads agent health identity only from a matching mode-0600 lifecycle state
     () =>
       readCaptureAgentHealthContext({
         statePath,
-        runtimeVersion: "0.11.5",
+        runtimeVersion: "0.12.0",
         runtimeDigest: "a".repeat(64),
       }),
     (error) => error?.code === "INVALID_CONFIG"
@@ -2204,7 +2204,7 @@ test("workspace semantic capture resolves optional repository keys without losin
     fetchImpl,
     agentHealth: {
       token: "health_token_abcdefghijklmnopqrstuvwxyz0123456789",
-      runtimeVersion: "0.11.5",
+      runtimeVersion: "0.12.0",
       runtimeDigest: "a".repeat(64),
       protocolVersion: 1,
       configSchemaVersion: 1,

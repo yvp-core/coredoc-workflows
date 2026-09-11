@@ -119,14 +119,24 @@ as verified current fact, accepted requirement/decision, reversible assumption,
 or deferred proposal. Citations inside a proposal are leads, not evidence; correct
 them when the current runtime contract disagrees.
 
+If this session has a Coredoc code-graph capability — `search_symbols`,
+`explain`, `find_dependents`, `analyze_change_impact` — ground current consumers
+and the runtime path through it before grepping, cite the node ids it returns
+beside the file references, and hand scouts the graph facts you already hold.
+Its coverage is a lower bound; verify critical consumers against source. When no
+graph capability is present, proceed from repository evidence alone and do not
+mention it in the output.
+
 If this session has a Coredoc intent capability — the `get_intent_context` MCP
 tool or the `coredoc intent context` CLI — read
 `<plugin-root>/resources/methodology/intent-context.md` and follow its fetch and
-PRD/spec stage contracts. Reuse exact IDs and the observed revision from a routed
-PRD or task; otherwise perform only the bounded orientation/discovery the
+PRD/spec stage contracts. Reuse exact IDs and their `intentVersions` from a
+routed PRD or task; otherwise perform only the bounded orientation/discovery the
 methodology permits. Cite accepted intent beside the outcomes it supports, keep
 candidate ideas and missing/changed IDs as unresolved questions, and carry
-`intentIds` plus `observedIntentRevision` into the final specification. When no
+`intentIds` plus `intentVersions` into the final specification — only the ids
+the body actually cites next to a claim; an id you read but did not use is not
+part of the working set. When no
 intent capability is present, proceed from repository evidence alone and do not
 mention intent context in the output.
 
@@ -348,6 +358,19 @@ the handoff and set `status: accepted` only when the user explicitly approves
 the completed draft; do not add a confirmation round to obtain it. Alignment
 approval or a review verdict alone never accepts the specification.
 
+If the specification has reached `status: accepted` and this session has a cloud
+Coredoc intent write capability — `intent_propose` is visible — run the "After
+specification acceptance" write stage of
+`<plugin-root>/resources/methodology/intent-context.md`: propose the product
+intent the accepted specification introduces or changes as candidates in one
+batch, sourced at the repo-qualified spec path and the stable section id, and
+report each
+`itemId`, `outcome`, and `version` as `proposedIntentIds` beside `intentIds` and
+`intentVersions`. Proposals are candidates; never accept, review, anchor, or
+record anything, and a draft specification proposes nothing. When no intent
+capability is present, proceed from repository evidence alone and do not mention
+intent context in the output.
+
 Run the privacy gate over the exact final file:
 
 ```text
@@ -429,7 +452,9 @@ inflate an ordinary change into an epic or audit.
 ## Deliver the specification
 
 Write atomically to the documented local location. If none exists, return the
-complete Markdown in conversation and ask before creating a new convention.
+complete Markdown in conversation and ask before creating a new convention. When
+intent context was used, the handoff carries `intentIds`, `intentVersions`, and
+any `proposedIntentIds` from the acceptance write stage.
 Remote filing, commits, worktrees, spawned implementation, and archival require
 explicit user authorization. The final spec is the handoff; mention plan review
 only for material architectural risk, and implementation only when requested.
