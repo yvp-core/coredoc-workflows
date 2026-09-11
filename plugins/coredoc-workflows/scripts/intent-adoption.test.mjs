@@ -247,6 +247,18 @@ test("methodology separates a missing capability from an empty overlay", async (
   assert.match(distinction, /not the same|different|is not/i, distinction);
 });
 
+// The release handoff is the PR trailer block, not a free-text delivery line:
+// the automatic actors read only those two keys from the PR body.
+test("the review adapter hands over the PR trailer block", async () => {
+  const review = await skill("coredoc-review");
+  assert.match(review, /Coredoc-Intent-Delivers/);
+  assert.match(review, phrase("paste the block into the PR body"));
+
+  const body = await readFile(METHODOLOGY_PATH, "utf8");
+  assert.match(body, /`Coredoc-Intent-Delivers:`/);
+  assert.match(body, /`Coredoc-Intent-Retires:`/);
+});
+
 test("each consumer adapter carries a conditional intent hook", async () => {
   const expectations = {
     "coredoc-spec": /candidate ideas|unresolved questions/i,

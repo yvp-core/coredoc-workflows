@@ -289,11 +289,18 @@ it with `item_not_accepted` — but re-send `intent_propose` for that item with
 `anchorSuggestions` and the same source identity, which upserts, so its anchors
 are settled at review.
 
-**Release.** Never record availability: merge, pull request, graph publication,
-and ticket transitions are not triggers. In the review or merge handoff include
-one line — "Delivery: `<ids>` are `planned`/`unknown`/`effective` per an
-`effectivity: true` read at `<time>`; recording availability is the maintainer's
-`intent_release` action after the production deploy."
+**Release.** Never record availability yourself: merge, pull request, graph
+publication, and ticket transitions are not triggers the agent acts on. In the
+review or merge handoff render the PR trailer block instead of a free-text
+delivery line — a fenced `text` block whose `Coredoc-Intent-Delivers:` line lists
+the ACCEPTED items the change implements and whose `Coredoc-Intent-Retires:` line
+lists the accepted items the accepted specification explicitly retires, each as
+comma-separated `<itemId>@<version>` pairs with the versions from the exact-id
+refresh. Candidates are never listed, because a candidate cannot be released. The
+maintainer pastes the block into the PR body; Coredoc records the plan and the
+delivery from those lines when the workspace runs in `merge` or `deploy` mode,
+and otherwise recording availability stays the maintainer's own `intent_release`
+action after the production deploy.
 
 ### Cite it like evidence
 

@@ -186,10 +186,23 @@ scope/plan audit, conditional coverage, and verdict.
 When intent context was used, add a **Reviewed intent** block: the rules that
 influenced the implementation; the rules retrieved and judged not applicable,
 each with its reason; rules newly discovered against the diff; anchors the change
-touches whose status is not `matched`; any truncation seen; and the delivery line
-from the methodology's Release bullet. With a write capability present, the
-"Anchor suggestions" list goes here too, as suggestions and not as executed
-anchors.
+touches whose status is not `matched`; and any truncation seen. With a write
+capability present, the "Anchor suggestions" list goes here too, as suggestions
+and not as executed anchors.
+
+With a cloud Coredoc intent write capability present, close that block with a
+fenced `text` block of PR trailers: `Coredoc-Intent-Delivers:` lists the ACCEPTED
+items this change implements and `Coredoc-Intent-Retires:` the accepted items the
+accepted specification explicitly retires, each as comma-separated
+`<itemId>@<version>` pairs whose versions come from the exact-id refresh.
+Candidates are never listed, because a candidate cannot be released. Tell the
+maintainer to paste the block into the PR body: Coredoc records the plan and the
+delivery from those lines when the workspace runs in `merge` or `deploy` mode.
+
+```text
+Coredoc-Intent-Delivers: cap-widget-ordering@3, br-refund-window@2
+Coredoc-Intent-Retires: lim-old-export-cap@4
+```
 
 Dispositions are separate from severity: `fixed`, `accepted-risk`, `deferred`,
 or `rejected`. A blocking finding closes only when fixed or explicitly accepted
