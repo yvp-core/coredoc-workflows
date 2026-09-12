@@ -214,7 +214,7 @@ test("methodology bounds the write surface to proposals and previews", async () 
   assert.match(body, /`intent_review accept`/);
   assert.match(body, /authorizingSource/);
   assert.match(body, phrase("Never record availability"));
-  assert.match(body, /anchorSuggestions|Anchor suggestions/);
+  assert.match(body, phrase("Manual anchors remain separate and require an explicit instruction"));
 });
 
 // The two write-stage consumers reference it on a condition, not as a step that
@@ -256,10 +256,10 @@ test("methodology separates a missing capability from an empty overlay", async (
 test("the review adapter hands over the PR trailer block", async () => {
   const review = await skill("coredoc-review");
   assert.match(review, /Coredoc-Intent-Delivers/);
-  // The stage writes the body itself; the maintainer hand-off is the fallback.
-  assert.match(review, phrase("gh pr edit"));
-  assert.match(review, phrase("gh api -X PATCH"));
-  assert.match(review, phrase("hand the block to the maintainer to paste"));
+  assert.match(review, phrase("next authorized PR-writing stage"));
+  assert.match(review, phrase("does not authorize a PR body update"));
+  assert.match(review, phrase("do not write the manifest"));
+  assert.doesNotMatch(review, phrase("write the block into the PR body yourself"));
 
   const body = await readFile(METHODOLOGY_PATH, "utf8");
   assert.match(body, /`Coredoc-Intent-Delivers:`/);
@@ -288,6 +288,17 @@ test("spec and implement carry the single-approval clause", async () => {
     assert.match(body, /verbatim/i, name);
     assert.match(body, /autonomous|service[- ]token/i, name);
   }
+});
+
+test("resuming an approved spec completes missing intent work without another approval", async () => {
+  const implement = await skill("coredoc-implement");
+  assert.match(implement, phrase("both after a new status write and on resumption"));
+  assert.match(implement, phrase("complete only missing work"));
+  assert.doesNotMatch(implement, phrase("fresh post-review approval is still required"));
+  const body = await readFile(METHODOLOGY_PATH, "utf8");
+  assert.match(body, phrase("already accepted matching item needs no write"));
+  assert.match(body, phrase("original idempotency key"));
+  assert.match(body, phrase("source revision or whole item content changed"));
 });
 
 test("each consumer adapter carries a conditional intent hook", async () => {

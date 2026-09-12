@@ -148,8 +148,11 @@ Do not run `coredoc-workflows finish-run` while paused.
 In the same host session, resume the same `runId` without routing again. If the
 session ends, `SessionEnd` marks only
 an actually open stage `abandoned` and closes the run. In a new session, route
-again, reuse the local spec, re-execute spec/design context, obtain fresh
-approval regardless of its existing status, and continue.
+again and reuse the local spec. For an authorized continuation, verify the
+recorded post-review approval and that the approved source and scope are
+unchanged, then continue under that approval. The accepted status alone is not
+enough. Revisit spec/design and obtain fresh approval only if the approved
+material changed or the original approval cannot be recovered.
 
 ## Finish and hand off
 

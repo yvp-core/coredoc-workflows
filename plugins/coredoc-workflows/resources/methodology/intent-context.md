@@ -27,14 +27,15 @@ answer.
 **Cloud MCP — `get_intent_context`** (workspace MCP endpoint). Default
 `mode: "context"`; `mode: "list"` is the payload-free index. It accepts
 `intentIds` (exact ids, and the only way to retrieve a rejected or superseded
-item), `query` (short bounded lexical search over intent text), `nodeIds`
+item), `task` (task text, up to 2000 characters), `files` (`{repoKey, path}`
+objects from the diff, with repository-relative paths), `query` (legacy lexical search), `nodeIds`
 (stable code node ids), `domain`, `feature`, `kind`, `includeCandidates`
 (default false), `effectivity`, `observed` (`"<repoKey>@<commit>"`, optionally
 with a `:dirty` suffix), `limit`, and `cursor` in list mode. **The cloud tool
 refuses `detailLevel` and `format`.** A context answer carries each match with
 its `authority`, `version`, `domainId`, `featureId`, `proposedSuccessorOfId`,
 `supersededById`, `sources`, `anchors`, and `matchReason`, plus `truncated`,
-`totalMatched`, `unknownIntentIds`, `unresolvedNodeIds`, `graph` (per-repo
+`totalMatched`, `scanTruncated`, `unknownIntentIds`, `unresolvedFiles`, `unresolvedNodeIds`, `graph` (per-repo
 snapshot freshness, limits, and an optional `scopeSuggestion`), `anchorWarning`,
 and `pendingReview`.
 
@@ -89,7 +90,32 @@ context. Never guess a project id — a wrong one reads another project's intent
 and no context at all beats another project's rules. `--id` and `--node-id`
 repeat; `-c <path>` points at a config outside the workspace root.
 
-### Fetch protocol — exact-ID-first
+### Cloud task context
+
+When the cloud tool declares `task`, use this protocol. The legacy exact-ID-first
+protocol below applies only to the local tool/CLI or a server without `task`.
+
+- Before planning or editing, make one task call per stage: concise task text,
+  touched `files: [{repoKey, path}]`, known `nodeIds`, routed `intentIds`, and a
+  known `domain`/`feature` when applicable. It narrows lexical discovery;
+  code-linked constraints can cross domains. Use `limit: 10`. The server combines
+  lexical search and graph applicability; do not choose between them. Keep the
+  routed IDs alongside newly discovered constraints and compare their versions.
+- No index walk is required. `mode: "list"` is for deliberate browsing, never
+  an attempt to load thousands of rules for orientation. Exact-id follow-ups
+  fetch missing payloads or a named successor, without repeating discovery.
+- Refresh before editing outside the requested scope: repeat the task call with
+  the newly touched files and retained IDs. A newly discovered caller or shared
+  dependency can add constraints even when it has no binding on the edited file.
+- Read `matchReason`/`matchReasons`, graph evidence and freshness independently.
+  `truncated`, `scanTruncated` or graph truncation means incomplete coverage;
+  use a known narrower domain/feature when the server recommends it. Do not
+  keep rephrasing an unchanged task to fill context. Report unresolved paths
+  and unknown IDs; an empty response does not prove that no rule applies.
+- A task read never creates bindings. Bind only items the implementation
+  actually implements, not every constraint retrieved for context.
+
+### Fetch protocol — exact-ID-first (local and legacy cloud)
 
 1. **Reuse what was routed.** If the handoff, specification, plan, or task text
    already names intent IDs, they are the working set. Do not re-derive it. A
@@ -221,17 +247,17 @@ product intent.
 
 | Stage | Intent and graph use | Required artifact or handoff | Degraded path |
 | --- | --- | --- | --- |
-| PRD | With no routed IDs, orient with the index and spend at most one bounded lookup. Separate accepted constraints from candidate ideas; graph evidence describes current touchpoints only. | Cite applicable exact IDs with their `intentVersions`, accepted decisions/non-goals, and unresolved questions. | Name `not_configured`, `invalid`, or unavailable capability and continue from owner/repository evidence. |
-| Specification | Refresh routed exact IDs. Trace each material outcome and acceptance criterion to accepted intent; use graph/source evidence to verify current contracts and consumers. | Executable acceptance criteria plus `intentIds`, `intentVersions`, any `proposedIntentIds`, and unresolved missing/changed context. | A missing ID or source becomes an unresolved decision, never an invented requirement. |
+| PRD | Use cloud task context; on local/legacy surfaces, use the bounded exact-ID-first protocol. Separate accepted constraints from candidate ideas; graph evidence describes current touchpoints only. | Cite applicable exact IDs with their `intentVersions`, accepted decisions/non-goals, and unresolved questions. | Name `not_configured`, `invalid`, or unavailable capability and continue from owner/repository evidence. |
+| Specification | Use task context with routed IDs; compare their versions. Trace each material outcome and acceptance criterion to accepted intent; use graph/source evidence to verify current contracts and consumers. | Executable acceptance criteria plus `intentIds`, `intentVersions`, any `proposedIntentIds`, and unresolved missing/changed context. | A missing ID or source becomes an unresolved decision, never an invented requirement. |
 | Plan | Reuse the exact working set. Use graph impact to scope symbols and critical manual consumers; use broad discovery only when the set is absent or explicitly incomplete. | Ordered steps trace acceptance criteria and intent IDs and name impact, validation, rollback, freshness, and coverage gaps. | Replace unavailable graph impact with manual repository analysis and say coverage is unknown. |
-| Implementation | Fetch only missing exact payload. Inspect impacted symbols/callers and keep code-derived observations as questions, not intent changes. | Scoped diff and tests plus the unchanged exact-ID handoff, anchor suggestions when a write capability exists, and any new product questions. | Continue under the accepted spec and repository rules when optional intent/graph context is unavailable. |
+| Implementation | Use task context with the routed set and refresh before editing outside the requested scope. Inspect impacted symbols/callers and keep code-derived observations as questions, not intent changes. | Scoped diff and tests plus the unchanged exact-ID handoff, anchor suggestions when a write capability exists, and any new product questions. | Continue under the accepted spec and repository rules when optional intent/graph context is unavailable. |
 | Validation | Use executed test/runtime/browser evidence per acceptance criterion. Anchors guide inspection but never substitute for execution. | Per-criterion `passed`, `failed`, `inconclusive`, or `not_assessed`, with evidence and runtime/snapshot freshness kept separate. | An unavailable environment marks only affected criteria; it never fabricates a pass. |
-| Review | Refresh exact IDs, then classify diff impact as direct anchor, enclosing scope, graph reachable, no known link, or unknown. Inspect accepted violations separately from candidates and stale anchors. | Findings cite accepted IDs and executed/source evidence; the verdict names mapping coverage and freshness. | Without graph evidence, review the diff/spec manually and report impact as unknown, never unaffected. |
+| Review | Use task context for the actual diff, retain and refresh routed IDs, then classify diff impact as direct anchor, enclosing scope, graph reachable, no known link, or unknown. Inspect accepted violations separately from candidates and stale anchors. | Findings cite accepted IDs and executed/source evidence; the verdict names mapping coverage and freshness. | Without graph evidence, review the diff/spec manually and report impact as unknown, never unaffected. |
 | Merge | Rebuild or publish the code graph only. Recompute anchor status after the rebuild; do not mutate intent unless the reviewed change explicitly edits it. | New graph snapshot and optional anchor-maintenance report. The intent versions stay unchanged for a code-only merge. | Existing CI policy handles graph rebuild failure; durable intent remains readable and unchanged. |
 | Investigation | Use exact intent for expected outcomes, graph evidence for static mechanisms, and runtime evidence for observed behavior. | Separate expected, implemented/static, observed/runtime, and unknown conclusions. | Name the missing plane while keeping the other planes usable. |
 
 Every artifact that used intent carries `intentIds` and `intentVersions`; the
-next stage follows the exact-ID refresh protocol above. Validation and merge do
+next stage retains and refreshes those IDs using the applicable protocol above. Validation and merge do
 not establish or change authority. If a stage has no intent capability, it emits
 no synthetic empty handoff and continues normally.
 
@@ -240,7 +266,8 @@ no synthetic empty handoff and continues normally.
 This section applies only when a cloud intent WRITE capability is present —
 `intent_propose` visible in this session. Everything it produces is a candidate
 by construction. The agent NEVER calls `intent_review` — except at the
-spec-acceptance moment described below, for verbatim items, as the acting
+specification acceptance or its authorized resumption described below, for
+verbatim items, as the acting
 human's own decision — never records or rolls back a release through
 `intent_release`, and never edits the tree with `intent_tree`; those are the
 maintainer's own actions in their own session. Read
@@ -252,14 +279,16 @@ is always allowed.
 **After specification acceptance.** When an accepted specification introduces or
 changes product intent — a capability, use case, flow, business rule, limitation,
 or decision the accepted intent does not already state — propose it in ONE
-`intent_propose` batch (at most ten items, fresh `idempotencyKey`). Each item
+`intent_propose` batch (at most ten items). Before sending it, retain the exact
+batch and its `idempotencyKey` in the existing specification handoff so an
+interrupted request can be replayed unchanged. Each item
 carries `kind`, `title` — a short noun phrase that still states the rule (`Refund
 window is 30 days`, not a full sentence and not a bare topic like `Refund
 windows`), because the server derives the immutable id from it and cuts it at
 the id length cap — a self-contained `statement`, optional `rationale` and
 kind-validated `payload`, at most one of `domainId`/`featureId`, and
 `sources: [{ kind: "spec", ref: "<repoKey>:<spec path relative to the repository
-root>", localId: <the spec's stable section id, e.g. "AC-3" or "BR-2"> }]`.
+root>", localId: <the spec's stable section id, e.g. "AC-3" or "BR-2">, revision: <approved commit or content digest> }]`.
 Source identity is the exact `(ref, localId)` pair, scoped to the WORKSPACE,
 and propose upserts on it — so `ref` carries the repository key, because two
 repositories in one workspace can both hold `docs/spec.md` with a `BR-1`, and
@@ -274,45 +303,49 @@ its drafting rules; otherwise the field list above is the contract. Report
 `proposedIntentIds` with their versions. Never propose from a draft
 specification, from code, or from your own inference.
 
-**Single approval at that same moment.** An accepted specification is already a
+**Single approval, including an authorized resumption.** An accepted specification is already a
 human decision, so a second review of the same words is a queue and not a
 judgement. When the acting human accepts the specification IN THEIR OWN SESSION,
-the write stage proposes the batch and then calls `intent_review accept` for
+or authorizes continuation of that unchanged, previously approved specification,
+the write stage proposes missing items and then calls `intent_review accept` for
 every item whose WHOLE content is verbatim from the accepted section — statement,
-condition/exceptions/affects, and `sources.revision` equal to the spec's commit —
+condition/exceptions/affects, and `sources.revision` equal to the approved commit or content digest —
 passing `authorizingSource` with that spec's `(ref, localId, revision)` and
-`reason` "accepted with <spec path>@<revision>". Propose the accept and make it in
-the same breath; report which items were accepted and which stayed candidates. An
+`reason` "accepted with <spec path>@<revision>". Before accepting, read back the exact proposed IDs, compare their whole content to the approved section and use the returned current versions. Record each returned `itemId` and version in the handoff immediately; report
+which items were accepted and which stayed candidates. An
 item you paraphrased, reworded, or inferred stays a candidate, and a service token
 or an autonomous run never accepts at all — there the whole batch waits for the
 maintainer.
 
-**After implementation, before or at review.** Map the touched symbols to stable
-node ids taken from coredoc tool responses (`search_symbols`,
-`list_file_symbols`, `explain`). New code is anchorable only once the workspace
-graph contains it: when `graph.repos[].pushedAt` predates the change or the
-snapshot freshness reads `stale`, say the anchors cannot be placed yet and name
-the publish step — `coredoc push --project <projectId> --cloud`, or the CI sync.
-Otherwise list, per intent id in the working set, the `(repoKey, nodeId)` pairs
-this change makes an implementation touchpoint, each verified with
-`intent_anchor preview` (a read that resolves the node for any item), and hand
-the list to the maintainer as "Anchor suggestions", split by the item's
-authority because the write differs: for an ACCEPTED item, `intent_anchor add`
-only for the pairs the maintainer explicitly ticks or names; for a CANDIDATE
-(including one you just proposed), never `intent_anchor add` — the server refuses
-it with `item_not_accepted` — but re-send `intent_propose` for that item with
-`anchorSuggestions` and the same source identity, which upserts, so its anchors
-are settled at review.
+**Resume after an interruption.** Read back known `proposedIntentIds` with exact
+IDs before mutating anything. An already accepted matching item needs no write;
+a matching candidate can complete the authorized accept with its current version.
+If the proposal response was lost, replay the retained exact batch with its
+original idempotency key, then read the returned IDs. Do not re-propose accepted
+items with a new key: source matching can create a new candidate beside them.
+If the approved source revision or whole item content changed, or the original
+approval/request cannot be recovered from the handoff or session history, report
+that specific gap rather than fabricate approval. The spec's `accepted` status
+alone does not authorize a new decision. Recovery does not require another
+approval for an unchanged request whose original authorization is available.
 
-Besides that list, the stage WRITES `.coredoc/intent-bindings.json` in the working
-tree — `{ bindings: [{ itemId, files: ["<path relative to the repository root>"],
-symbols?: ["<path>#<Name>"], rationale? }] }` — one entry per intent id in the
-working set, accepted or just proposed, that this change makes an implementation
-touchpoint, files-only when a symbol is uncertain. CI creates the anchors from it
-on the snapshot it publishes (`coredoc ci run` → `POST …/intent/bindings/sync`,
-`source: ci`); a candidate's binding is skipped until the item is accepted and is
-re-applied on the next CI run. The `intent_anchor add` tick at review stays for
-manual anchors only.
+**After implementation, before review.** The authorized implementation stage
+updates `.coredoc/intent-bindings.json` —
+`{ bindings: [{ itemId, files: ["<path relative to the repository root>"],
+symbols?: ["<path>#<Name>"], rationale? }] }` — for items this change implements,
+not every contextual rule in the working set. Preserve unrelated entries; remove
+or move a target when the implementation is removed or moved. Default to files;
+add symbols only when their names are known from source. This needs neither a
+local parser nor a fresh cloud graph. CI resolves the manifest after publishing
+its snapshot (`coredoc ci run` → `POST …/intent/bindings/sync`, `source: ci`). A
+candidate's binding is skipped until acceptance and reapplied on the next CI run.
+Manual anchors remain separate and require an explicit instruction.
+
+The review stage is read-only: inspect the manifest and report missing or wrong
+bindings as suggested changes in the handoff. Do not edit files, propose items,
+create anchors, or update a PR merely because a write tool is available. An
+explicit request to apply review fixes switches to the authorized implementation
+stage for those fixes.
 
 **Release.** Never record availability yourself: merge, pull request, graph
 publication, and ticket transitions are not triggers the agent acts on. In the
@@ -326,19 +359,18 @@ an item only when this change makes it effective for the first time or re-delive
 it after a rollback; a change made under a rule that is already effective carries
 no trailer line for that rule.
 
-When `gh` is available and a pull request already exists for the branch
-(`gh pr view --json number,body`), the review stage writes the block into the PR
-body itself: keep the body, replace any existing `Coredoc-Intent-Delivers:` /
-`Coredoc-Intent-Retires:` lines, and append the block as the last lines. Prefer
-`gh pr edit <n> --body-file <file>`; when that fails — some repositories answer
-with a GraphQL Projects-classic error — use
-`gh api -X PATCH repos/{owner}/{repo}/pulls/{n} --input <json-with-body>`. A body
-edit is an external write: where the host asks for confirmation, ask once and stop
-if refused. When no pull request exists yet, or `gh` is unavailable, hand the block
-to the maintainer to paste. Coredoc records the plan and the delivery from those
-lines when the workspace runs in `merge` or `deploy` mode; in `manual` mode
-recording availability stays the maintainer's own `intent_release` action after the
-production deploy.
+When the user explicitly authorizes PR creation or a PR body update, the
+PR-writing stage applies the block as part of that write. For an existing PR,
+read its body, preserve other content, replace any existing
+`Coredoc-Intent-Delivers:` / `Coredoc-Intent-Retires:` lines, and append the block
+as the last lines. Use `gh pr edit <n> --body-file <file>` (or
+`gh api -X PATCH repos/{owner}/{repo}/pulls/{n} --input <json-with-body>` if needed).
+For a new PR include the block in `gh pr create --body-file <file>`.
+Review alone never authorizes either write. If PR writing is not yet authorized
+or the tool is unavailable, retain the block in the handoff for the next
+authorized writer, without asking the user to copy it manually. Coredoc records
+plan and delivery from those lines in `merge` or `deploy` mode; in `manual` mode
+availability stays the maintainer's `intent_release` action.
 
 ### Cite it like evidence
 
