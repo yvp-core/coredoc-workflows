@@ -266,16 +266,32 @@ influenced the implementation; the rules retrieved and judged not applicable,
 each with its reason; rules newly discovered against the diff; anchors the change
 touches whose status is not `matched`; and any truncation seen. With a write
 capability present, the "Anchor suggestions" list goes here too, as suggestions
-and not as executed anchors.
+and not as executed anchors, and the write stage's `.coredoc/intent-bindings.json`
+manifest is written in the working tree so CI creates those anchors on the
+snapshot it publishes.
 
 With a cloud Coredoc intent write capability present, close that block with a
 fenced `text` block of PR trailers: `Coredoc-Intent-Delivers:` lists the ACCEPTED
 items this change implements and `Coredoc-Intent-Retires:` the accepted items the
 accepted specification explicitly retires, each as comma-separated
 `<itemId>@<version>` pairs whose versions come from the exact-id refresh.
-Candidates are never listed, because a candidate cannot be released. Tell the
-maintainer to paste the block into the PR body: Coredoc records the plan and the
-delivery from those lines when the workspace runs in `merge` or `deploy` mode.
+Candidates are never listed, because a candidate cannot be released. List an item
+only when this change makes it effective for the first time or re-delivers it
+after a rollback; a change made under a rule that is already effective carries no
+trailer line for that rule.
+
+When `gh` is available and a pull request already exists for the branch
+(`gh pr view --json number,body`), write the block into the PR body yourself:
+keep the body, replace any existing `Coredoc-Intent-Delivers:` /
+`Coredoc-Intent-Retires:` lines, and append the block as the last lines. Prefer
+`gh pr edit <n> --body-file <file>`; when that fails — some repositories answer
+with a GraphQL Projects-classic error — use
+`gh api -X PATCH repos/{owner}/{repo}/pulls/{n} --input <json-with-body>`. The
+body edit is an external write: where the host asks for confirmation, ask once
+and stop if refused. With no pull request yet, or no `gh`, hand the block to the
+maintainer to paste into the PR body. Coredoc records the plan and the delivery
+from those lines when the workspace runs in `merge` or `deploy` mode; in `manual`
+mode recording availability stays the maintainer's own `intent_release` action.
 
 ```text
 Coredoc-Intent-Delivers: cap-widget-ordering@3, br-refund-window@2
@@ -303,7 +319,8 @@ tree or public contract changed. Do not commit.
 When a cloud intent write capability is present and at least one anchor
 suggestion exists, ask a second, separate `AskUserQuestion` for those
 suggestions, never bundled with the fix selections: a ticked `(repoKey, nodeId)`
-pair authorises `intent_anchor add` for that pair and an unticked one is skipped.
+pair authorises a manual `intent_anchor add` for that pair and an unticked one is
+skipped; the bindings manifest covers the rest through CI.
 Nothing else in the intent surface is ever offered here.
 
 ## Important Rules

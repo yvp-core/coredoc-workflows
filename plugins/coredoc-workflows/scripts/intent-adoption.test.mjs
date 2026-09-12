@@ -205,10 +205,14 @@ test("methodology bounds the write surface to proposals and previews", async () 
   for (const tool of ["intent_propose", "intent_anchor", "intent_release"]) {
     assert.match(body, new RegExp(`\`${tool}[ \`]`), tool);
   }
+  // The single-approval exception is scoped inline; everything else stays never.
   assert.match(
     body,
-    /NEVER calls `intent_review`, never records or rolls\s+back a release/,
+    /NEVER calls `intent_review`[\s\S]{0,200}never records or rolls\s+back a release/,
   );
+  assert.match(body, phrase("single approval"));
+  assert.match(body, /`intent_review accept`/);
+  assert.match(body, /authorizingSource/);
   assert.match(body, phrase("Never record availability"));
   assert.match(body, /anchorSuggestions|Anchor suggestions/);
 });
@@ -252,11 +256,38 @@ test("methodology separates a missing capability from an empty overlay", async (
 test("the review adapter hands over the PR trailer block", async () => {
   const review = await skill("coredoc-review");
   assert.match(review, /Coredoc-Intent-Delivers/);
-  assert.match(review, phrase("paste the block into the PR body"));
+  // The stage writes the body itself; the maintainer hand-off is the fallback.
+  assert.match(review, phrase("gh pr edit"));
+  assert.match(review, phrase("gh api -X PATCH"));
+  assert.match(review, phrase("hand the block to the maintainer to paste"));
 
   const body = await readFile(METHODOLOGY_PATH, "utf8");
   assert.match(body, /`Coredoc-Intent-Delivers:`/);
   assert.match(body, /`Coredoc-Intent-Retires:`/);
+  assert.match(body, phrase("gh api -X PATCH"));
+});
+
+// Anchors at CI come from a manifest the write stage leaves in the tree, so the
+// path has to be named where the stage is defined and where the stages run.
+test("the write stage names the bindings manifest", async () => {
+  const body = await readFile(METHODOLOGY_PATH, "utf8");
+  assert.match(body, /`\.coredoc\/intent-bindings\.json`/);
+  assert.match(body, /intent\/bindings\/sync/);
+
+  for (const name of ["coredoc-implement", "coredoc-review"]) {
+    assert.match(await skill(name), /\.coredoc\/intent-bindings\.json/, name);
+  }
+});
+
+// The spec-acceptance moment is the one place an adapter may accept, and only
+// for verbatim items in the acting human's own session.
+test("spec and implement carry the single-approval clause", async () => {
+  for (const name of ["coredoc-spec", "coredoc-implement"]) {
+    const body = await skill(name);
+    assert.match(body, phrase("single-approval clause"), name);
+    assert.match(body, /verbatim/i, name);
+    assert.match(body, /autonomous|service[- ]token/i, name);
+  }
 });
 
 test("each consumer adapter carries a conditional intent hook", async () => {

@@ -92,8 +92,11 @@ is not always a new test.
    and a cloud Coredoc intent write capability is present — `intent_propose` is
    visible — run the "After specification acceptance" write stage of
    `<plugin-root>/resources/methodology/intent-context.md` immediately after it
-   and carry the resulting `proposedIntentIds` in the report; it proposes
-   candidates only and never accepts anything.
+   and carry the resulting `proposedIntentIds` in the report; because that status
+   write is the acting human's own acceptance in this session, the stage also
+   accepts, per that write stage's single-approval clause, only the items whose
+   whole content is verbatim from the accepted section, and everything
+   paraphrased — and every autonomous or service-token run — stays a candidate.
 
 3. Apply the over-scope gate. If an item has no current observer or consumer,
    protects an unreachable state, duplicates an authoritative implementation,
@@ -114,8 +117,10 @@ is not always a new test.
    intent write capability is present, add the "Anchor suggestions" hand-off from
    the write stage of
    `<plugin-root>/resources/methodology/intent-context.md` — the touched stable
-   node ids per intent id, or the reason anchors cannot be placed yet — and leave
-   `intent_anchor add` to the maintainer's explicit decision at review.
+   node ids per intent id, or the reason anchors cannot be placed yet — and write
+   its `.coredoc/intent-bindings.json` manifest in the working tree so CI creates
+   those anchors on the snapshot it publishes, leaving `intent_anchor add` to the
+   maintainer's explicit decision at review for manual anchors.
 
 Never add a test merely to assert that deleted private code stays deleted, that
 an implementation detail has a particular shape, or that an unreachable stale

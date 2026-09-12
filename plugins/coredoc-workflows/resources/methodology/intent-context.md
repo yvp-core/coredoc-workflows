@@ -239,9 +239,11 @@ no synthetic empty handoff and continues normally.
 
 This section applies only when a cloud intent WRITE capability is present —
 `intent_propose` visible in this session. Everything it produces is a candidate
-by construction. The agent NEVER calls `intent_review`, never records or rolls
-back a release through `intent_release`, and never edits the tree with
-`intent_tree`; those are the maintainer's own actions in their own session. Read
+by construction. The agent NEVER calls `intent_review` — except at the
+spec-acceptance moment described below, for verbatim items, as the acting
+human's own decision — never records or rolls back a release through
+`intent_release`, and never edits the tree with `intent_tree`; those are the
+maintainer's own actions in their own session. Read
 release state only through `effectivity: true` and report what it says. Call
 `intent_anchor add`, `refresh`, or `remove` only on an explicit maintainer
 instruction naming the item and the node; `intent_anchor preview` is a read and
@@ -272,6 +274,19 @@ its drafting rules; otherwise the field list above is the contract. Report
 `proposedIntentIds` with their versions. Never propose from a draft
 specification, from code, or from your own inference.
 
+**Single approval at that same moment.** An accepted specification is already a
+human decision, so a second review of the same words is a queue and not a
+judgement. When the acting human accepts the specification IN THEIR OWN SESSION,
+the write stage proposes the batch and then calls `intent_review accept` for
+every item whose WHOLE content is verbatim from the accepted section — statement,
+condition/exceptions/affects, and `sources.revision` equal to the spec's commit —
+passing `authorizingSource` with that spec's `(ref, localId, revision)` and
+`reason` "accepted with <spec path>@<revision>". Propose the accept and make it in
+the same breath; report which items were accepted and which stayed candidates. An
+item you paraphrased, reworded, or inferred stays a candidate, and a service token
+or an autonomous run never accepts at all — there the whole batch waits for the
+maintainer.
+
 **After implementation, before or at review.** Map the touched symbols to stable
 node ids taken from coredoc tool responses (`search_symbols`,
 `list_file_symbols`, `explain`). New code is anchorable only once the workspace
@@ -289,6 +304,16 @@ it with `item_not_accepted` — but re-send `intent_propose` for that item with
 `anchorSuggestions` and the same source identity, which upserts, so its anchors
 are settled at review.
 
+Besides that list, the stage WRITES `.coredoc/intent-bindings.json` in the working
+tree — `{ bindings: [{ itemId, files: ["<path relative to the repository root>"],
+symbols?: ["<path>#<Name>"], rationale? }] }` — one entry per intent id in the
+working set, accepted or just proposed, that this change makes an implementation
+touchpoint, files-only when a symbol is uncertain. CI creates the anchors from it
+on the snapshot it publishes (`coredoc ci run` → `POST …/intent/bindings/sync`,
+`source: ci`); a candidate's binding is skipped until the item is accepted and is
+re-applied on the next CI run. The `intent_anchor add` tick at review stays for
+manual anchors only.
+
 **Release.** Never record availability yourself: merge, pull request, graph
 publication, and ticket transitions are not triggers the agent acts on. In the
 review or merge handoff render the PR trailer block instead of a free-text
@@ -296,11 +321,24 @@ delivery line — a fenced `text` block whose `Coredoc-Intent-Delivers:` line li
 the ACCEPTED items the change implements and whose `Coredoc-Intent-Retires:` line
 lists the accepted items the accepted specification explicitly retires, each as
 comma-separated `<itemId>@<version>` pairs with the versions from the exact-id
-refresh. Candidates are never listed, because a candidate cannot be released. The
-maintainer pastes the block into the PR body; Coredoc records the plan and the
-delivery from those lines when the workspace runs in `merge` or `deploy` mode,
-and otherwise recording availability stays the maintainer's own `intent_release`
-action after the production deploy.
+refresh. Candidates are never listed, because a candidate cannot be released. List
+an item only when this change makes it effective for the first time or re-delivers
+it after a rollback; a change made under a rule that is already effective carries
+no trailer line for that rule.
+
+When `gh` is available and a pull request already exists for the branch
+(`gh pr view --json number,body`), the review stage writes the block into the PR
+body itself: keep the body, replace any existing `Coredoc-Intent-Delivers:` /
+`Coredoc-Intent-Retires:` lines, and append the block as the last lines. Prefer
+`gh pr edit <n> --body-file <file>`; when that fails — some repositories answer
+with a GraphQL Projects-classic error — use
+`gh api -X PATCH repos/{owner}/{repo}/pulls/{n} --input <json-with-body>`. A body
+edit is an external write: where the host asks for confirmation, ask once and stop
+if refused. When no pull request exists yet, or `gh` is unavailable, hand the block
+to the maintainer to paste. Coredoc records the plan and the delivery from those
+lines when the workspace runs in `merge` or `deploy` mode; in `manual` mode
+recording availability stays the maintainer's own `intent_release` action after the
+production deploy.
 
 ### Cite it like evidence
 
