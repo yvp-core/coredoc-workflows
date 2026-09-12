@@ -22,7 +22,8 @@ is not always a new test.
      authorizes implementation. The original change request, pre-spec alignment
      approval, spec existence, an already accepted status, or positive review
      verdict is not implementation authorization; stop when that post-review
-     approval is absent.
+     approval is absent. On an authorized continuation of unchanged material,
+     that approval may be the recorded reply from the original session.
    - **Direct:** read the request and repository rules, then inspect only the
      runtime path, existing validation, and nearest consumers needed for this
      change.
@@ -44,9 +45,10 @@ is not always a new test.
    If this session has a Coredoc intent capability — the `get_intent_context` MCP
    tool or the `coredoc intent context` CLI — resolve the plugin root as two
    directories above this file and read
-   `<plugin-root>/resources/methodology/intent-context.md` before editing. Reuse
-   the intent IDs the routed specification or plan already names and fetch only
-   their missing payload; treat the limitations and non-goals it returns as scope
+   `<plugin-root>/resources/methodology/intent-context.md` before editing. Retain
+   the intent IDs the routed specification or plan already names in the cloud
+   task-context call with the task and touched files; refresh before editing
+   outside that scope. On a local/legacy surface fetch missing exact payload; treat the limitations and non-goals it returns as scope
    boundaries, and cite the IDs a change satisfies in the report. Follow the
    implementation and validation stage contracts: carry the exact working set and
    its intent versions forward unchanged, report executed evidence per acceptance
@@ -87,13 +89,17 @@ is not always a new test.
    the specification still `status: draft`. If the reviewed frontmatter is
    `status: draft`, change it to `status: accepted` as the implementation stage's
    first repository write, before any code or test edit. If an unchanged artifact
-   is already accepted from a prior session, preserve that status; fresh
-   post-review approval is still required. When that status write happens here
-   and a cloud Coredoc intent write capability is present — `intent_propose` is
-   visible — run the "After specification acceptance" write stage of
-   `<plugin-root>/resources/methodology/intent-context.md` immediately after it
-   and carry the resulting `proposedIntentIds` in the report; it proposes
-   candidates only and never accepts anything.
+   is already accepted from a prior session, preserve that status. An authorized
+   continuation of the unchanged approved specification reuses its original
+   approval; do not ask for a second approval because the session resumed.
+   When `intent_propose` is visible, run the "After specification acceptance"
+   stage in `<plugin-root>/resources/methodology/intent-context.md` both after a
+   new status write and on resumption. Read back the recorded `proposedIntentIds`
+   and complete only missing work under its single-approval clause. Accept only
+   items whose whole content is verbatim from the approved section and whose
+   source revision is unchanged. Paraphrased items, autonomous runs, and service
+   tokens stay candidates. An accepted file alone is not evidence of a human's
+   authorization: retain the approval and source reference in the handoff.
 
 3. Apply the over-scope gate. If an item has no current observer or consumer,
    protects an unreachable state, duplicates an authoritative implementation,
@@ -111,11 +117,15 @@ is not always a new test.
 6. Report the proof mode, changed files, commands and outcomes, and any check
    that could not run. Do not claim test-first work when the chosen evidence was
    validation, compilation, search, or an existing suite. If a cloud Coredoc
-   intent write capability is present, add the "Anchor suggestions" hand-off from
-   the write stage of
-   `<plugin-root>/resources/methodology/intent-context.md` — the touched stable
-   node ids per intent id, or the reason anchors cannot be placed yet — and leave
-   `intent_anchor add` to the maintainer's explicit decision at review.
+   intent write capability is present, follow the implementation mapping stage in
+   `<plugin-root>/resources/methodology/intent-context.md`: update
+   `.coredoc/intent-bindings.json` for items this change implements, preserving
+   unrelated bindings. CI resolves files against its new snapshot; local graph
+   publication and manual anchor approval are not prerequisites. Include the PR
+   trailer block in the handoff. When the user also authorized PR creation or a
+   PR body update, that authorized writer applies the block using the same
+   methodology's Release instructions. Otherwise carry it to the next authorized
+   PR-writing stage; implementation authorization alone does not publish it.
 
 Never add a test merely to assert that deleted private code stays deleted, that
 an implementation detail has a particular shape, or that an unreachable stale

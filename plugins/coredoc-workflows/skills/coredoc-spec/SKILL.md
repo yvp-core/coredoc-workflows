@@ -366,8 +366,12 @@ intent the accepted specification introduces or changes as candidates in one
 batch, sourced at the repo-qualified spec path and the stable section id, and
 report each
 `itemId`, `outcome`, and `version` as `proposedIntentIds` beside `intentIds` and
-`intentVersions`. Proposals are candidates; never accept, review, anchor, or
-record anything, and a draft specification proposes nothing. When no intent
+`intentVersions`. Proposals are candidates and anchoring or recording is never
+yours; the single exception is that write stage's single-approval clause — when
+the acting human accepts the specification in this session, accept the items
+whose whole content is verbatim from the accepted section and leave every
+paraphrased one, and every autonomous or service-token run, a candidate. A draft
+specification proposes nothing. When no intent
 capability is present, proceed from repository evidence alone and do not mention
 intent context in the output.
 

@@ -104,22 +104,21 @@ Candidate intent is never a blocking finding. Follow the review and merge stage
 contracts: carry the exact working set and its intent versions, keep diff-impact
 coverage/freshness in the verdict, and never describe merge as mutating intent;
 a code-only merge rebuilds the code graph and may change anchor status only.
-Two checks precede the verdict. First, refresh the recorded ids by exact id and
-report per-id version changes, a `supersededById` successor, and any replacement
-candidate. Second, rediscover against the ACTUAL diff: map the changed
-files/symbols to stable node ids through the graph and spend the stage's single
-broad lookup on `nodeIds` of those symbols, narrowed by `domain`/`feature` when
-the working set already named one; retain the routed set alongside what comes
-back, and name unmapped files and evidence gaps separately from server
-truncation. A server snapshot may predate unpushed changes — say so; publishing
-is never a precondition for this advisory check. When no intent capability is
+Before the verdict, use the cloud task-context call for the ACTUAL diff: task
+text, changed `files: [{repoKey, path}]`, known node IDs, and the routed intent
+IDs together, with a known domain/feature when applicable. Compare routed
+versions and report successors or replacement candidates. On local/legacy
+surfaces, follow the methodology's exact-ID-first protocol and bounded node
+lookup. Retain the routed set alongside new constraints; name unmapped files,
+truncation and freshness gaps. A snapshot may predate unpushed changes — say
+so; publishing is never a precondition for this advisory check. When no intent capability is
 present, proceed from repository evidence alone and do not mention intent context
 in the output.
 
 If a cloud Coredoc intent write capability is present — `intent_propose` is
-visible — also prepare the "Anchor suggestions" list from the write stage of
-`<plugin-root>/resources/methodology/intent-context.md`, and never review,
-anchor, or record anything on your own judgement. When no intent capability is
+visible — use `<plugin-root>/resources/methodology/intent-context.md` to inspect
+the implementation bindings and prepare the PR trailer handoff. Keep this
+review read-only; tool availability does not authorize a write. When no intent capability is
 present, proceed from repository evidence alone and do not mention intent context
 in the output.
 
@@ -186,10 +185,31 @@ scope/plan audit, conditional coverage, and verdict.
 When intent context was used, add a **Reviewed intent** block: the rules that
 influenced the implementation; the rules retrieved and judged not applicable,
 each with its reason; rules newly discovered against the diff; anchors the change
-touches whose status is not `matched`; any truncation seen; and the delivery line
-from the methodology's Release bullet. With a write capability present, the
-"Anchor suggestions" list goes here too, as suggestions and not as executed
-anchors.
+touches whose status is not `matched`; and any truncation seen. Include suggested
+changes to `.coredoc/intent-bindings.json` when the implementation mapping is
+missing or wrong. Review is read-only: report the suggested diff in the handoff;
+do not write the manifest or execute anchors.
+With a cloud Coredoc intent write capability present, close that block with a
+fenced `text` block of PR trailers: `Coredoc-Intent-Delivers:` lists the ACCEPTED
+items this change implements and `Coredoc-Intent-Retires:` the accepted items the
+accepted specification explicitly retires, each as comma-separated
+`<itemId>@<version>` pairs whose versions come from the exact-id refresh.
+Candidates are never listed, because a candidate cannot be released. List an item
+only when this change makes it effective for the first time or re-delivers it
+after a rollback; a change made under a rule that is already effective carries no
+trailer line for that rule.
+
+Carry the trailer block to the next authorized PR-writing stage. Review alone
+does not authorize a PR body update, even when `gh` and a pull request exist.
+The authorized writer applies the block using the methodology's Release
+instructions; do not require the user to paste it manually. Coredoc records plan
+and delivery from those lines in `merge` or `deploy` mode; in `manual` mode
+recording availability stays the maintainer's own `intent_release` action.
+
+```text
+Coredoc-Intent-Delivers: cap-widget-ordering@3, br-refund-window@2
+Coredoc-Intent-Retires: lim-old-export-cap@4
+```
 
 Dispositions are separate from severity: `fixed`, `accepted-risk`, `deferred`,
 or `rejected`. A blocking finding closes only when fixed or explicitly accepted
@@ -209,21 +229,6 @@ Report each selection as `[FIXED]`, `[FAILED]`, or `[SKIPPED]` with its validati
 result or concise reason. Do not start a fresh full review unless the material
 tree or public contract changed. Do not commit.
 
-When a cloud intent write capability is present and at least one anchor
-suggestion exists, ask a second, separate `AskUserQuestion` for those
-suggestions, never bundled with the fix selections: a ticked `(repoKey, nodeId)`
-pair authorises `intent_anchor add` for that pair and an unticked one is skipped.
-Nothing else in the intent surface is ever offered here.
-
-## Important Rules
-
-- Authorization, repository policy, and accepted release context override this
-  fallback method.
-- Review the real material tree, including tracked dirty state and named
-  untracked files; never imply an unreviewed file was covered.
-- Never hide a proven candidate because release context is missing; use
-  `NEEDS_CONTEXT`.
-- Never leak prompts, secrets, source, diffs, or paths to external providers
-  without the explicit cross-model approval described above.
-- Stop when relevant validation is green and no open proven blocker or unresolved
-  `NEEDS_CONTEXT` remains under the accepted handoff.
+Manual anchor changes require a separate explicit request naming the item and
+node. Do not add a routine anchor-approval questionnaire to review; CI resolves
+the reviewed bindings manifest after graph publication.

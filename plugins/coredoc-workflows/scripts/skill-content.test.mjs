@@ -525,7 +525,8 @@ test("router and implementation skills preserve the large-change approval lifecy
     router,
     /initial\s+change\s+request,\s+pre-spec\s+alignment\s+approval,\s+spec\s+existence,\s+an\s+already\s+accepted\s+status,\s+or\s+a\s+successful\s+review\s+verdict\s+does\s+not\s+count/i,
   );
-  assert.match(router, /obtain fresh\s+approval regardless of its existing status/i);
+  assert.match(router, /authorized continuation[\s\S]*recorded post-review approval[\s\S]*unchanged[\s\S]*continue under that approval/i);
+  assert.match(router, /fresh approval only if the approved\s+material changed or the original approval cannot be recovered/i);
   assert.match(router, /runStateStatus/);
   assert.match(router, /fails closed/);
   assert.match(router, /same host session/i);
@@ -548,7 +549,7 @@ test("router and implementation skills preserve the large-change approval lifecy
   assert.match(implementation, /same affirmative reply\s+authorizes implementation/i);
   assert.match(
     implementation,
-    /finish the read-only preflight[\s\S]*state\s+the proof plan before changing any file[\s\S]*frontmatter is\s+`status: draft`[\s\S]*`status: accepted` as the implementation stage's\s+first repository write[\s\S]*already accepted from a prior session, preserve that status[\s\S]*fresh\s+post-review approval is still required/i,
+    /finish the read-only preflight[\s\S]*state\s+the proof plan before changing any file[\s\S]*frontmatter is\s+`status: draft`[\s\S]*`status: accepted` as the implementation stage's\s+first repository write[\s\S]*already accepted from a prior session, preserve that status[\s\S]*unchanged approved specification reuses its original\s+approval/i,
   );
   assert.match(implementation, /start from the reviewed specification/i);
   assert.match(

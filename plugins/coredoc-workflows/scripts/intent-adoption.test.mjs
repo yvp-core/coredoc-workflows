@@ -205,12 +205,16 @@ test("methodology bounds the write surface to proposals and previews", async () 
   for (const tool of ["intent_propose", "intent_anchor", "intent_release"]) {
     assert.match(body, new RegExp(`\`${tool}[ \`]`), tool);
   }
+  // The single-approval exception is scoped inline; everything else stays never.
   assert.match(
     body,
-    /NEVER calls `intent_review`, never records or rolls\s+back a release/,
+    /NEVER calls `intent_review`[\s\S]{0,200}never records or rolls\s+back a release/,
   );
+  assert.match(body, phrase("single approval"));
+  assert.match(body, /`intent_review accept`/);
+  assert.match(body, /authorizingSource/);
   assert.match(body, phrase("Never record availability"));
-  assert.match(body, /anchorSuggestions|Anchor suggestions/);
+  assert.match(body, phrase("Manual anchors remain separate and require an explicit instruction"));
 });
 
 // The two write-stage consumers reference it on a condition, not as a step that
@@ -245,6 +249,56 @@ test("methodology separates a missing capability from an empty overlay", async (
   );
   assert.ok(distinction, "state the capability-vs-overlay distinction in one sentence");
   assert.match(distinction, /not the same|different|is not/i, distinction);
+});
+
+// The release handoff is the PR trailer block, not a free-text delivery line:
+// the automatic actors read only those two keys from the PR body.
+test("the review adapter hands over the PR trailer block", async () => {
+  const review = await skill("coredoc-review");
+  assert.match(review, /Coredoc-Intent-Delivers/);
+  assert.match(review, phrase("next authorized PR-writing stage"));
+  assert.match(review, phrase("does not authorize a PR body update"));
+  assert.match(review, phrase("do not write the manifest"));
+  assert.doesNotMatch(review, phrase("write the block into the PR body yourself"));
+
+  const body = await readFile(METHODOLOGY_PATH, "utf8");
+  assert.match(body, /`Coredoc-Intent-Delivers:`/);
+  assert.match(body, /`Coredoc-Intent-Retires:`/);
+  assert.match(body, phrase("gh api -X PATCH"));
+});
+
+// Anchors at CI come from a manifest the write stage leaves in the tree, so the
+// path has to be named where the stage is defined and where the stages run.
+test("the write stage names the bindings manifest", async () => {
+  const body = await readFile(METHODOLOGY_PATH, "utf8");
+  assert.match(body, /`\.coredoc\/intent-bindings\.json`/);
+  assert.match(body, /intent\/bindings\/sync/);
+
+  for (const name of ["coredoc-implement", "coredoc-review"]) {
+    assert.match(await skill(name), /\.coredoc\/intent-bindings\.json/, name);
+  }
+});
+
+// The spec-acceptance moment is the one place an adapter may accept, and only
+// for verbatim items in the acting human's own session.
+test("spec and implement carry the single-approval clause", async () => {
+  for (const name of ["coredoc-spec", "coredoc-implement"]) {
+    const body = await skill(name);
+    assert.match(body, phrase("single-approval clause"), name);
+    assert.match(body, /verbatim/i, name);
+    assert.match(body, /autonomous|service[- ]token/i, name);
+  }
+});
+
+test("resuming an approved spec completes missing intent work without another approval", async () => {
+  const implement = await skill("coredoc-implement");
+  assert.match(implement, phrase("both after a new status write and on resumption"));
+  assert.match(implement, phrase("complete only missing work"));
+  assert.doesNotMatch(implement, phrase("fresh post-review approval is still required"));
+  const body = await readFile(METHODOLOGY_PATH, "utf8");
+  assert.match(body, phrase("already accepted matching item needs no write"));
+  assert.match(body, phrase("original idempotency key"));
+  assert.match(body, phrase("source revision or whole item content changed"));
 });
 
 test("each consumer adapter carries a conditional intent hook", async () => {
