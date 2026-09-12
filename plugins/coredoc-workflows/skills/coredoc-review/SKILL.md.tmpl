@@ -101,11 +101,27 @@ accepted intent the change violates is a finding that cites the intent ID;
 stale anchors, changed or missing, are unverified touchpoints and not
 violations; behavior with no intent coverage is unknown, not compliant.
 Candidate intent is never a blocking finding. Follow the review and merge stage
-contracts: carry the exact working set and observed revision, keep diff-impact
+contracts: carry the exact working set and its intent versions, keep diff-impact
 coverage/freshness in the verdict, and never describe merge as mutating intent;
 a code-only merge rebuilds the code graph and may change anchor status only.
-When no intent capability is present, proceed from repository evidence alone and
-do not mention intent context in the output.
+Two checks precede the verdict. First, refresh the recorded ids by exact id and
+report per-id version changes, a `supersededById` successor, and any replacement
+candidate. Second, rediscover against the ACTUAL diff: map the changed
+files/symbols to stable node ids through the graph and spend the stage's single
+broad lookup on `nodeIds` of those symbols, narrowed by `domain`/`feature` when
+the working set already named one; retain the routed set alongside what comes
+back, and name unmapped files and evidence gaps separately from server
+truncation. A server snapshot may predate unpushed changes — say so; publishing
+is never a precondition for this advisory check. When no intent capability is
+present, proceed from repository evidence alone and do not mention intent context
+in the output.
+
+If a cloud Coredoc intent write capability is present — `intent_propose` is
+visible — also prepare the "Anchor suggestions" list from the write stage of
+`<plugin-root>/resources/methodology/intent-context.md`, and never review,
+anchor, or record anything on your own judgement. When no intent capability is
+present, proceed from repository evidence alone and do not mention intent context
+in the output.
 
 ## Confidence calibration
 
@@ -167,6 +183,14 @@ violated contract, existing handling, root cause, and smallest safe direction.
 Then report `NEEDS_CONTEXT`, hypotheses when requested, validation results,
 scope/plan audit, conditional coverage, and verdict.
 
+When intent context was used, add a **Reviewed intent** block: the rules that
+influenced the implementation; the rules retrieved and judged not applicable,
+each with its reason; rules newly discovered against the diff; anchors the change
+touches whose status is not `matched`; any truncation seen; and the delivery line
+from the methodology's Release bullet. With a write capability present, the
+"Anchor suggestions" list goes here too, as suggestions and not as executed
+anchors.
+
 Dispositions are separate from severity: `fixed`, `accepted-risk`, `deferred`,
 or `rejected`. A blocking finding closes only when fixed or explicitly accepted
 by the maintainer; deferred does not unblock. With no findings, say so and list
@@ -184,6 +208,12 @@ adjacent cleanup, reformatting, or a separate finding into an approved fix.
 Report each selection as `[FIXED]`, `[FAILED]`, or `[SKIPPED]` with its validation
 result or concise reason. Do not start a fresh full review unless the material
 tree or public contract changed. Do not commit.
+
+When a cloud intent write capability is present and at least one anchor
+suggestion exists, ask a second, separate `AskUserQuestion` for those
+suggestions, never bundled with the fix selections: a ticked `(repoKey, nodeId)`
+pair authorises `intent_anchor add` for that pair and an unticked one is skipped.
+Nothing else in the intent surface is ever offered here.
 
 ## Important Rules
 

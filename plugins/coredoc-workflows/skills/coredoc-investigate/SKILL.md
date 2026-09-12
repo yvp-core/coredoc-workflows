@@ -136,7 +136,7 @@ Gather context before forming any hypothesis.
    does: an unchanged anchor says nothing about runtime behavior. Follow the
    investigation stage contract by separating expected intent, implemented/static
    graph evidence, observed runtime evidence, and unknowns, and carry exact IDs
-   plus the observed revision in the diagnosis handoff. When no intent capability
+   plus their intent versions in the diagnosis handoff. When no intent capability
    is present, proceed from repository evidence alone and do not mention intent
    context in the output.
 

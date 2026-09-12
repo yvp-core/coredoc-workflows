@@ -27,6 +27,14 @@ is not always a new test.
      runtime path, existing validation, and nearest consumers needed for this
      change.
 
+   If this session has a Coredoc code-graph capability — `search_symbols`,
+   `explain`, `find_dependents`, `analyze_change_impact` — resolve the touched
+   symbols' consumers and impact through it before grepping, especially for an
+   export or a shared contract, and pass those facts to any scout or implementer
+   you dispatch. Its coverage is a lower bound; verify critical consumers against
+   source. When no graph capability is present, proceed from repository evidence
+   alone and do not mention it in the output.
+
    Treat the specification's acceptance criteria as outcomes, not as an
    automatic list of new tests. If a criterion has no current observer or
    contradicts repository evidence, stop and raise the mismatch instead of
@@ -41,7 +49,7 @@ is not always a new test.
    their missing payload; treat the limitations and non-goals it returns as scope
    boundaries, and cite the IDs a change satisfies in the report. Follow the
    implementation and validation stage contracts: carry the exact working set and
-   observed revision forward unchanged, report executed evidence per acceptance
+   its intent versions forward unchanged, report executed evidence per acceptance
    criterion, and keep runtime conformance separate from anchor status and graph
    freshness. When no intent capability is present, proceed from repository
    evidence alone and do not mention intent context in the output.
@@ -80,7 +88,12 @@ is not always a new test.
    `status: draft`, change it to `status: accepted` as the implementation stage's
    first repository write, before any code or test edit. If an unchanged artifact
    is already accepted from a prior session, preserve that status; fresh
-   post-review approval is still required.
+   post-review approval is still required. When that status write happens here
+   and a cloud Coredoc intent write capability is present — `intent_propose` is
+   visible — run the "After specification acceptance" write stage of
+   `<plugin-root>/resources/methodology/intent-context.md` immediately after it
+   and carry the resulting `proposedIntentIds` in the report; it proposes
+   candidates only and never accepts anything.
 
 3. Apply the over-scope gate. If an item has no current observer or consumer,
    protects an unreachable state, duplicates an authoritative implementation,
@@ -97,7 +110,12 @@ is not always a new test.
    to get green.
 6. Report the proof mode, changed files, commands and outcomes, and any check
    that could not run. Do not claim test-first work when the chosen evidence was
-   validation, compilation, search, or an existing suite.
+   validation, compilation, search, or an existing suite. If a cloud Coredoc
+   intent write capability is present, add the "Anchor suggestions" hand-off from
+   the write stage of
+   `<plugin-root>/resources/methodology/intent-context.md` — the touched stable
+   node ids per intent id, or the reason anchors cannot be placed yet — and leave
+   `intent_anchor add` to the maintainer's explicit decision at review.
 
 Never add a test merely to assert that deleted private code stays deleted, that
 an implementation detail has a particular shape, or that an unreachable stale

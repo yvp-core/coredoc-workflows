@@ -472,8 +472,19 @@ test("plugin agents right-size models and keep review output dispatch-defined", 
 
   for (const name of ["coredoc-implementer.md", "coredoc-implementer-light.md"]) {
     const definition = await readFile(join(PLUGIN_ROOT, "agents", name), "utf8");
-    assert.match(definition, /^tools: Read, Write, Edit, Glob, Grep, Bash$/m);
+    assert.match(definition, /^disallowedTools: Agent$/m);
+    assert.doesNotMatch(definition, /^tools:/m, name);
     assert.doesNotMatch(definition, /^tools:.*\bAgent\b/m);
+  }
+
+  // Every subagent inherits the host's tools, MCP servers included (the Coredoc
+  // graph among them): a file-only allowlist made delegated grounding
+  // structurally grep-only, and a `tools:` wildcard for MCP is not portable.
+  // Read-only agents deny the write tools instead.
+  for (const name of ["coredoc-scout.md", "coredoc-reviewer.md"]) {
+    const definition = await readFile(join(PLUGIN_ROOT, "agents", name), "utf8");
+    assert.match(definition, /^disallowedTools: Write, Edit, NotebookEdit, Agent$/m, name);
+    assert.doesNotMatch(definition, /^tools:/m, name);
   }
 
   const reviewer = await readFile(join(PLUGIN_ROOT, "agents", "coredoc-reviewer.md"), "utf8");

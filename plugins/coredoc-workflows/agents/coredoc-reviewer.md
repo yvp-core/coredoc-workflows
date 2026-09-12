@@ -1,7 +1,7 @@
 ---
 name: coredoc-reviewer
 description: Perform one read-only specialist, red-team, or adversarial review pass over a bounded diff. Use when a workflow dispatches an independent review checklist.
-tools: Read, Glob, Grep, Bash
+disallowedTools: Write, Edit, NotebookEdit, Agent
 model: inherit
 effort: medium
 ---
