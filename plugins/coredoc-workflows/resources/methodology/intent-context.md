@@ -377,7 +377,7 @@ The old `.coredoc/intent-bindings.json` is not read by the standard CI flow.
 **Release.** Never record availability yourself: merge, pull request, graph
 publication, and ticket transitions are not triggers the agent acts on. In the
 review or merge handoff render the PR trailer block instead of a free-text
-delivery line — a fenced `text` block whose `Coredoc-Intent-Delivers:` line lists
+delivery line — plain, unfenced lines whose `Coredoc-Intent-Delivers:` line lists
 the ACCEPTED items the change implements and whose `Coredoc-Intent-Retires:` line
 lists the accepted items the accepted specification explicitly retires, each as
 comma-separated `<itemId>@<version>` pairs with the versions from the exact-id
@@ -385,6 +385,11 @@ refresh. Candidates are never listed, because a candidate cannot be released. Li
 an item only when this change makes it effective for the first time or re-delivers
 it after a rollback; a change made under a rule that is already effective carries
 no trailer line for that rule.
+
+Use `resources/methodology/intent-pr-body.example.md` as the body layout, replacing
+the example IDs/versions with the refreshed working set. Trailers must remain ordinary
+paragraph text in the actual PR: never wrap them in fences, indentation or HTML comments.
+Fences are for documentation examples only.
 
 When the user explicitly authorizes PR creation or a PR body update, the
 PR-writing stage applies the block as part of that write. For an existing PR,
