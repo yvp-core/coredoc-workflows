@@ -137,6 +137,25 @@ async function jsonResponse(response, code, message) {
   }
 }
 
+// Hostnames that always resolve to this machine. A policy may point at a
+// loopback HTTP origin (127.0.0.1 or [::1]); such a server commonly advertises
+// its OAuth endpoints as `localhost`, so the three names are interchangeable
+// there. Any other origin must stay HTTPS and byte-identical.
+const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "[::1]", "localhost"]);
+
+function isLoopbackHttpOrigin(origin) {
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.protocol === "http:" &&
+    (parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]")
+  );
+}
+
 function sameOriginHttpsEndpoint(value, serverOrigin, field) {
   if (typeof value !== "string") {
     throw new EnrollmentError("DISCOVERY_INVALID", `OAuth discovery ${field} is invalid.`);
@@ -147,9 +166,14 @@ function sameOriginHttpsEndpoint(value, serverOrigin, field) {
   } catch {
     throw new EnrollmentError("DISCOVERY_INVALID", `OAuth discovery ${field} is invalid.`);
   }
+  const server = new URL(serverOrigin);
+  const sameOrigin = isLoopbackHttpOrigin(serverOrigin)
+    ? endpoint.protocol === "http:" &&
+      LOOPBACK_HOSTNAMES.has(endpoint.hostname) &&
+      endpoint.port === server.port
+    : endpoint.protocol === "https:" && endpoint.origin === serverOrigin;
   if (
-    endpoint.protocol !== "https:" ||
-    endpoint.origin !== serverOrigin ||
+    !sameOrigin ||
     endpoint.username !== "" ||
     endpoint.password !== "" ||
     endpoint.hash !== ""
@@ -622,7 +646,10 @@ export async function createLoopbackCallbackListener() {
 
 export async function openSystemBrowser(url) {
   const parsed = new URL(url);
-  if (parsed.protocol !== "https:") {
+  if (
+    parsed.protocol !== "https:" &&
+    !(parsed.protocol === "http:" && LOOPBACK_HOSTNAMES.has(parsed.hostname))
+  ) {
     throw new EnrollmentError("BROWSER_OPEN_FAILED", "Authorization URL must use HTTPS.");
   }
   const executable =

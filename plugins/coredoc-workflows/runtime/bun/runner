@@ -7,7 +7,15 @@ case "$runner" in
   *) runner=$PWD/$runner ;;
 esac
 runtime_dir=${runner%/*}
-bun=$runtime_dir/darwin-arm64/bun
+case "$(/usr/bin/uname -s)/$(/usr/bin/uname -m)" in
+  Darwin/arm64) runtime_platform=darwin-arm64 ;;
+  Linux/x86_64) runtime_platform=linux-x64 ;;
+  *)
+    echo "coredoc-workflows: bundled runtime does not support this host" >&2
+    exit 69
+    ;;
+esac
+bun=$runtime_dir/$runtime_platform/bun
 config=$runtime_dir/bunfig.toml
 
 if [ ! -x "$bun" ] || [ ! -r "$config" ]; then

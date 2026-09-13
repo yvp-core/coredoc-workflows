@@ -28,6 +28,11 @@ is not always a new test.
      runtime path, existing validation, and nearest consumers needed for this
      change.
 
+   Before any edit, apply
+   `<plugin-root>/resources/methodology/branch-start.md` unless the router
+   already did so in this run. Refresh the base without discarding local work;
+   continue an authorized dirty checkout when trunk is already integrated.
+
    If this session has a Coredoc code-graph capability — `search_symbols`,
    `explain`, `find_dependents`, `analyze_change_impact` — resolve the touched
    symbols' consumers and impact through it before grepping, especially for an

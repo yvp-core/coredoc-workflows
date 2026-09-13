@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "entry": "scripts/managed-otel-relay.mjs",
-  "files": [
+  "shared": [
     {
       "path": "runtime/artifacts/contract.mjs",
       "sha256": "0ae032df1cc8d3cfd0a49421b36cea716b5f985ec970e8ea844ad913381ef69f"
@@ -11,16 +11,12 @@
       "sha256": "66a3ca148c446bdb484b33815567ed0446ef9b24ab7507ca5c6d6d0b8840580a"
     },
     {
-      "path": "runtime/bun/darwin-arm64/bun",
-      "sha256": "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233"
-    },
-    {
       "path": "runtime/bun/runner",
-      "sha256": "0fce5ff3f06ac5ba1e330fd2e4f71918cbf4a1a2550e9eb8f472c54e32fa207f"
+      "sha256": "ffaedb88d896ef3ec876ec41472908059c039282c4cb18ad679f8128b80198e1"
     },
     {
       "path": "runtime/capture/contract.mjs",
-      "sha256": "d4526dad70e757f6049e5f2f61e4d2dd79826f0489e475384518ce008e594d2c"
+      "sha256": "afcdcb1c97fdd54ebe3f9081b0e3bcaedef12ddd64922c4767aa612700b62f8b"
     },
     {
       "path": "runtime/capture/file-outbox.mjs",
@@ -40,7 +36,7 @@
     },
     {
       "path": "scripts/capture-client.mjs",
-      "sha256": "ae9e5b67efb05e31569a7dbe916ad7dce8a8891fa30d4a4b0296762703c09e01"
+      "sha256": "236584e36175baad5ebe34d76aec4893f65e6d4b0f00c64a090a7f87d2b9e792"
     },
     {
       "path": "scripts/capture-health-report.mjs",
@@ -56,7 +52,7 @@
     },
     {
       "path": "scripts/managed-otel-relay.mjs",
-      "sha256": "783f07f52c35104f285c8436cffcbbb149181600f8a8a0bd59fed8edbe8ca867"
+      "sha256": "40529132b3cd3704463df7516f105861ba54d3919050a75c76ae9523425c43a3"
     },
     {
       "path": "scripts/native-otel-sanitizer.mjs",
@@ -66,5 +62,13 @@
       "path": "scripts/project-key.mjs",
       "sha256": "d5b2624333bceb50ab1d4d7265b57f52598aa103ee3f2b1788f66be916bab67f"
     }
-  ]
+  ],
+  "platforms": {
+    "darwin-arm64": {
+      "sha256": "e0c90ec15d33363e6b70713d56bc3b2c7585c17f40a0fe0f8fd9305901d4e233"
+    },
+    "linux-x64": {
+      "sha256": "a8f9ebd1770ddc8e55dab7a68d4ec1ec1eebf374bb97cc65cf2c3cb373fc6791"
+    }
+  }
 }

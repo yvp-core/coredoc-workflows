@@ -28,6 +28,18 @@ then use the resolved Review policy to determine whether the finding blocks.
 - Runtime or distribution changes without an operational delivery path.
 - User-visible behavior changed while relevant documentation remains stale.
 
+## Simplification advice
+
+Within the requested diff, look for unused flexibility, one-implementation
+abstractions, and custom code or dependencies duplicating an available built-in.
+Apply `<plugin-root>/resources/methodology/search-before-building.md` before recommending a
+replacement and prove it preserves the current contract. Name the concrete
+structure that can be removed and what replaces it. Correct behavior with a
+smaller implementation is P3 advice; it does not become a defect or approved work
+because of line count. Do not spawn an extra reviewer solely for this lens.
+Tests, security checks, input validation, error paths, and accessibility are not
+deletion targets. If no useful simplification exists, say nothing about it.
+
 ## Suppressions
 
 - Do not flag style preferences already enforced by repository tooling.

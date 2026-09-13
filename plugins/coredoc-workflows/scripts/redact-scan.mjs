@@ -31,7 +31,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
 import { PATTERNS, isPlaceholderSpan } from "./lib/redact-patterns.mjs";
-import { emailAllowed, normalizeWithMap } from "./lib/redact-engine.mjs";
+import { emailAllowed, isSshGitRemote, normalizeWithMap } from "./lib/redact-engine.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(HERE, "..");
@@ -52,12 +52,15 @@ export function maskSpan(span) {
 }
 
 /** 1-based line number of a character offset. */
-function lineAt(text, index) {
-  let line = 1;
-  for (let i = 0; i < index && i < text.length; i++) {
-    if (text.charCodeAt(i) === 10) line++;
+function lineAt(starts, index) {
+  let low = 0;
+  let high = starts.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (starts[middle] <= index) low = middle + 1;
+    else high = middle;
   }
-  return line;
+  return low;
 }
 
 /**
@@ -83,6 +86,11 @@ function lineAt(text, index) {
 export function scanText(text, { patterns = PATTERNS, allowEmails = new Set() } = {}) {
   const { normalized, map } = normalizeWithMap(text);
   const toOriginal = (offset) => map[Math.min(offset, map.length - 1)] ?? 0;
+  // Index ORIGINAL text once; normalization can remove or expand characters.
+  const lineStarts = [0];
+  for (let index = 0; index < text.length; index++) {
+    if (text.charCodeAt(index) === 10) lineStarts.push(index + 1);
+  }
 
   const findings = [];
   const seen = new Set();
@@ -104,7 +112,10 @@ export function scanText(text, { patterns = PATTERNS, allowEmails = new Set() } 
         if (!p.nearRegex.test(normalized.slice(from, to))) continue;
       }
       if (p.validate && !p.validate(span, match)) continue;
-      if (p.id === "pii.email" && emailAllowed(span, allowEmails)) continue;
+      if (p.id === "pii.email" && (
+        emailAllowed(span, allowEmails) ||
+        isSshGitRemote(span, normalized, match.index + match[0].indexOf(span))
+      )) continue;
       if (isPlaceholderSpan(span)) continue;
 
       const origOffset = toOriginal(match.index);
@@ -117,7 +128,7 @@ export function scanText(text, { patterns = PATTERNS, allowEmails = new Set() } 
         tier: p.tier,
         category: p.category,
         description: p.description,
-        line: lineAt(text, origOffset),
+        line: lineAt(lineStarts, origOffset),
         masked: maskSpan(span),
       });
     }

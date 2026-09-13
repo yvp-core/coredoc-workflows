@@ -219,6 +219,56 @@ test("normalizes the closed bounded v3 work-item start contract", () => {
   );
 });
 
+test("normalizes the bounded v4 question contract and keeps it session-scoped", () => {
+  const event = {
+    schemaVersion: 4,
+    eventId: EVENT_ID,
+    occurredAt: "2026-09-08T10:00:00.000Z",
+    host: "claude-code",
+    sessionId: "session-42",
+    type: "workflow.question.answered",
+    data: {
+      askId: "71111111-1111-4111-8111-111111111111",
+      questionIndex: 1,
+      questionCount: 1,
+      question: "Backfill\texisting rows?\nOne migration or two?",
+      options: [{ label: "One" }, { label: "Two", description: "Separate data step" }],
+      multiSelect: false,
+      answer: "Two",
+      answerKind: "option",
+    },
+  };
+  assert.deepEqual(captureEvent(event), event);
+  assert.equal(
+    captureEvent({
+      ...event,
+      runId: "cdr-20260908-a1b2c3",
+      data: { ...event.data, stageId: "spec" },
+    }).data.stageId,
+    "spec",
+  );
+  assert.throws(
+    () => captureEvent({ ...event, type: "capability.used" }),
+    /schemaVersion 4 supports only workflow\.question\.answered/,
+  );
+  assert.throws(
+    () => captureEvent({ ...event, schemaVersion: 2 }),
+    /Unsupported capture event type: workflow\.question\.answered/,
+  );
+  assert.throws(
+    () => captureEvent({ ...event, data: { ...event.data, question: "" } }),
+    /question must be text of 1 to 500 characters/,
+  );
+  assert.throws(
+    () => captureEvent({ ...event, data: { ...event.data, multiSelect: "no" } }),
+    /multiSelect must be a boolean/,
+  );
+  assert.throws(
+    () => captureEvent({ ...event, data: { ...event.data, askId: "ask-1" } }),
+    /askId must be a UUID/,
+  );
+});
+
 test("normalizes v2 occurrence UUIDs and keeps v1 task IDs opaque", () => {
   const started = captureEvent({
     schemaVersion: 2,

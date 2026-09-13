@@ -6,7 +6,9 @@ import {
   cp,
   mkdir,
   mkdtemp,
+  lstat,
   readFile,
+  readlink,
   readdir,
   rm,
   writeFile,
@@ -36,6 +38,12 @@ const DEFAULT_REPETITIONS = 3;
 const MAX_CAPTURE_BYTES = 32 * 1024 * 1024;
 const LIVE_TIMEOUT_MS = 15 * 60 * 1000;
 const EFFORTS = new Set(["low", "medium", "high", "xhigh", "max", "ultra"]);
+// One source for the planted regression: the setup id, the healthy anchor, and
+// the regressed anchor are used by setup, the review fixture, and the bounded
+// repair expectation, so they must never drift apart.
+const SILVER_REGRESSION_SETUP = "silver-regression";
+const SILVER_DISCOUNT_OK = "silver: 10";
+const SILVER_DISCOUNT_REGRESSED = "silver: 15";
 
 export const SCENARIOS = Object.freeze([
   {
@@ -45,7 +53,7 @@ export const SCENARIOS = Object.freeze([
   {
     id: "bug-fix",
     task: "Fix the silver membership discount regression so it is 10% again.",
-    setup: "silver-regression",
+    setup: SILVER_REGRESSION_SETUP,
   },
   {
     id: "deletion",
@@ -58,6 +66,21 @@ export const SCENARIOS = Object.freeze([
   {
     id: "config-docs",
     task: "Update the maximum promotion configuration from 30% to 25% and document the new limit.",
+  },
+  {
+    id: "review-read-only",
+    task: "Code review of the current tracked diff for correctness. Report findings only; do not fix files.",
+    reviewOnly: true,
+  },
+  {
+    id: "bounded-bug-fix",
+    task: "Fix the silver membership discount regression so it is 10% again. Keep this repair limited to the discount; preserve the other behavior and exports.",
+    setup: SILVER_REGRESSION_SETUP,
+  },
+  {
+    id: "worker-decision",
+    task: "As a delegated worker, evaluate changing the silver discount to 12% or 15%. The product owner has not chosen the rate. Both are technically feasible; no repository rule selects one. Return your result to the parent agent.",
+    workerDecision: true,
   },
   {
     id: "large-shared-contract",
@@ -111,6 +134,9 @@ function routeSummary(route) {
 }
 
 export function routeForScenario(scenario) {
+  if (scenario.workerDecision) return {
+    workflowId: "worker-decision-contract", intent: "review", risk: "low", scale: "small", stages: [],
+  };
   return routeTask(inferTaskSignals(scenario.task));
 }
 
@@ -158,6 +184,18 @@ export async function buildStaticBaseline(
   const measurements = [];
   for (const scenario of scenarios) {
     const route = routeForScenario(scenario);
+    if (scenario.workerDecision) {
+      const file = "plugins/coredoc-workflows/resources/methodology/subagent-dispatch.md";
+      const content = workflowRef === undefined
+        ? await readFile(join(ROOT, file), "utf8")
+        : await mustRun("git", ["show", `${workflowRef}:${file}`], { cwd: ROOT });
+      const footprint = {
+        components: [{ skill: "subagent-dispatch", utf8Bytes: Buffer.byteLength(content), words: words(content) }],
+        totalUtf8Bytes: Buffer.byteLength(content), totalWords: words(content),
+      };
+      measurements.push({ scenario: scenario.id, route: routeSummary(route), declared: footprint, preApproval: footprint });
+      continue;
+    }
     measurements.push({
       scenario: scenario.id,
       route: routeSummary(route),
@@ -204,6 +242,9 @@ export function parseCodexJsonl(jsonl) {
   for (const line of jsonl.split(/\r?\n/u)) {
     if (line.trim() === "") continue;
     const event = JSON.parse(line);
+    if (event.type === "turn.failed" || event.type === "error") {
+      throw new Error("Codex reported a failed turn");
+    }
     if (event.type === "turn.completed" && event.usage !== undefined) {
       turns += 1;
       addUsage(usage, event.usage);
@@ -228,10 +269,41 @@ export function parseCodexJsonl(jsonl) {
   }
   return {
     ...usage,
+    available: true,
     uncachedInputTokens: Math.max(0, usage.inputTokens - usage.cachedInputTokens),
     turns,
     items,
   };
+}
+
+// Observe only the task's output contract. Never retain message text or let a
+// judge error or missing result count as a successful evaluation.
+export function baselineObservations(jsonl) {
+  const messages = jsonl.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line))
+    .filter((event) => event.type === "item.completed" && event.item?.type === "agent_message")
+    .map((event) => event.item.text ?? "");
+  const answer = messages.at(-1) ?? "";
+  return {
+    reportedDiscountRegression: /silver/i.test(answer) && /\b10\b/.test(answer) && /\b15\b/.test(answer),
+    needsContext: /\bNEEDS_CONTEXT\b/.test(answer) && answer.includes("?"),
+  };
+}
+
+export function baselineOutcome({ runnerPassed, checksPassed }) {
+  if (!runnerPassed) return "inconclusive";
+  return checksPassed ? "passed" : "failed";
+}
+
+// Wrapper scripts get one number: a contract failure and a provider outage
+// must not look alike, and neither may look like a harness crash (exit 1).
+export const EXIT_PASSED = 0;
+export const EXIT_FAILED = 3;
+export const EXIT_INCONCLUSIVE = 4;
+
+export function liveExitCode(runs) {
+  if (runs.some((run) => run.outcome === "failed")) return EXIT_FAILED;
+  if (runs.some((run) => run.outcome === "inconclusive")) return EXIT_INCONCLUSIVE;
+  return EXIT_PASSED;
 }
 
 function metric(values) {
@@ -254,19 +326,23 @@ export function aggregateRuns(runs) {
   for (const scenario of SCENARIOS) {
     const matching = runs.filter((run) => run.scenario === scenario.id);
     if (matching.length === 0) continue;
+    // Every metric column covers the same population: runs whose Codex usage
+    // parsed. A timed-out or failed turn is counted, never averaged.
+    const measured = matching.filter((run) => run.usage.available !== false);
     summaries.push({
       scenario: scenario.id,
       runs: matching.length,
       passedRuns: matching.filter((run) => run.passed).length,
-      inputTokens: metric(matching.map((run) => run.usage.inputTokens)),
+      inconclusiveRuns: matching.filter((run) => run.outcome === "inconclusive").length,
+      inputTokens: metric(measured.map((run) => run.usage.inputTokens)),
       uncachedInputTokens: metric(
-        matching.map((run) => run.usage.uncachedInputTokens),
+        measured.map((run) => run.usage.uncachedInputTokens),
       ),
-      outputTokens: metric(matching.map((run) => run.usage.outputTokens)),
+      outputTokens: metric(measured.map((run) => run.usage.outputTokens)),
       reasoningOutputTokens: metric(
-        matching.map((run) => run.usage.reasoningOutputTokens),
+        measured.map((run) => run.usage.reasoningOutputTokens),
       ),
-      workflowWallMs: metric(matching.map((run) => run.workflowWallMs)),
+      workflowWallMs: metric(measured.map((run) => run.workflowWallMs)),
     });
   }
   return summaries;
@@ -371,10 +447,10 @@ async function mustRun(command, args, options) {
 }
 
 async function applyScenarioSetup(repo, scenario) {
-  if (scenario.setup !== "silver-regression") return;
+  if (scenario.setup !== SILVER_REGRESSION_SETUP) return;
   const pricingFile = join(repo, "src", "pricing.mjs");
   const pricing = await readFile(pricingFile, "utf8");
-  const changed = pricing.replace("silver: 10", "silver: 15");
+  const changed = pricing.replace(SILVER_DISCOUNT_OK, SILVER_DISCOUNT_REGRESSED);
   if (changed === pricing) throw new Error("Bug setup anchor was not found");
   await writeFile(pricingFile, changed);
 }
@@ -384,7 +460,7 @@ async function prepareFixture(scenario) {
   const repo = join(tempRoot, "fixture");
   await cp(FIXTURE_ROOT, repo, { recursive: true });
   await applyScenarioSetup(repo, scenario);
-  await mustRun("git", ["init", "-q"], { cwd: repo });
+  await mustRun("git", ["init", "-q", "--initial-branch=main"], { cwd: repo });
   await mustRun("git", ["config", "user.email", "baseline@invalid.local"], {
     cwd: repo,
   });
@@ -392,10 +468,14 @@ async function prepareFixture(scenario) {
     cwd: repo,
   });
   await mustRun("git", ["add", "."], { cwd: repo });
-  await mustRun("git", ["commit", "-q", "-m", "baseline fixture"], {
+  await mustRun("git", ["-c", "commit.gpgsign=false", "commit", "-q", "-m", "baseline fixture"], {
     cwd: repo,
   });
   const revision = (await mustRun("git", ["rev-parse", "HEAD"], { cwd: repo })).trim();
+  if (scenario.reviewOnly) {
+    await mustRun("git", ["switch", "-q", "-c", "review-fixture"], { cwd: repo });
+    await applyScenarioSetup(repo, { setup: SILVER_REGRESSION_SETUP });
+  }
   return { tempRoot, repo, revision };
 }
 
@@ -443,6 +523,12 @@ function snapshotSkillFile(pluginRoot, skill) {
 }
 
 function livePrompt(scenario, pluginRoot) {
+  if (scenario.workerDecision) return [
+    `Read the worker contract at ${join(pluginRoot, "resources", "methodology", "subagent-dispatch.md")}.`,
+    "This is a delegated read-only analysis. You cannot contact the user directly; the parent receives your final answer.",
+    `Assignment: ${scenario.task}`,
+    "Do not invoke agents, network tools, or bookkeeping commands. Work only in this synthetic repository.",
+  ].join("\n");
   return [
     "This is an explicit local workflow benchmark in a synthetic repository.",
     `Requested change: ${scenario.task}`,
@@ -518,7 +604,7 @@ async function verifyScenario(repo, revision, scenario) {
     const pricing = await importPricing(repo);
     return pricing.discountFor("platinum") === 25;
   }
-  if (scenario.id === "bug-fix") {
+  if (scenario.id === "bug-fix" || scenario.id === "bounded-bug-fix") {
     const pricing = await importPricing(repo);
     return pricing.discountFor("silver") === 10;
   }
@@ -637,9 +723,43 @@ export function evidencePolicyPassed(scenario, changes) {
   return changes.testFilesChanged === 0;
 }
 
+export async function repositoryContentDigest(repo, expectedContents = new Map()) {
+  const hash = createHash("sha256");
+  // Include ignored/untracked files too: a read-only run must not leave new
+  // files behind. Git metadata is checked separately through the HEAD invariant.
+  async function visit(directory) {
+    const entries = await readdir(join(repo, directory), { withFileTypes: true });
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const file = join(directory, entry.name);
+      if (file === ".git") continue;
+      const absolute = join(repo, file);
+      const stat = await lstat(absolute);
+      // Entry kind, NUL-free path, mode, and a length prefix make the encoding
+      // unambiguous: file content may itself contain NUL bytes, so a delimiter
+      // alone would let one rewritten file collide with two original files.
+      const kind = entry.isDirectory() ? "D" : entry.isSymbolicLink() ? "L" : entry.isFile() ? "F" : "O";
+      const body = kind === "L"
+        ? Buffer.from(await readlink(absolute))
+        : kind === "F"
+          ? Buffer.from(expectedContents.get(file) ?? await readFile(absolute))
+          : Buffer.alloc(0);
+      hash.update(`${kind}\0${file}\0${stat.mode}\0${body.length}\0`).update(body);
+      if (kind === "D") await visit(file);
+    }
+  }
+  await visit("");
+  return hash.digest("hex");
+}
+
 async function runOne({ scenario, repetition, model, effort, workflowRef }) {
   const prepared = await prepareFixture(scenario);
   try {
+    const contentBefore = await repositoryContentDigest(prepared.repo);
+    const pricingBefore = await readFile(join(prepared.repo, "src", "pricing.mjs"), "utf8");
+    const expectedRepairContent = scenario.id === "bounded-bug-fix"
+      ? await repositoryContentDigest(prepared.repo, new Map([
+        [join("src", "pricing.mjs"), pricingBefore.replace(SILVER_DISCOUNT_REGRESSED, SILVER_DISCOUNT_OK)],
+      ])) : undefined;
     const pluginRoot = await prepareSkillSnapshot(
       prepared.tempRoot,
       scenario,
@@ -652,18 +772,34 @@ async function runOne({ scenario, repetition, model, effort, workflowRef }) {
       effort,
       pluginRoot,
     });
+    // Snapshot the tree the model left behind BEFORE the harness runs the
+    // fixture's own tests and imports; anything those steps create must not be
+    // attributed to the model as an unauthorized edit.
+    const contentAfter = await repositoryContentDigest(prepared.repo);
     let usage;
+    let observations = {};
     try {
       usage = parseCodexJsonl(codex.stdout);
+      observations = baselineObservations(codex.stdout);
     } catch {
-      usage = { ...emptyUsage(), uncachedInputTokens: 0, turns: 0, items: {} };
+      usage = { ...emptyUsage(), available: false, uncachedInputTokens: 0, turns: 0, items: {} };
     }
     const validation = await validateFixture(prepared.repo);
-    const scenarioVerified = await verifyScenario(
+    let scenarioVerified = await verifyScenario(
       prepared.repo,
       prepared.revision,
       scenario,
     ).catch(() => false);
+    const readOnly = scenario.reviewOnly || scenario.workerDecision;
+    if (readOnly) {
+      scenarioVerified = contentBefore === contentAfter &&
+        (scenario.reviewOnly ? observations.reportedDiscountRegression === true : observations.needsContext === true);
+    }
+    if (scenario.id === "bounded-bug-fix") {
+      // Compare the complete fixture to the single authorized repair. This also
+      // catches unrelated new files, removed exports, and cosmetic cleanup.
+      scenarioVerified = scenarioVerified && expectedRepairContent === contentAfter;
+    }
     const currentRevision = (
       await mustRun("git", ["rev-parse", "HEAD"], { cwd: prepared.repo })
     ).trim();
@@ -672,6 +808,10 @@ async function runOne({ scenario, repetition, model, effort, workflowRef }) {
     const evidencePolicy = evidencePolicyPassed(scenario, changes);
     const runnerPassed =
       codex.code === 0 && !codex.timedOut && !codex.overflow && usage.turns > 0;
+    // The deliberately broken review fixture must stay broken; its failing
+    // tests are the finding's evidence, not a reason to authorize a repair.
+    const checksPassed = (scenario.reviewOnly || validation.passed) && scenarioVerified && evidencePolicy && noCommit;
+    const outcome = baselineOutcome({ runnerPassed, checksPassed });
     return {
       scenario: scenario.id,
       repetition,
@@ -680,17 +820,16 @@ async function runOne({ scenario, repetition, model, effort, workflowRef }) {
       workflowWallMs: codex.wallMs,
       verificationWallMs: validation.wallMs,
       runnerPassed,
+      runnerExitCode: codex.code,
+      runnerTimedOut: codex.timedOut,
+      runnerOutputOverflow: codex.overflow,
       repositoryValidationPassed: validation.passed,
       scenarioVerified,
       evidencePolicyPassed: evidencePolicy,
       noCommit,
       changes,
-      passed:
-        runnerPassed &&
-        validation.passed &&
-        scenarioVerified &&
-        evidencePolicy &&
-        noCommit,
+      outcome,
+      passed: outcome === "passed",
     };
   } finally {
     await rm(prepared.tempRoot, { recursive: true, force: true });
@@ -728,15 +867,16 @@ export function renderMarkdown(result) {
     "",
     `Model: \`${result.environment.model}\`; effort: \`${result.environment.effort}\`; repetitions: ${result.environment.repetitions}.`,
     "",
-    "Live values are median (min–max). Input tokens include the Codex host prompt. The large",
+    "Live values are median (min–max) over runs whose Codex usage parsed; inconclusive runs",
+    "are counted but not measured. Input tokens include the Codex host prompt. The large",
     "shared-contract scenario stops before the user-approval implementation gate.",
     "",
-    "| Scenario | Passed | Input tokens | Uncached input | Output | Reasoning | Workflow ms |",
-    "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    "| Scenario | Passed | Inconclusive | Input tokens | Uncached input | Output | Reasoning | Workflow ms |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
   ];
   for (const row of result.summary) {
     lines.push(
-      `| ${row.scenario} | ${row.passedRuns}/${row.runs} | ${formatMetric(row.inputTokens)} | ${formatMetric(row.uncachedInputTokens)} | ${formatMetric(row.outputTokens)} | ${formatMetric(row.reasoningOutputTokens)} | ${formatMetric(row.workflowWallMs)} |`,
+      `| ${row.scenario} | ${row.passedRuns}/${row.runs} | ${row.inconclusiveRuns} | ${formatMetric(row.inputTokens)} | ${formatMetric(row.uncachedInputTokens)} | ${formatMetric(row.outputTokens)} | ${formatMetric(row.reasoningOutputTokens)} | ${formatMetric(row.workflowWallMs)} |`,
     );
   }
   lines.push(
@@ -822,6 +962,12 @@ function help() {
     "  --workflow-ref REF     Read committed skills from REF; default: working tree",
     "  --output FILE          Required for live runs; JSON plus adjacent Markdown",
     "",
+    "Live exit codes (the report is written in every case):",
+    `  ${EXIT_PASSED}  every run passed`,
+    `  ${EXIT_FAILED}  at least one completed run violated its scenario contract`,
+    `  ${EXIT_INCONCLUSIVE}  no failed run, but at least one run was inconclusive (provider or runner failure)`,
+    "  1  usage error or harness failure before a report was written",
+    "",
     `Scenario IDs: ${SCENARIOS.map((scenario) => scenario.id).join(", ")}`,
   ].join("\n");
 }
@@ -905,6 +1051,7 @@ async function main() {
   assertSourceFreeResult(result);
   await writeResult(options.output, result, { markdown: true });
   console.log(resolve(options.output));
+  process.exitCode = liveExitCode(runs);
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {

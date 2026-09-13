@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "../plugins/coredoc-workflows/test/test-api.mjs";
@@ -9,13 +10,56 @@ import {
   aggregateRuns,
   assertSourceFreeResult,
   buildStaticBaseline,
+  baselineObservations,
+  baselineOutcome,
+  EXIT_FAILED,
+  EXIT_INCONCLUSIVE,
+  EXIT_PASSED,
   evidencePolicyPassed,
+  liveExitCode,
   intentLayerSpecPassed,
   parseCodexJsonl,
   routeForScenario,
+  repositoryContentDigest,
 } from "../scripts/workflow-change-baseline.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+test("read-only evidence detects content, new files, symlinks and permission changes", async () => {
+  const repo = await mkdtemp(join(tmpdir(), "baseline-read-only-"));
+  try {
+    await writeFile(join(repo, "pricing.mjs"), "original");
+    const original = await repositoryContentDigest(repo);
+    // Two files must never hash like one file whose content embeds the
+    // second entry's name, mode and content around NUL bytes.
+    await writeFile(join(repo, "second"), "y");
+    const twoFiles = await repositoryContentDigest(repo);
+    const { mode } = await lstat(join(repo, "second"));
+    await rm(join(repo, "second"));
+    await writeFile(join(repo, "pricing.mjs"), `original\0second\0${mode}\0y`);
+    assert.notEqual(await repositoryContentDigest(repo), twoFiles);
+    await writeFile(join(repo, "pricing.mjs"), "original");
+    assert.equal(await repositoryContentDigest(repo), original);
+    await mkdir(join(repo, ".git"));
+    await writeFile(join(repo, ".git", "index"), "metadata");
+    assert.equal(await repositoryContentDigest(repo), original);
+    const repaired = await repositoryContentDigest(repo, new Map([["pricing.mjs", "repair"]]));
+    await writeFile(join(repo, "pricing.mjs"), "repair");
+    assert.notEqual(await repositoryContentDigest(repo), original);
+    assert.equal(await repositoryContentDigest(repo), repaired);
+    await writeFile(join(repo, "pricing.mjs"), "original");
+    await writeFile(join(repo, "untracked"), "extra");
+    assert.notEqual(await repositoryContentDigest(repo), original);
+    await rm(join(repo, "untracked"));
+    await symlink("pricing.mjs", join(repo, "extra-link"));
+    assert.notEqual(await repositoryContentDigest(repo), original);
+    await rm(join(repo, "extra-link"));
+    await chmod(join(repo, "pricing.mjs"), 0o755);
+    assert.notEqual(await repositoryContentDigest(repo), original);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
 
 test("covers the representative change types with the expected routes", () => {
   const routes = Object.fromEntries(
@@ -46,6 +90,19 @@ test("covers the representative change types with the expected routes", () => {
     ["spec", "design", "implement", "review"],
   );
   assert.equal(routes["large-shared-contract"].stages[2].gate, "user-approval");
+  assert.equal(routes["review-read-only"].intent, "review");
+  assert.deepEqual(routes["review-read-only"].stages.map((stage) => stage.id), ["review"]);
+  assert.equal(routes["worker-decision"].workflowId, "worker-decision-contract");
+  assert.deepEqual(routes["worker-decision"].stages, []);
+});
+
+test("worker-decision measures the dispatch contract instead of a skill route", async () => {
+  const [worker] = await buildStaticBaseline([
+    SCENARIOS.find((scenario) => scenario.id === "worker-decision"),
+  ]);
+  assert.deepEqual(worker.declared.components.map((component) => component.skill), ["subagent-dispatch"]);
+  assert.equal(worker.declared.totalUtf8Bytes > worker.declared.totalWords, true);
+  assert.deepEqual(worker.preApproval, worker.declared);
 });
 
 test("extracts numeric Codex usage without retaining event content", () => {
@@ -122,6 +179,61 @@ test("aggregates repeated runs as median and min/max", () => {
   });
 });
 
+test("counts inconclusive runs without averaging their empty usage", () => {
+  const usage = (tokens, extra = {}) => ({
+    inputTokens: tokens,
+    uncachedInputTokens: tokens,
+    outputTokens: tokens,
+    reasoningOutputTokens: tokens,
+    ...extra,
+  });
+  const [summary] = aggregateRuns([
+    { scenario: "deletion", passed: true, outcome: "passed", usage: usage(100, { available: true }), workflowWallMs: 1_000 },
+    { scenario: "deletion", passed: false, outcome: "inconclusive", usage: usage(0, { available: false }), workflowWallMs: 900_000 },
+    { scenario: "deletion", passed: false, outcome: "inconclusive", usage: usage(0, { available: false }), workflowWallMs: 0 },
+  ]);
+  assert.equal(summary.runs, 3);
+  assert.equal(summary.passedRuns, 1);
+  assert.equal(summary.inconclusiveRuns, 2);
+  assert.equal("skippedRuns" in summary, false);
+  assert.deepEqual(summary.inputTokens, { min: 100, median: 100, max: 100 });
+  assert.deepEqual(summary.workflowWallMs, { min: 1_000, median: 1_000, max: 1_000 });
+});
+
+test("failed or missing model turns never become successful measurements", () => {
+  assert.throws(() => parseCodexJsonl(""), /completed turn/);
+  assert.throws(() => parseCodexJsonl([
+    JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1 } }),
+    JSON.stringify({ type: "turn.failed", error: { message: "provider failure" } }),
+  ].join("\n")), /failed turn/);
+  assert.throws(() => parseCodexJsonl([
+    JSON.stringify({ type: "error", message: "provider down" }),
+    JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1 } }),
+  ].join("\n")), /failed turn/);
+  assert.equal(parseCodexJsonl(JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1 } })).available, true);
+  assert.equal(baselineOutcome({ runnerPassed: false, checksPassed: true }), "inconclusive");
+  assert.equal(baselineOutcome({ runnerPassed: true, checksPassed: false }), "failed");
+  assert.equal(baselineOutcome({ runnerPassed: true, checksPassed: true }), "passed");
+  assert.equal(liveExitCode([{ outcome: "passed" }, { outcome: "passed" }]), EXIT_PASSED);
+  assert.equal(liveExitCode([{ outcome: "passed" }, { outcome: "inconclusive" }]), EXIT_INCONCLUSIVE);
+  assert.equal(liveExitCode([{ outcome: "inconclusive" }, { outcome: "failed" }]), EXIT_FAILED);
+  assert.notEqual(EXIT_FAILED, 1);
+  assert.notEqual(EXIT_INCONCLUSIVE, 1);
+});
+
+test("behavioral observations require a final answer and retain no text", () => {
+  const event = (type, text) => JSON.stringify({ type: "item.completed", item: { type, text } });
+  assert.deepEqual(baselineObservations(event("command_execution", "silver 15 should be 10 NEEDS_CONTEXT?")), {
+    reportedDiscountRegression: false, needsContext: false,
+  });
+  const found = baselineObservations(event("agent_message", "Silver changed to 15%, but the contract requires 10%."));
+  assert.equal(found.reportedDiscountRegression, true);
+  const decision = baselineObservations(event("agent_message", "NEEDS_CONTEXT: should silver receive 12% or 15%?"));
+  assert.equal(decision.needsContext, true);
+  assert.equal(baselineObservations(event("agent_message", "NEEDS_CONTEXT")).needsContext, false);
+  assertSourceFreeResult(decision);
+});
+
 test("requires a focused test only for new observable behavior", () => {
   const scenario = (id) => SCENARIOS.find((candidate) => candidate.id === id);
 
@@ -133,7 +245,15 @@ test("requires a focused test only for new observable behavior", () => {
     evidencePolicyPassed(scenario("new-behavior"), { testFilesChanged: 0 }),
     false,
   );
-  for (const id of ["bug-fix", "deletion", "refactor", "config-docs"]) {
+  for (const id of [
+    "bug-fix",
+    "deletion",
+    "refactor",
+    "config-docs",
+    "review-read-only",
+    "bounded-bug-fix",
+    "worker-decision",
+  ]) {
     assert.equal(
       evidencePolicyPassed(scenario(id), { testFilesChanged: 0 }),
       true,

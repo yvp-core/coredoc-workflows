@@ -2082,7 +2082,7 @@ export function createCaptureAgentSetup({
       paths.coredocHome,
       paths.agentRoot,
       paths.relayRoot,
-      dirname(paths.launchAgentPath),
+      dirname(paths.servicePath),
     ])) {
       if (await safeDirectory(directory, fs, uid)) {
         await syncPath(directory, fs);

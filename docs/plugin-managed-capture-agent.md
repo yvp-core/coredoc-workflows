@@ -1,4 +1,4 @@
-# Plugin-managed macOS capture agent
+# Plugin-managed capture agent
 
 The `coredoc-workflows` plugin includes an optional per-user agent for native
 Claude Code and Codex telemetry plus semantic workflow delivery. Marketplace
@@ -14,16 +14,17 @@ bundled Bun runtime.
 
 ## Requirements
 
-- macOS on a host supported by the plugin;
+- macOS Apple silicon, or Linux x86_64 with glibc and a running systemd user manager;
 - a compatible Coredoc server with browser enrollment and capture-agent routes;
-- one operator-selected HTTPS server origin and one workspace UUID;
+- an operator-provisioned destination policy (HTTPS, with optional loopback
+  destinations for listed checkouts);
 - permission to write per-user state, global Claude Code/Codex configuration,
-  and a per-user LaunchAgent.
+  and a per-user LaunchAgent or systemd user unit.
 
 The plugin ships a pinned Bun executable. Setup verifies its manifest digest and
 copies Bun, its locked configuration, a small environment-sanitizing runner,
 and the relay source into the same immutable version directory below
-`~/.coredoc/capture-agent`. The LaunchAgent uses that installed copy rather than
+`~/.coredoc/capture-agent`. The per-user service uses that installed copy rather than
 the mutable plugin cache. The Codex claim hook follows the stable `current`
 runtime link, so plugin cache rotation cannot strand the persistent agent.
 No system Node, Bun, or Python installation is required.
@@ -33,6 +34,13 @@ Plugin ownership is isolated under the
 `~/.coredoc/capture-agent/capture-relay` state root. The legacy Desktop label,
 plist, and `~/.coredoc/capture-relay` root are separate and are never plugin
 mutation targets.
+
+On Linux the unit is `ai.coredoc.workflows.capture-relay.service`, below
+`${XDG_CONFIG_HOME:-~/.config}/systemd/user/`. The lifecycle uses
+`systemctl --user` for start, stop, upgrade, and rollback; it never installs a
+system service or enables lingering. A headless host still needs a way to open
+the browser enrollment URL. The optional native browser QA fallback remains
+macOS ARM only.
 
 ## Destination policy
 
@@ -76,15 +84,16 @@ session keeps the default destination:
 Exactly one destination is `default` and it lists no repositories; every other
 destination lists at least one absolute checkout path with a Git `origin`
 remote, and a checkout belongs to one destination. `http:` origins are accepted
-for `127.0.0.1` and `[::1]` only, never `localhost`. Setup enrolls each
-destination separately under the same installation id, writes the default
+for `127.0.0.1` and `[::1]` only, never `localhost`. For those explicit local
+destinations, OAuth discovery and enrollment may use HTTP loopback aliases
+(including `localhost`) on the same port; unrelated hosts and ports are rejected.
+Setup enrolls each destination separately under the same installation id, writes the default
 workspace bindings plus one repository binding per host per listed checkout,
 installs a marker-owned `.claude/settings.local.json` in each listed checkout,
 and probes every destination after health. Codex sessions are routed by their
 `SessionStart` claim, repository binding first. Removing a checkout from the
 policy and rerunning `setup` drops its bindings and its repository-local
-settings. A schema-1 policy behaves exactly as before. See
-`docs/plugin-capture-multi-destination-routing.md`.
+settings. A schema-1 policy behaves exactly as before.
 
 Protect the directory and file before invoking setup:
 
@@ -205,7 +214,8 @@ The default state root is `${COREDOC_HOME:-~/.coredoc}`:
 ```
 
 Secret-bearing files and queue records are mode 0600; containing directories
-are owner-only. The LaunchAgent lives below `~/Library/LaunchAgents`. Installed
+are owner-only. The macOS LaunchAgent lives below `~/Library/LaunchAgents`;
+the Linux unit lives below `${XDG_CONFIG_HOME:-~/.config}/systemd/user`. Installed
 runtime files are immutable and verified against the plugin's closed manifest,
 so the running process does not import from a repository checkout or plugin
 cache.
@@ -344,11 +354,21 @@ The independent direct-cloud compatibility path is not configured by agent
 setup. It remains explicitly opt-in through `COREDOC_CAPTURE_ENDPOINT` and
 `COREDOC_CAPTURE_HEADERS` and never reuses the plugin-managed credential.
 
+Question capture is disabled separately from ordinary telemetry. An operator
+can enable `COREDOC_CAPTURE_QUESTIONS=1` in the Claude host environment to record
+bounded, normalized, secret-masked questions, options, and answers as schema-4
+events. Only answered `AskUserQuestion` calls are supported; Codex is unaffected.
+The managed relay advertises schema support at SessionStart. Direct endpoints
+must accept schema 4. This is a deliberate prose-retention choice: masking does
+not remove all confidential business content. Unset the flag to stop recording
+new question events. Already queued records follow ordinary delivery/purge rules.
+
 ## Release verification
 
 Changes to the capture agent require focused setup, lifecycle, host
 configuration, policy, and enrollment tests under bundled Bun, plus the Node.js
 22 compatibility suite. Changes to runtime installation, launchd interaction,
-or rollback also require an isolated macOS LaunchAgent smoke test. Tests must
+or rollback also require isolated macOS LaunchAgent and Linux systemd-user
+smoke tests on the affected hosts. Tests must
 use disposable homes and fixture policies; never test with a developer's live
 profile, credential, relay, or pending queues.

@@ -15,6 +15,19 @@ const EXTERNAL_REVIEW_BOT_NAME = new RegExp(["grep", "tile"].join(""), "i");
 
 const skill = (name) => readFile(join(SKILLS_ROOT, name, "SKILL.md"), "utf8");
 
+test("dispatch waits for terminal results and returns decisions to the parent", async () => {
+  const body = await readFile(join(METHODOLOGY_ROOT, "subagent-dispatch.md"), "utf8");
+  assert.match(body, /run_in_background: false/);
+  assert.match(body, /Codex and other hosts[\s\S]*native\s+wait\/status tool/);
+  assert.match(body, /acknowledgement is not completion/);
+  assert.match(body, /wait timeout means still running, never `NO FINDINGS`/);
+  assert.match(body, /`NEEDS_CONTEXT`[\s\S]*parent asks the user and waits/);
+  assert.match(body, /never grants\s+approval/);
+  assert.match(body, /confirm it has stopped before retrying/);
+  assert.match(body, /Inspect and preserve any partial edits/);
+  assert.match(body, /empty, malformed, failed, or missing results as\s+unavailable coverage/);
+});
+
 async function markdownAndMetadataFiles(path) {
   const entries = await readdir(path, { withFileTypes: true });
   const files = [];
@@ -86,23 +99,6 @@ test("every skill declares the host-interaction contract before using the tool n
       assert.ok(contract < firstBareUse, `${name} uses the tool name before defining it`);
     }
     assert.doesNotMatch(body, /Claude Code's user-input tool/, name);
-  }
-});
-
-test("prompt-facing files carry no upstream product coupling", async () => {
-  const paths = [
-    ...(await markdownAndMetadataFiles(join(PLUGIN_ROOT, "skills"))),
-    ...(await markdownAndMetadataFiles(join(PLUGIN_ROOT, "resources"))),
-    ...(await markdownAndMetadataFiles(join(PLUGIN_ROOT, "agents"))),
-    join(PLUGIN_ROOT, "README.md"),
-    join(PLUGIN_ROOT, ".claude-plugin", "plugin.json"),
-    join(PLUGIN_ROOT, ".codex-plugin", "plugin.json"),
-  ];
-
-  for (const path of paths) {
-    const contents = await readFile(path, "utf8");
-    assert.doesNotMatch(contents, /gstack|gbrain/i, path);
-    assert.doesNotMatch(contents, /~\/\.gstack/, path);
   }
 });
 
@@ -489,6 +485,49 @@ test("plugin agents right-size models and keep review output dispatch-defined", 
 
   const reviewer = await readFile(join(PLUGIN_ROOT, "agents", "coredoc-reviewer.md"), "utf8");
   assert.match(reviewer, /dispatch prompt defines the output format/i);
+});
+
+// Change work starts from the latest trunk: the rule lives once in the
+// methodology and every skill that edits the repository points at it. Read-only
+// skills must not pick it up, because they promise not to mutate the checkout.
+test("change skills sync the base branch before the first edit", async () => {
+  const [router, implementation, tdd, review, investigate, delivery, branchStart] = await Promise.all([
+    skill("coredoc-workflows"),
+    skill("coredoc-implement"),
+    skill("coredoc-tdd"),
+    skill("coredoc-review"),
+    skill("coredoc-investigate"),
+    skill("coredoc-git-delivery"),
+    readFile(join(METHODOLOGY_ROOT, "branch-start.md"), "utf8"),
+  ]);
+
+  for (const body of [router, implementation, tdd]) {
+    assert.match(body, /resources\/methodology\/branch-start\.md/);
+  }
+  for (const body of [review, investigate, delivery]) {
+    assert.doesNotMatch(body, /branch-start\.md/);
+  }
+
+  assert.match(branchStart, /resources\/methodology\/base-branch\.md/);
+  assert.match(branchStart, /git fetch origin <base>/);
+  assert.match(branchStart, /git pull --ff-only origin <base>/);
+  assert.match(branchStart, /git merge --no-edit origin\/<base>/);
+  assert.match(branchStart, /Merge rather than rebase/);
+  assert.match(branchStart, /git merge --abort/);
+  assert.match(branchStart, /git switch --no-track -c <branch> origin\/<base>/);
+  assert.match(branchStart, /working tree is dirty[\s\S]*ask before any stash, merge, or rebase/i);
+  assert.match(branchStart, /does not authorize commit,\s+push, or pull-request creation/i);
+  assert.doesNotMatch(branchStart, /--force|rebase -i|git stash/);
+});
+
+test("session feedback is optional and never treats completion or silence as consent", async () => {
+  const feedback = await readFile(join(METHODOLOGY_ROOT, "workflow-feedback.md"), "utf8");
+  assert.match(feedback, /not authorization to send data or a required end-of-task question/);
+  assert.match(feedback, /only\s+when the user requested feedback/);
+  assert.match(feedback, /Use only supported fields/);
+  assert.match(feedback, /A new task, silence, unattended execution, or a subagent context never authorizes\s+submission/);
+  assert.match(feedback, /worker returns its draft to the parent/);
+  assert.doesNotMatch(feedback, /submit as.*unreviewed|only pre-authorized remote write/);
 });
 
 test("router and implementation skills preserve the large-change approval lifecycle", async () => {

@@ -10,6 +10,7 @@ import {
   ensureManagedRelayAtSessionStart,
   managedRelayConfigPath,
   runSessionStartEnsure,
+  sessionEnvExport,
 } from "./ensure-managed-relay.mjs";
 import {
   sha256BindingNonce,
@@ -95,7 +96,7 @@ test("polls authenticated health without loading the cloud-bearing managed confi
     },
   });
 
-  assert.deepEqual(result, { status: "ready" });
+  assert.deepEqual(result, { status: "ready", acceptedSchemaVersions: [1, 2, 3] });
   assert.deepEqual(waits, [50]);
   assert.equal(calls.length, 2);
   assert.equal(calls[1].target, "http://127.0.0.1:43181/health");
@@ -276,6 +277,61 @@ test("stays silent for transport failures and unconfigured sessions", async () =
   });
   assert.deepEqual(unconfigured, { status: "unconfigured" });
   assert.deepEqual(written, []);
+});
+
+test("a ready relay reports its accepted schema versions and exports them to the session env", async () => {
+  const home = configuredHome();
+  const versions = [1, 2, 3, 4];
+  const fetchImpl = async () =>
+    new Response(
+      JSON.stringify({
+        ...health(),
+        capture: { ...health().capture, acceptedSchemaVersions: versions },
+      }),
+      { status: 200 },
+    );
+  const appended = [];
+  const written = [];
+  const result = await runSessionStartEnsure({
+    env: env(),
+    home,
+    fetchImpl,
+    envFile: "/synthetic/claude-env",
+    appendEnv: (path, text) => appended.push([path, text]),
+    write: (line) => written.push(line),
+  });
+  assert.deepEqual(result, { status: "ready", acceptedSchemaVersions: versions });
+  assert.deepEqual(appended, [
+    ["/synthetic/claude-env", "export COREDOC_CAPTURE_ACCEPTED_SCHEMA_VERSIONS=1,2,3,4\n"],
+  ]);
+  assert.deepEqual(written, []);
+  assert.equal(sessionEnvExport({ status: "unconfigured" }), "");
+
+  // An older relay still answers with the base list; nothing is exported beyond it.
+  const older = await ensureManagedRelayAtSessionStart({
+    env: env(),
+    home,
+    fetchImpl: async () => new Response(JSON.stringify(health()), { status: 200 }),
+  });
+  assert.deepEqual(older, { status: "ready", acceptedSchemaVersions: [1, 2, 3] });
+
+  // A version list that is not an ascending set covering the base contract is a health mismatch.
+  for (const bad of [["4"], [2, 1], [1, 2, 2], [1], [], [1, 2, 100]]) {
+    const result = await ensureManagedRelayAtSessionStart({
+      env: env(),
+      home,
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            ...health(),
+            capture: { ...health().capture, acceptedSchemaVersions: bad },
+          }),
+          { status: 200 },
+        ),
+      wait: async () => undefined,
+    });
+    assert.deepEqual(result, { status: "unavailable", code: "HEALTH_MISMATCH" }, JSON.stringify(bad));
+  }
 });
 
 test("SessionStart registers ensure between environment setup and pending flush", () => {

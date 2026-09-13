@@ -7,11 +7,10 @@
  * validator, tier and id is carried over unchanged; `scripts/redact-scan.test.mjs`
  * pins the id set so a future re-port cannot silently alter one.
  *
- * DETECTION ONLY. Upstream pairs this catalog with a redaction engine that
- * rewrites matches into `<REDACTED-*>` tokens. This plugin does not persist
- * prompts, diffs, source, or tool output as evidence, so there is nothing to
- * rewrite — only to find and report. `autoRedactable` / `redactToken` are kept
- * as inert metadata so a future re-sync against upstream stays a clean diff.
+ * The file scanner detects and reports; it never rewrites source. The separate
+ * opt-in question-capture sanitizer reuses this taxonomy and `redactToken`
+ * metadata to mask bounded prose before persistence. `autoRedactable` does not
+ * grant permission to edit files or capture text.
  *
  * Design notes carried over from upstream:
  *
@@ -45,7 +44,7 @@
  *   validate?     (span, match) => boolean — ALL must pass for the match to count
  *   nearRegex?    proximity requirement, must match within nearWindow chars
  *   nearWindow?   proximity window in characters
- *   autoRedactable?/redactToken?  inert here; see DETECTION ONLY above
+ *   autoRedactable?/redactToken?  upstream metadata / optional masking token
  */
 
 // ── Validators ──────────────────────────────────────────────────────────────
@@ -201,6 +200,27 @@ export const PATTERNS = [
     description: "GitLab token (personal/pipeline-trigger/deploy)",
     // glpat- personal access, glptt- pipeline trigger, gldt- deploy token.
     regex: /\b(gl(?:pat|ptt|dt)-[A-Za-z0-9_-]{20,})\b/,
+  },
+  {
+    id: "groq.key",
+    tier: "HIGH",
+    category: "secret",
+    description: "Groq API key",
+    regex: /\b(gsk_[A-Za-z0-9]{20,})\b/,
+  },
+  {
+    id: "tavily.key",
+    tier: "HIGH",
+    category: "secret",
+    description: "Tavily API key",
+    regex: /\b(tvly-(?:dev-|prod-)?[A-Za-z0-9]{16,})\b/,
+  },
+  {
+    id: "notion.token",
+    tier: "HIGH",
+    category: "secret",
+    description: "Notion integration token (current or legacy)",
+    regex: /\b(ntn_[A-Za-z0-9]{40,}|secret_[A-Za-z0-9]{40,})\b/,
   },
   {
     id: "huggingface.token",
@@ -452,6 +472,12 @@ export const PATTERNS = [
     category: "internal",
     description: "Internal hostname (*.internal/.corp/.local/.prod/.staging)",
     regex: /\b([a-z0-9][a-z0-9\-]*\.(?:internal|corp|local|lan|prod|staging))\b/i,
+    // Exempt a dotenv filename, not the real host env.local. Bound the prefix
+    // read so many matches never trigger repeated scans of the entire input.
+    validate: (span, match) => {
+      const prefix = match.input.slice(Math.max(0, match.index - 256), match.index);
+      return !/(?:^|[\s/\\`"'=])\.env(?:\.[a-z0-9_-]+)+$/i.test(prefix + span);
+    },
   },
   {
     id: "internal.url_private",

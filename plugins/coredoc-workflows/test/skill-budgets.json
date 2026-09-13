@@ -1,0 +1,30 @@
+{
+  "comment": "OSS backport measurement: 5,809 catalog bytes across 23 skills after adding optional Jira and Git delivery. Router growth wires those capabilities and branch-start; implementation growth preserves existing intent guidance while adding branch-start. Body ceilings keep at least 512 B of headroom; these are bytes, not token estimates. Re-measure and justify increases; do not regenerate ceilings automatically.",
+  "catalogMaxBytes": 6100,
+  "perSkillCatalogMaxBytes": 350,
+  "skillMaxBytes": {
+    "coredoc-benchmark": 15360,
+    "coredoc-browse": 19456,
+    "coredoc-capture": 9216,
+    "coredoc-claude": 10240,
+    "coredoc-codex": 10240,
+    "coredoc-design-conformance": 4096,
+    "coredoc-desktop": 3072,
+    "coredoc-devex-review": 8192,
+    "coredoc-git-delivery": 10240,
+    "coredoc-implement": 11264,
+    "coredoc-investigate": 13312,
+    "coredoc-jira": 8192,
+    "coredoc-learn": 3072,
+    "coredoc-plan-review": 14336,
+    "coredoc-retro": 3072,
+    "coredoc-review": 17408,
+    "coredoc-runtime-qa": 36864,
+    "coredoc-runtime-qa-report": 23552,
+    "coredoc-security-review": 46080,
+    "coredoc-spec": 25600,
+    "coredoc-tdd": 5120,
+    "coredoc-workflows": 11264,
+    "electron-qa": 3072
+  }
+}

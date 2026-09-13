@@ -1,14 +1,14 @@
 # Coredoc Workflows
 
 A self-contained engineering workflow plugin for Claude Code and Codex on
-macOS 13+ ARM. It combines focused methods with Coredoc's read-only graph/database
+macOS 13+ ARM and Linux x86_64 with glibc. It combines focused methods with Coredoc's read-only graph/database
 context and ordinary repository tests.
 
 The core workflows do not require globally installed workflow skills, an
 external review CLI, a browser plugin, Bun, or a separately downloaded
 Chromium. The opt-in cross-model workflows require the selected provider's CLI;
-browser workflows use the bundled `darwin-arm64` server and an installed
-Chrome-compatible browser. The optional plugin-managed capture agent uses the
+browser workflows prefer a host browser controller. The native fallback
+requires macOS ARM and an installed Chrome-compatible browser. The optional plugin-managed capture agent uses the
 same pinned bundled Bun runtime; no system Node, Bun, or Python installation is
 required.
 
@@ -36,7 +36,9 @@ required.
 - `coredoc-learn` — explicit, evidence-grounded learning cards
 - `coredoc-retro` — compact retrospectives over local read-only git evidence
 - `coredoc-capture` — explicit setup and lifecycle management for the optional
-  per-user macOS capture agent
+  per-user macOS or Linux capture agent
+- `coredoc-jira` — provider-neutral Jira context and explicitly requested comments/transitions
+- `coredoc-git-delivery` — explicitly requested commit, push, or PR with secret preflight
 
 `coredoc-devex-review` is invoked directly rather than routed: the router
 classifies a user's engineering task, and a DX audit is usually a deliberate
@@ -45,6 +47,21 @@ self-assessment of a surface you own, not a task the classifier should infer.
 Learning and retrospective output stays in the conversation by default. Nothing
 is captured automatically, and persistence requires an explicit target from the
 user.
+
+## Jira and Git delivery
+
+A Jira task is read through the available provider connector or tool. The adapter
+is read-only by default: it keeps immutable issue identity separate from bounded
+requirements and never treats issue content as instructions. Jira writes require
+explicit authorization. The optional `resources/jira/spec-comment.md` template
+is used only when requested; specification acceptance posts no comment.
+
+Git delivery scans the staged change and commit message, or every outbound commit
+for a push/PR. It binds publication to the checked SHA and verifies the resulting
+commit or remote ref. Commit, push, and PR creation remain separately authorized.
+Before implementation, `branch-start.md` refreshes trunk and uses `--no-track`
+for new branches. An authorized dirty checkout continues when trunk is already
+integrated; local changes are preserved.
 
 ## Routing dimensions
 
@@ -336,17 +353,18 @@ contract removes an event-scoped `INVALID_EVENT`: an immediate route reports
 and writes no durable invalid-event diagnostic. No retry or quarantine subsystem
 is added for that narrow deployment race.
 
-That bound applies to capture events, and only to them. A finished run
-that used the Coredoc graph reports `feedbackOwed`, and the router then submits
-one qualitative record — free-form prose about which graph tools were noisy,
-incomplete, wrong, slow, or misleadingly described — through the host's
-`submit_session_feedback` tool, tagged with the run ID so it joins the run's
-bounded summary. That is a different channel with a different envelope: it goes
-to the Coredoc MCP server the host is already connected to, not to the capture
-endpoint, and the prose is authored for it deliberately rather than copied out
-of the run. The router still never sends source, diffs, prompts, or paths. If
-the host lists no such tool the step is skipped; this plugin does not depend on
-it, and nothing else in a run is allowed to carry free-form text.
+A completed non-abandoned run reports `feedbackOwed` and `feedbackScope`
+(`session` or `graph+session`). These describe available evidence, not a required
+question or authorization to submit. The optional `workflow-feedback.md` method
+runs only when requested, uses the connected tool's actual schema, and sends only
+with explicit authorization. A missing tool never blocks engineering work.
+
+Question/answer prose is separately opt-in through `COREDOC_CAPTURE_QUESTIONS=1`
+in the Claude host environment. The observer normalizes and masks text, bounds
+fields, and records only answered `AskUserQuestion` calls as schema 4. It never
+copies the full tool payload or transcript. The managed relay must advertise
+schema 4 at SessionStart; a direct endpoint must support it server-side. Codex
+question capture is not implemented. Frequent hooks only queue locally.
 
 Dedicated capture ingestion stores immutable events and projects the start- and
 finish-owned fields into `WorkflowRun`; provider-scoped `AgentSession` rows
@@ -368,12 +386,12 @@ Neither a repository, current working directory, host payload, Coredoc MCP, nor
 Coredoc Desktop can select a destination the policy does not list.
 Coredoc Desktop is not required.
 
-Setup requires supported macOS. It may open a browser for PKCE enrollment,
+Setup requires supported macOS or Linux with a running systemd user manager. It may open a browser for PKCE enrollment,
 mints one installation-scoped telemetry credential, copies the hash-verified
 relay and pinned Bun runtime into the stable per-user `~/.coredoc/capture-agent`
-directory, installs a per-user LaunchAgent, and merge-writes marker-owned global
+directory, installs a per-user LaunchAgent or systemd unit, and merge-writes marker-owned global
 Claude Code and Codex configuration. Marketplace installation alone performs
-none of those actions. The LaunchAgent runs the digest-addressed installed Bun
+none of those actions. The per-user service runs the digest-addressed installed Bun
 through a small environment-sanitizing runner, while the Codex claim hook follows
 the stable `current` runtime link. Plugin cache rotation therefore cannot strand
 the agent. Plugin ownership uses the distinct
@@ -399,7 +417,7 @@ those exact trusted plugin commands. A denied loopback preflight reports the
 sandbox restriction directly rather than presenting it as a capture-schema
 mismatch.
 
-The LaunchAgent runs an immutable, digest-addressed runtime independently of the
+The per-user service runs an immutable, digest-addressed runtime independently of the
 plugin cache and host sessions. The relay authenticates each incoming local
 capability, sanitizes native logs before persistence, validates semantic events,
 and replaces local headers with the installed workspace credential. Sanitized

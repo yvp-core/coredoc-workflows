@@ -83,7 +83,7 @@ function sleepSync(milliseconds) {
 }
 
 function acquireStageLock(path) {
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   for (let attempt = 0; attempt <= STAGE_LOCK_RETRIES; attempt += 1) {
     try {
       closeSync(openSync(path, "wx", 0o600));
@@ -219,7 +219,7 @@ export function gitSnapshot(cwd = process.cwd()) {
 }
 
 function atomicWriteJson(path, value) {
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(value)}\n`, {
     encoding: "utf8",
@@ -399,6 +399,12 @@ function openStage(state) {
   return Object.values(state.stageProgress).find(
     (occurrence) => occurrence.finishedAt === undefined,
   );
+}
+
+/** The stage currently open on an active run, or undefined outside a stage. */
+export function openStageId(state) {
+  if (!state || state.status !== "active" || !state.stageProgress) return undefined;
+  return openStage(state)?.stageId;
 }
 
 function stageStartedEvent(state, occurrence) {

@@ -2,8 +2,10 @@
 
 ## Bun 1.3.14
 
-The plugin bundles the official `bun-darwin-aarch64` executable from Bun
-`1.3.14` as its JavaScript runtime.
+The plugin bundles the official `bun-darwin-aarch64` and
+`bun-linux-x64-baseline` executables from Bun `1.3.14` as its JavaScript runtimes.
+The Linux build targets x86_64 with glibc and does not require AVX2. Both archive
+and executable digests are pinned in the runtime provenance.
 
 - Upstream: https://github.com/oven-sh/bun
 - Release: https://github.com/oven-sh/bun/releases/tag/bun-v1.3.14
@@ -48,6 +50,12 @@ plugin, and the methods point at this repository's own resources. There is no
 automatic upstream sync and no manifest tracking upstream hashes. Adopting a
 future upstream improvement is a manual, deliberate diff — take the idea, not
 the patch.
+
+Selected improvements subsequently adapted from gstack `1.84.1.0`, revision
+`71f6048e8ada25180e61438abc1d98cb151fe9a7`: Groq/Tavily/Notion detection,
+Git-transport and dotenv false-positive handling, indexed scanner line lookup,
+subagent completion guidance, reuse guidance, and prompt-validation techniques.
+This does not change the browser binary's pinned source revision below.
 
 Editing these files freely is expected and does not need to preserve upstream
 wording. The obligation that survives is the one below: the copyright notice and

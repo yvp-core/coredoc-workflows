@@ -23,6 +23,11 @@ item, first read and apply
 `<plugin-root>/resources/methodology/work-item-routing.md`. Otherwise do not load
 that protocol and emit no work-item arguments.
 
+When Jira is the actual task source, also read
+`<plugin-root>/skills/coredoc-jira/SKILL.md` for bounded task context from the
+same provider read. Do not add a Jira stage. A task locator or acceptance of a
+specification never authorizes posting a Jira comment or changing issue status.
+
 Run exactly once:
 
 ```text
@@ -61,9 +66,13 @@ context. Invoke and later require only explicitly approved skills.
 ## Execute the returned DAG
 
 Gather only `contextProviders`, then execute stages in dependency order with the
-named plugin skills. Use independent tool calls in parallel only when they do
-not share state; serialize dependencies, writes, stage boundaries, and final
-validation. For substantial routes, apply
+named plugin skills. Before the first stage that edits the repository, and
+before a `direct` change, read and apply
+`<plugin-root>/resources/methodology/branch-start.md` once: refresh the base
+branch from `origin` and fold it into the checkout so the work starts from the
+latest trunk. Read-only routes (diagnose, review, security, retro) skip it.
+Use independent tool calls in parallel only when they do not share state;
+serialize dependencies, writes, stage boundaries, and final validation. For substantial routes, apply
 `<plugin-root>/resources/methodology/subagent-dispatch.md`.
 
 ```mermaid
@@ -174,9 +183,11 @@ For workflows with findings, pass `--findings-measurement measured` and balanced
 integer counts (`remaining = initial - resolved + introduced`); otherwise use
 `not-applicable` or leave `not-measured`. If graph tools were used, pass
 `--coredoc-status complete|partial|unavailable|not-assessed` and only a supported
-closed-vocabulary gap. When finish reports `feedbackOwed`, read and apply
+closed-vocabulary gap. When finish reports `feedbackOwed` and the user requested
+feedback, read and apply
 `<plugin-root>/resources/methodology/workflow-feedback.md`; resolve
 `submit_session_feedback` by tool contract, never by a skill name.
+`feedbackOwed` is availability, not a required question or permission to submit.
 
 Stop at the authorization boundary: diagnosis/review is read-only, and
 implementation does not authorize commit, publish, deploy, remote mutation, or

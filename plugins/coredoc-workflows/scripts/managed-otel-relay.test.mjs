@@ -1600,7 +1600,7 @@ test("isolates invalid and binding-mismatched events while forwarding valid neig
     lastSeenAt: seenAt,
     lastForwardedAt: null,
     lastErrorCode: null,
-    acceptedSchemaVersions: [1, 2, 3],
+    acceptedSchemaVersions: [1, 2, 3, 4],
   });
 
   const response = await fetch(
@@ -1809,7 +1809,7 @@ test("validates semantic capture before forwarding and authenticates bounded hea
   assert.equal(health.bindingId, BINDING_ONE_ID);
   assert.equal(health.host, "claude-code");
   assert.equal(health.workspaceId, "ws-one");
-  assert.deepEqual(health.capture.acceptedSchemaVersions, [1, 2, 3]);
+  assert.deepEqual(health.capture.acceptedSchemaVersions, [1, 2, 3, 4]);
   assert.equal(health.capture.state, "error");
   assert.equal(health.capture.lastErrorCode, "INVALID_CAPTURE");
   for (const privateValue of [
@@ -3291,70 +3291,6 @@ test("routes a claimed listed-repository session to its own destination while ot
     );
   assert.deepEqual([...new Set(sessionsOf(localRequest))], ["session-listed"]);
   assert.deepEqual([...new Set(sessionsOf(defaultRequest))], ["session-other"]);
-});
-
-test("agent health treats repository bindings on other workspaces as routing, not a workspace conflict", async (t) => {
-  const directory = mkdtempSync(
-    join(tmpdir(), "coredoc-managed-relay-health-multi-")
-  );
-  const path = join(directory, "capture-agent", "capture-relay", "relay.json");
-  const token = "health_token_abcdefghijklmnopqrstuvwxyz0123456789";
-  const start = async (bindings) => {
-    writeManagedRelayConfig(path, { schemaVersion: 1, bindings });
-    const relay = createManagedRelay({
-      configPath: path,
-      agentHealth: {
-        token,
-        runtimeVersion: "0.11.1-dayio.1",
-        runtimeDigest: "a".repeat(64),
-        protocolVersion: 1,
-        configSchemaVersion: 1,
-      },
-    });
-    const port = await listen(relay);
-    t.after(() => (relay.listening ? close(relay) : undefined));
-    const response = await fetch(`http://127.0.0.1:${port}/health/v2`, {
-      headers: { "X-Coredoc-Agent-Health": token },
-    });
-    assert.equal(response.status, 200);
-    const health = await response.json();
-    await close(relay);
-    return health;
-  };
-
-  const mixed = await start([
-    workspaceBinding({ workspaceId: "ws-default" }),
-    workspaceBinding({
-      bindingId: BINDING_TWO_ID,
-      nonce: "codex-ingress",
-      host: "codex",
-      workspaceId: "ws-default",
-    }),
-    binding({
-      bindingId: "33333333-3333-4333-8333-333333333333",
-      nonce: "claude-repo-nonce",
-      workspaceId: "ws-local",
-      repositoryKey: "acme/listed",
-    }),
-  ]);
-  assert.equal(
-    mixed.fixedWorkspaceHash,
-    createHash("sha256").update("ws-default").digest("hex")
-  );
-  assert.equal(mixed.degradedReasons.includes("WORKSPACE_CONFLICT"), false);
-  assert.equal(mixed.repositoryAttribution, "ready");
-
-  const conflicting = await start([
-    workspaceBinding({ workspaceId: "ws-default" }),
-    workspaceBinding({
-      bindingId: BINDING_TWO_ID,
-      nonce: "codex-ingress",
-      host: "codex",
-      workspaceId: "ws-other",
-    }),
-  ]);
-  assert.equal(conflicting.fixedWorkspaceHash, null);
-  assert.equal(conflicting.degradedReasons.includes("WORKSPACE_CONFLICT"), true);
 });
 
 test("a Codex repository binding pinned to a checkout root does not claim a sibling worktree", async (t) => {

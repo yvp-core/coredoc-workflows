@@ -26,16 +26,21 @@ import test from "../test/test-api.mjs";
 
 import {
   CAPTURE_AGENT_LABEL,
+  CAPTURE_AGENT_UNIT,
   DESKTOP_CAPTURE_AGENT_LABEL,
   DESKTOP_LAUNCH_AGENT_MARKER,
   PLUGIN_LAUNCH_AGENT_MARKER,
+  PLUGIN_SYSTEMD_UNIT_MARKER,
   CaptureAgentLifecycleError,
   acquireCaptureAgentFileLock,
+  buildCaptureAgentSystemdUnit,
   captureAgentPaths,
+  captureAgentPlatformKey,
   createCaptureAgentLifecycle,
   loadRuntimeBundle,
   runCaptureAgentCli,
   runtimeDigestForManifest,
+  supervisorEnvironment,
   validateCaptureAgentHealthV2,
 } from "./capture-agent-lifecycle.mjs";
 
@@ -45,7 +50,7 @@ const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const launcher = join(pluginRoot, "bin", "coredoc-workflows");
 const FIXTURE_UID =
   typeof process.getuid === "function" ? process.getuid() : 501;
-const RUNTIME_FILES = [
+const SHARED_RUNTIME_FILES = [
   "scripts/managed-otel-relay.mjs",
   "scripts/native-otel-sanitizer.mjs",
   "scripts/capture-health-report.mjs",
@@ -56,21 +61,33 @@ const RUNTIME_FILES = [
   "scripts/project-key.mjs",
   "runtime/artifacts/contract.mjs",
   "runtime/bun/bunfig.toml",
-  "runtime/bun/darwin-arm64/bun",
   "runtime/bun/runner",
   "runtime/capture/contract.mjs",
   "runtime/capture/file-outbox.mjs",
   "runtime/capture/health.mjs",
   "runtime/capture/index.mjs",
-].sort();
+];
+const PLATFORM_RUNTIME_EXECUTABLES = {
+  "darwin-arm64": "runtime/bun/darwin-arm64/bun",
+  "linux-x64": "runtime/bun/linux-x64/bun",
+};
+
+function runtimeFilesFor(platformKey) {
+  return [
+    ...SHARED_RUNTIME_FILES,
+    PLATFORM_RUNTIME_EXECUTABLES[platformKey],
+  ].sort();
+}
+
+const RUNTIME_FILES = runtimeFilesFor("darwin-arm64");
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function runtimeFixture(version, salt) {
+function runtimeFixture(version, salt, platformKey = "darwin-arm64") {
   const sourceRoot = mkdtempSync(join(tmpdir(), "coredoc-agent-bundle-"));
-  const files = RUNTIME_FILES.map((path) => {
+  const files = runtimeFilesFor(platformKey).map((path) => {
     const content = `export const fixture = ${JSON.stringify(`${salt}:${path}`)};\n`;
     const target = join(sourceRoot, path);
     mkdirSync(dirname(target), { recursive: true });
@@ -90,14 +107,30 @@ function runtimeFixture(version, salt) {
   };
 }
 
+function systemdRunCommand({ activeState = "inactive" } = {}) {
+  const states = Array.isArray(activeState) ? [...activeState] : null;
+  return async (executable, args) => {
+    if (args.includes("show")) {
+      return `${states === null ? activeState : (states.shift() ?? "inactive")}\n`;
+    }
+    return undefined;
+  };
+}
+
 function lifecycleHarness({
-  bundle = runtimeFixture("1.0.0", "one"),
+  platform = "darwin",
+  arch = platform === "linux" ? "x64" : "arm64",
+  bundle = runtimeFixture(
+    "1.0.0",
+    "one",
+    platform === "linux" ? "linux-x64" : "darwin-arm64",
+  ),
   probeListener = async () => false,
   probeHealth = async () => undefined,
   importSmoke = async () => undefined,
   onLoadRuntimeBundle = () => undefined,
   renameRuntime = renameSync,
-  runCommand = async () => undefined,
+  runCommand = platform === "linux" ? systemdRunCommand() : async () => undefined,
 } = {}) {
   const homeDir = mkdtempSync(join(tmpdir(), "coredoc-agent-home-"));
   const coredocHome = join(homeDir, ".coredoc-test");
@@ -107,7 +140,8 @@ function lifecycleHarness({
     env: { COREDOC_HOME: coredocHome },
     homeDir,
     pluginRoot,
-    platform: "darwin",
+    platform,
+    arch,
     uid: FIXTURE_UID,
     loadRuntimeBundle: () => {
       onLoadRuntimeBundle();
@@ -128,7 +162,11 @@ function lifecycleHarness({
   return {
     homeDir,
     coredocHome,
-    paths: captureAgentPaths({ env: { COREDOC_HOME: coredocHome }, homeDir }),
+    paths: captureAgentPaths({
+      env: { COREDOC_HOME: coredocHome },
+      homeDir,
+      platform,
+    }),
     calls,
     lifecycle,
     setBundle(next) {
@@ -148,15 +186,16 @@ test("plugin-managed relay paths are disjoint from legacy Desktop ownership", ()
   const paths = captureAgentPaths({
     env: { COREDOC_HOME: coredocHome },
     homeDir,
+    platform: "darwin",
   });
 
   assert.equal(CAPTURE_AGENT_LABEL, "ai.coredoc.workflows.capture-relay");
   assert.equal(
-    paths.launchAgentPath,
+    paths.servicePath,
     join(homeDir, "Library", "LaunchAgents", `${CAPTURE_AGENT_LABEL}.plist`),
   );
   assert.equal(
-    paths.desktopLaunchAgentPath,
+    paths.legacyServicePath,
     join(
       homeDir,
       "Library",
@@ -166,9 +205,92 @@ test("plugin-managed relay paths are disjoint from legacy Desktop ownership", ()
   );
   assert.equal(paths.relayRoot, join(coredocHome, "capture-agent", "capture-relay"));
   assert.equal(paths.desktopRelayRoot, join(coredocHome, "capture-relay"));
-  assert.notEqual(paths.launchAgentPath, paths.desktopLaunchAgentPath);
+  assert.notEqual(paths.servicePath, paths.legacyServicePath);
   assert.notEqual(paths.relayRoot, paths.desktopRelayRoot);
   assert.notEqual(CAPTURE_AGENT_LABEL, DESKTOP_CAPTURE_AGENT_LABEL);
+});
+
+test("Linux installs a systemd user unit and has no legacy Desktop namespace", () => {
+  const homeDir = "/home/test";
+  const coredocHome = join(homeDir, ".coredoc");
+  const paths = captureAgentPaths({
+    env: { COREDOC_HOME: coredocHome },
+    homeDir,
+    platform: "linux",
+  });
+
+  assert.equal(
+    paths.servicePath,
+    join(homeDir, ".config", "systemd", "user", CAPTURE_AGENT_UNIT),
+  );
+  assert.equal(CAPTURE_AGENT_UNIT, `${CAPTURE_AGENT_LABEL}.service`);
+  assert.equal(paths.legacyServicePath, null);
+  assert.equal(
+    paths.relayRoot,
+    join(coredocHome, "capture-agent", "capture-relay"),
+  );
+  assert.equal(
+    paths.statePath,
+    join(coredocHome, "capture-agent", "state.json"),
+  );
+});
+
+test("every vendored Bun matches its recorded provenance and the manifest", () => {
+  const provenance = JSON.parse(
+    readFileSync(join(pluginRoot, "runtime", "bun", "provenance.json"), "utf8"),
+  );
+  const manifest = JSON.parse(
+    readFileSync(
+      join(pluginRoot, "runtime", "capture-agent-manifest.json"),
+      "utf8",
+    ),
+  );
+
+  assert.deepEqual(
+    Object.keys(provenance.platforms).sort(),
+    Object.keys(PLATFORM_RUNTIME_EXECUTABLES).sort(),
+  );
+  assert.deepEqual(
+    Object.keys(manifest.platforms).sort(),
+    Object.keys(PLATFORM_RUNTIME_EXECUTABLES).sort(),
+  );
+  for (const [platformKey, recorded] of Object.entries(provenance.platforms)) {
+    const binary = join(pluginRoot, "runtime", "bun", recorded.binary);
+    assert.equal(
+      join("runtime", "bun", recorded.binary),
+      PLATFORM_RUNTIME_EXECUTABLES[platformKey],
+    );
+    assert.equal(digest(readFileSync(binary)), recorded.sha256);
+    assert.equal(statSync(binary).size, recorded.sizeBytes);
+    // The manifest is what installation verifies; provenance is what an
+    // auditor verifies. They have to name the same bytes.
+    assert.equal(manifest.platforms[platformKey].sha256, recorded.sha256);
+  }
+});
+
+test("only vendored host builds resolve to a platform key", () => {
+  assert.equal(
+    captureAgentPlatformKey({ platform: "darwin", arch: "arm64" }),
+    "darwin-arm64",
+  );
+  assert.equal(
+    captureAgentPlatformKey({ platform: "linux", arch: "x64" }),
+    "linux-x64",
+  );
+  for (const unsupported of [
+    { platform: "darwin", arch: "x64" },
+    { platform: "linux", arch: "arm64" },
+    { platform: "win32", arch: "x64" },
+  ]) {
+    assert.throws(
+      () => captureAgentPlatformKey(unsupported),
+      expectCode("UNSUPPORTED_PLATFORM"),
+    );
+  }
+  assert.throws(
+    () => captureAgentPaths({ env: {}, homeDir: "/home/test", platform: "win32" }),
+    expectCode("UNSUPPORTED_PLATFORM"),
+  );
 });
 
 function waitForChildLine(child, expected) {
@@ -208,7 +330,10 @@ function waitForChildLine(child, expected) {
 }
 
 test("the committed manifest is an exact verified self-contained runtime closure", async () => {
-  const bundle = loadRuntimeBundle({ pluginRoot });
+  const bundle = loadRuntimeBundle({
+    pluginRoot,
+    platformKey: "darwin-arm64",
+  });
   const canRunBundledRuntime =
     process.platform === "darwin" && process.arch === "arm64";
   assert.deepEqual(
@@ -216,6 +341,20 @@ test("the committed manifest is an exact verified self-contained runtime closure
     RUNTIME_FILES,
   );
   assert.equal(bundle.manifest.files.length, 16);
+  const linuxBundle = loadRuntimeBundle({
+    pluginRoot,
+    platformKey: "linux-x64",
+  });
+  assert.deepEqual(
+    linuxBundle.manifest.files.map(({ path }) => path).sort(),
+    runtimeFilesFor("linux-x64"),
+  );
+  // Each host stages its own Bun, so the two closures cannot share a digest.
+  assert.notEqual(linuxBundle.runtimeDigest, bundle.runtimeDigest);
+  assert.throws(
+    () => loadRuntimeBundle({ pluginRoot, platformKey: "linux-arm64" }),
+    expectCode("UNSUPPORTED_PLATFORM"),
+  );
   const harness = lifecycleHarness({
     bundle,
     importSmoke: canRunBundledRuntime ? null : async () => undefined,
@@ -299,7 +438,7 @@ test("a tampered bundled Bun is rejected before runtime activation", async () =>
     expectCode("INVALID_RUNTIME_MANIFEST"),
   );
   assert.equal(existsSync(harness.paths.statePath), false);
-  assert.equal(existsSync(harness.paths.launchAgentPath), false);
+  assert.equal(existsSync(harness.paths.servicePath), false);
 });
 
 test("setup-runtime atomically installs one immutable runtime and plugin-owned LaunchAgent", async () => {
@@ -317,11 +456,11 @@ test("setup-runtime atomically installs one immutable runtime and plugin-owned L
   const state = JSON.parse(readFileSync(harness.paths.statePath, "utf8"));
   assert.equal(state.current.digest, result.current.digest);
   assert.equal(state.healthToken.startsWith("health_token_"), true);
-  const plist = readFileSync(harness.paths.launchAgentPath, "utf8");
-  assert.match(plist, new RegExp(PLUGIN_LAUNCH_AGENT_MARKER));
-  assert.match(plist, new RegExp(`<string>${CAPTURE_AGENT_LABEL}</string>`));
+  const definition = readFileSync(harness.paths.servicePath, "utf8");
+  assert.match(definition, new RegExp(PLUGIN_LAUNCH_AGENT_MARKER));
+  assert.match(definition, new RegExp(`<string>${CAPTURE_AGENT_LABEL}</string>`));
   assert.equal(
-    plist.includes(
+    definition.includes(
       join(
         harness.paths.runtimeVersionsDirectory,
         result.current.directoryName,
@@ -330,15 +469,15 @@ test("setup-runtime atomically installs one immutable runtime and plugin-owned L
     ),
     true,
   );
-  assert.equal(plist.includes(pluginRoot), false);
-  assert.match(plist, new RegExp(result.current.directoryName));
-  assert.match(plist, /capture-relay\/relay\.json/);
-  assert.equal(plist.match(/<key>Program<\/key>/g)?.length, 1);
-  assert.equal(plist.match(/<key>ProgramArguments<\/key>/g)?.length, 1);
+  assert.equal(definition.includes(pluginRoot), false);
+  assert.match(definition, new RegExp(result.current.directoryName));
+  assert.match(definition, /capture-relay\/relay\.json/);
+  assert.equal(definition.match(/<key>Program<\/key>/g)?.length, 1);
+  assert.equal(definition.match(/<key>ProgramArguments<\/key>/g)?.length, 1);
   if (process.platform === "darwin") {
-    await run("/usr/bin/plutil", ["-lint", harness.paths.launchAgentPath]);
+    await run("/usr/bin/plutil", ["-lint", harness.paths.servicePath]);
   }
-  assert.doesNotMatch(plist, /health_token_|Bearer/);
+  assert.doesNotMatch(definition, /health_token_|Bearer/);
   assert.doesNotMatch(JSON.stringify(result), /health_token_|Users|capture-agent/);
   assert.equal(harness.calls.some(([, args]) => args[0] === "bootstrap"), true);
 });
@@ -379,7 +518,7 @@ test("setup finalizes an exact writable runtime root left by a staging crash", a
   chmodSync(installed, 0o700);
   unlinkSync(harness.paths.currentPath);
   unlinkSync(harness.paths.statePath);
-  unlinkSync(harness.paths.launchAgentPath);
+  unlinkSync(harness.paths.servicePath);
 
   const recovered = await harness.lifecycle.setupRuntime();
   assert.equal(recovered.status, "ready");
@@ -387,7 +526,7 @@ test("setup finalizes an exact writable runtime root left by a staging crash", a
   assert.equal(statSync(installed).mode & 0o777, 0o555);
 });
 
-test("upgrade health failure restores the previous runtime, state, plist, and process", async () => {
+test("upgrade health failure restores the previous runtime, state, definition, and process", async () => {
   let rejectedVersion = null;
   const harness = lifecycleHarness({
     probeHealth: async ({ runtimeVersion }) => {
@@ -395,7 +534,7 @@ test("upgrade health failure restores the previous runtime, state, plist, and pr
     },
   });
   const installed = await harness.lifecycle.setupRuntime();
-  const oldPlist = readFileSync(harness.paths.launchAgentPath, "utf8");
+  const oldDefinition = readFileSync(harness.paths.servicePath, "utf8");
   const oldState = readFileSync(harness.paths.statePath, "utf8");
   const next = runtimeFixture("2.0.0", "two");
   harness.setBundle(next);
@@ -411,7 +550,7 @@ test("upgrade health failure restores the previous runtime, state, plist, and pr
   );
 
   assert.equal(readFileSync(harness.paths.statePath, "utf8"), oldState);
-  assert.equal(readFileSync(harness.paths.launchAgentPath, "utf8"), oldPlist);
+  assert.equal(readFileSync(harness.paths.servicePath, "utf8"), oldDefinition);
   assert.equal(
     readlinkSync(harness.paths.currentPath),
     join("runtime", "versions", installed.current.directoryName),
@@ -426,7 +565,7 @@ test("upgrade health failure preserves a previously disabled LaunchAgent", async
   let pluginLoaded = false;
   let desktopLoaded = false;
   let rejectedVersion = null;
-  const desktopPlist = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
+  const legacyDefinition = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
   const serviceNotFound = (label) => {
     const error = new Error("launchd service is not loaded");
     error.code = 113;
@@ -456,7 +595,7 @@ test("upgrade health failure preserves a previously disabled LaunchAgent", async
     probeListener: async () => pluginLoaded || desktopLoaded,
     probeHealth: async ({ runtimeVersion }) => {
       if (runtimeVersion === rejectedVersion) {
-        writeFileSync(harness.paths.desktopLaunchAgentPath, desktopPlist, {
+        writeFileSync(harness.paths.legacyServicePath, legacyDefinition, {
           mode: 0o600,
         });
         desktopLoaded = true;
@@ -467,7 +606,7 @@ test("upgrade health failure preserves a previously disabled LaunchAgent", async
   const installed = await harness.lifecycle.setupRuntime();
   await harness.lifecycle.disable();
   assert.equal(pluginLoaded, false);
-  const oldPlist = readFileSync(harness.paths.launchAgentPath, "utf8");
+  const oldDefinition = readFileSync(harness.paths.servicePath, "utf8");
   const oldState = readFileSync(harness.paths.statePath, "utf8");
   harness.setBundle(runtimeFixture("2.0.0", "disabled-upgrade"));
   rejectedVersion = "2.0.0";
@@ -481,11 +620,11 @@ test("upgrade health failure preserves a previously disabled LaunchAgent", async
   assert.equal(pluginLoaded, false);
   assert.equal(desktopLoaded, true);
   assert.equal(
-    readFileSync(harness.paths.desktopLaunchAgentPath, "utf8"),
-    desktopPlist,
+    readFileSync(harness.paths.legacyServicePath, "utf8"),
+    legacyDefinition,
   );
   assert.equal(readFileSync(harness.paths.statePath, "utf8"), oldState);
-  assert.equal(readFileSync(harness.paths.launchAgentPath, "utf8"), oldPlist);
+  assert.equal(readFileSync(harness.paths.servicePath, "utf8"), oldDefinition);
   assert.equal(
     readlinkSync(harness.paths.currentPath),
     join("runtime", "versions", installed.current.directoryName),
@@ -572,7 +711,7 @@ test("disabled rollback restores an unhealthy prior runtime without starting it"
     join("runtime", "versions", first.current.directoryName),
   );
   assert.equal(
-    readFileSync(harness.paths.launchAgentPath, "utf8").includes(
+    readFileSync(harness.paths.servicePath, "utf8").includes(
       first.current.digest,
     ),
     true,
@@ -609,8 +748,8 @@ test("retired-runtime cleanup failure does not roll back a healthy upgrade", asy
 
 test("lifecycle refuses foreign and Desktop-v1 ownership before mutation", async () => {
   const unknown = lifecycleHarness();
-  mkdirSync(dirname(unknown.paths.launchAgentPath), { recursive: true });
-  writeFileSync(unknown.paths.launchAgentPath, "<plist><dict>foreign</dict></plist>\n");
+  mkdirSync(dirname(unknown.paths.servicePath), { recursive: true });
+  writeFileSync(unknown.paths.servicePath, "<plist><dict>foreign</dict></plist>\n");
   await assert.rejects(unknown.lifecycle.setupRuntime(), expectCode("OWNERSHIP_CONFLICT"));
 
   const occupied = lifecycleHarness({ probeListener: async () => true });
@@ -621,8 +760,8 @@ test("lifecycle refuses foreign and Desktop-v1 ownership before mutation", async
     probeListener: async () => true,
   });
   const original = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
-  mkdirSync(dirname(desktop.paths.desktopLaunchAgentPath), { recursive: true });
-  writeFileSync(desktop.paths.desktopLaunchAgentPath, original, { mode: 0o600 });
+  mkdirSync(dirname(desktop.paths.legacyServicePath), { recursive: true });
+  writeFileSync(desktop.paths.legacyServicePath, original, { mode: 0o600 });
   const desktopStatus = await desktop.lifecycle.status();
   assert.equal(desktopStatus.launchAgent, "absent");
   assert.equal(desktopStatus.desktopLaunchAgent, "desktop-v1");
@@ -631,22 +770,24 @@ test("lifecycle refuses foreign and Desktop-v1 ownership before mutation", async
     expectCode("OWNERSHIP_CONFLICT"),
   );
   assert.equal(
-    readFileSync(desktop.paths.desktopLaunchAgentPath, "utf8"),
+    readFileSync(desktop.paths.legacyServicePath, "utf8"),
     original,
   );
-  assert.equal(existsSync(desktop.paths.launchAgentPath), false);
+  assert.equal(existsSync(desktop.paths.servicePath), false);
   assert.equal(existsSync(desktop.paths.statePath), false);
   assert.equal(existsSync(desktop.paths.runtimeRoot), false);
   assert.deepEqual(desktop.calls, []);
 });
 
-test("setup preserves a Desktop plist created while the runtime bundle loads", async () => {
+test("setup preserves a Desktop definition created while the runtime bundle loads", async () => {
   let harness;
-  const desktopPlist = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
+  const legacyDefinition = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
   harness = lifecycleHarness({
     onLoadRuntimeBundle: () => {
-      mkdirSync(dirname(harness.paths.desktopLaunchAgentPath), { recursive: true });
-      writeFileSync(harness.paths.desktopLaunchAgentPath, desktopPlist, {
+      mkdirSync(dirname(harness.paths.legacyServicePath), {
+        recursive: true,
+      });
+      writeFileSync(harness.paths.legacyServicePath, legacyDefinition, {
         mode: 0o600,
       });
     },
@@ -662,10 +803,10 @@ test("setup preserves a Desktop plist created while the runtime bundle loads", a
     failure = error;
   }
 
-  assert.equal(existsSync(harness.paths.launchAgentPath), false);
+  assert.equal(existsSync(harness.paths.servicePath), false);
   assert.equal(
-    readFileSync(harness.paths.desktopLaunchAgentPath, "utf8"),
-    desktopPlist,
+    readFileSync(harness.paths.legacyServicePath, "utf8"),
+    legacyDefinition,
   );
   assert.equal(failure?.code, "OWNERSHIP_CONFLICT");
   assert.equal(failure?.rollback, undefined);
@@ -676,18 +817,18 @@ test("setup preserves a Desktop plist created while the runtime bundle loads", a
 
 test("failed activation rolls back only plugin ownership when Desktop appears", async () => {
   let harness;
-  const desktopPlist = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
+  const legacyDefinition = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
   harness = lifecycleHarness({
     probeHealth: async ({ runtimeVersion }) => {
       if (runtimeVersion !== "2.0.0") return;
-      writeFileSync(harness.paths.desktopLaunchAgentPath, desktopPlist, {
+      writeFileSync(harness.paths.legacyServicePath, legacyDefinition, {
         mode: 0o600,
       });
       throw new Error("synthetic unhealthy");
     },
   });
   await harness.lifecycle.setupRuntime();
-  const oldPlist = readFileSync(harness.paths.launchAgentPath, "utf8");
+  const oldDefinition = readFileSync(harness.paths.servicePath, "utf8");
   harness.setBundle(runtimeFixture("2.0.0", "two"));
 
   await assert.rejects(harness.lifecycle.upgrade(), (error) => {
@@ -696,10 +837,10 @@ test("failed activation rolls back only plugin ownership when Desktop appears", 
     return true;
   });
 
-  assert.equal(readFileSync(harness.paths.launchAgentPath, "utf8"), oldPlist);
+  assert.equal(readFileSync(harness.paths.servicePath, "utf8"), oldDefinition);
   assert.equal(
-    readFileSync(harness.paths.desktopLaunchAgentPath, "utf8"),
-    desktopPlist,
+    readFileSync(harness.paths.legacyServicePath, "utf8"),
+    legacyDefinition,
   );
   const bootouts = harness.calls.filter(([, args]) => args[0] === "bootout");
   assert.equal(bootouts.length > 0, true);
@@ -725,7 +866,7 @@ test("uninstall removes only plugin state when Desktop owns the shared listener"
     probeListener: async () => listenerOccupied,
     runCommand: async (_executable, args) => {
       if (args[0] === "bootstrap") {
-        if (args[2] === harness.paths.launchAgentPath) pluginLoaded = true;
+        if (args[2] === harness.paths.servicePath) pluginLoaded = true;
         return;
       }
       if (args[0] === "bootout") {
@@ -748,9 +889,9 @@ test("uninstall removes only plugin state when Desktop owns the shared listener"
     },
   });
   await harness.lifecycle.setupRuntime();
-  const desktopPlist = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
-  mkdirSync(dirname(harness.paths.desktopLaunchAgentPath), { recursive: true });
-  writeFileSync(harness.paths.desktopLaunchAgentPath, desktopPlist, {
+  const legacyDefinition = `<?xml version="1.0"?><plist><dict>${DESKTOP_LAUNCH_AGENT_MARKER}<key>Label</key><string>${DESKTOP_CAPTURE_AGENT_LABEL}</string></dict></plist>\n`;
+  mkdirSync(dirname(harness.paths.legacyServicePath), { recursive: true });
+  writeFileSync(harness.paths.legacyServicePath, legacyDefinition, {
     mode: 0o600,
   });
   desktopLoaded = true;
@@ -759,12 +900,12 @@ test("uninstall removes only plugin state when Desktop owns the shared listener"
   const result = await harness.lifecycle.uninstall();
 
   assert.equal(result.status, "uninstalled");
-  assert.equal(existsSync(harness.paths.launchAgentPath), false);
+  assert.equal(existsSync(harness.paths.servicePath), false);
   assert.equal(existsSync(harness.paths.statePath), false);
   assert.equal(existsSync(harness.paths.runtimeRoot), false);
   assert.equal(
-    readFileSync(harness.paths.desktopLaunchAgentPath, "utf8"),
-    desktopPlist,
+    readFileSync(harness.paths.legacyServicePath, "utf8"),
+    legacyDefinition,
   );
   assert.equal(
     harness.calls.some(([, args]) =>
@@ -949,7 +1090,7 @@ test("disable unregisters the marker-owned LaunchAgent even when the listener is
   const harness = lifecycleHarness({ probeListener: async () => false });
   await harness.lifecycle.setupRuntime();
   const state = readFileSync(harness.paths.statePath, "utf8");
-  const plist = readFileSync(harness.paths.launchAgentPath, "utf8");
+  const definition = readFileSync(harness.paths.servicePath, "utf8");
 
   const result = await harness.lifecycle.disable();
 
@@ -963,7 +1104,7 @@ test("disable unregisters the marker-owned LaunchAgent even when the listener is
     true,
   );
   assert.equal(readFileSync(harness.paths.statePath, "utf8"), state);
-  assert.equal(readFileSync(harness.paths.launchAgentPath, "utf8"), plist);
+  assert.equal(readFileSync(harness.paths.servicePath, "utf8"), definition);
   assert.equal(existsSync(harness.paths.runtimeRoot), true);
 });
 
@@ -1157,7 +1298,7 @@ test("uninstall preflight validates ownership and queues without mutation", asyn
   await harness.lifecycle.setupRuntime();
   const pending = seedPendingQueues(harness);
   const stateBefore = readFileSync(harness.paths.statePath, "utf8");
-  const plistBefore = readFileSync(harness.paths.launchAgentPath, "utf8");
+  const plistBefore = readFileSync(harness.paths.servicePath, "utf8");
 
   const preflight = await harness.lifecycle.preflightUninstall({
     discardPending: true,
@@ -1181,7 +1322,7 @@ test("uninstall preflight validates ownership and queues without mutation", asyn
   assert.match(preflight.purgeProof.stateSha256, /^[0-9a-f]{64}$/);
   assert.match(preflight.purgeProof.launchAgentSha256, /^[0-9a-f]{64}$/);
   assert.equal(readFileSync(harness.paths.statePath, "utf8"), stateBefore);
-  assert.equal(readFileSync(harness.paths.launchAgentPath, "utf8"), plistBefore);
+  assert.equal(readFileSync(harness.paths.servicePath, "utf8"), plistBefore);
   for (const path of [...pending.records, ...pending.retainedState]) {
     assert.equal(existsSync(path), true);
   }
@@ -1264,7 +1405,7 @@ test("purge receipt resumes after plist, link, and runtime-file deletion", async
     state.current.directoryName,
   );
   const removedFile = join(runtime, state.current.files[0].path);
-  unlinkSync(harness.paths.launchAgentPath);
+  unlinkSync(harness.paths.servicePath);
   unlinkSync(harness.paths.currentPath);
   chmodSync(dirname(removedFile), 0o700);
   unlinkSync(removedFile);
@@ -1291,7 +1432,7 @@ test("purge receipt rejects unexpected content before continuing partial cleanup
     harness.paths.runtimeVersionsDirectory,
     state.current.directoryName,
   );
-  unlinkSync(harness.paths.launchAgentPath);
+  unlinkSync(harness.paths.servicePath);
   unlinkSync(harness.paths.currentPath);
   chmodSync(runtime, 0o700);
   const unexpected = join(runtime, "unexpected.txt");
@@ -1329,7 +1470,7 @@ test("default uninstall removes the agent while preserving recognized pending qu
   assert.equal(existsSync(pending.nativeStatePath), true);
   assert.equal(readFileSync(harness.paths.relayConfigPath, "utf8"), "preserve-config\n");
   assert.equal(existsSync(harness.paths.statePath), false);
-  assert.equal(existsSync(harness.paths.launchAgentPath), false);
+  assert.equal(existsSync(harness.paths.servicePath), false);
   assert.equal(existsSync(harness.paths.runtimeRoot), false);
   assert.equal(existsSync(harness.paths.agentRoot), true);
   assert.equal((await harness.lifecycle.status()).pendingCount, 4);
@@ -1360,7 +1501,7 @@ test("default uninstall resumes after a prior attempt removed the plist but left
   const removedFile = join(runtimeDirectory, state.current.files[0].path);
   // A prior uninstall failed after deleting the LaunchAgent but before
   // deleting state.json, after a runtime file was already removed.
-  unlinkSync(harness.paths.launchAgentPath);
+  unlinkSync(harness.paths.servicePath);
   unlinkSync(harness.paths.currentPath);
   chmodSync(dirname(removedFile), 0o700);
   unlinkSync(removedFile);
@@ -1378,7 +1519,7 @@ test("default uninstall resumes after a prior attempt removed the plist but left
 test("discarding pending data from partially uninstalled state still requires a proof", async () => {
   const harness = lifecycleHarness();
   await harness.lifecycle.setupRuntime();
-  unlinkSync(harness.paths.launchAgentPath);
+  unlinkSync(harness.paths.servicePath);
 
   await assert.rejects(
     harness.lifecycle.uninstall({ discardPending: true }),
@@ -1434,14 +1575,14 @@ test("uninstall fails before filesystem mutation when launchd still owns the ser
   });
   await harness.lifecycle.setupRuntime();
   const state = readFileSync(harness.paths.statePath, "utf8");
-  const plist = readFileSync(harness.paths.launchAgentPath, "utf8");
+  const definition = readFileSync(harness.paths.servicePath, "utf8");
 
   await assert.rejects(
     harness.lifecycle.uninstall(),
     expectCode("SUPERVISOR_UNAVAILABLE"),
   );
   assert.equal(readFileSync(harness.paths.statePath, "utf8"), state);
-  assert.equal(readFileSync(harness.paths.launchAgentPath, "utf8"), plist);
+  assert.equal(readFileSync(harness.paths.servicePath, "utf8"), definition);
   assert.equal(existsSync(harness.paths.runtimeRoot), true);
   assert.equal(
     harness.calls.some(([, args]) => args[0] === "print"),
@@ -1466,7 +1607,7 @@ test("uninstall tolerates bootout failure only when launchd proves the service i
   const result = await harness.lifecycle.uninstall();
   assert.equal(result.status, "uninstalled");
   assert.equal(existsSync(harness.paths.statePath), false);
-  assert.equal(existsSync(harness.paths.launchAgentPath), false);
+  assert.equal(existsSync(harness.paths.servicePath), false);
 });
 
 test("uninstall refuses mutation while the relay listener remains occupied after bootout", async () => {
@@ -1483,7 +1624,7 @@ test("uninstall refuses mutation while the relay listener remains occupied after
     expectCode("SUPERVISOR_UNAVAILABLE"),
   );
   assert.equal(readFileSync(harness.paths.statePath, "utf8"), state);
-  assert.equal(existsSync(harness.paths.launchAgentPath), true);
+  assert.equal(existsSync(harness.paths.servicePath), true);
   assert.equal(existsSync(harness.paths.runtimeRoot), true);
 });
 
@@ -1542,7 +1683,7 @@ test("explicit discard deletes all recognized pending and retained capture state
   assert.equal(existsSync(pending.agentOutbox), false);
   assert.equal(readFileSync(harness.paths.relayConfigPath, "utf8"), "preserve-config\n");
   assert.equal(existsSync(harness.paths.statePath), false);
-  assert.equal(existsSync(harness.paths.launchAgentPath), false);
+  assert.equal(existsSync(harness.paths.servicePath), false);
 });
 
 test("uninstall fails closed for unknown or symlinked native outbox entries", async () => {
@@ -1640,21 +1781,620 @@ test("capture-agent CLI passes explicit discard intent and emits queue dispositi
   ]);
 });
 
-test("lifecycle core enforces macOS before mutation without requiring Node", async () => {
+test("lifecycle core enforces a vendored host build before mutation", async () => {
   const base = lifecycleHarness();
-  const linux = createCaptureAgentLifecycle({
-    env: { COREDOC_HOME: join(base.homeDir, "linux") },
+  assert.throws(
+    () =>
+      createCaptureAgentLifecycle({
+        env: { COREDOC_HOME: join(base.homeDir, "windows") },
+        homeDir: base.homeDir,
+        pluginRoot,
+        platform: "win32",
+        arch: "x64",
+      }),
+    expectCode("UNSUPPORTED_PLATFORM"),
+  );
+  const wrongArch = createCaptureAgentLifecycle({
+    env: { COREDOC_HOME: join(base.homeDir, "linux-arm64") },
     homeDir: base.homeDir,
     pluginRoot,
     platform: "linux",
+    arch: "arm64",
   });
-  await assert.rejects(linux.setupRuntime(), expectCode("UNSUPPORTED_PLATFORM"));
-  assert.equal(existsSync(join(base.homeDir, "linux")), false);
+  await assert.rejects(
+    wrongArch.setupRuntime(),
+    expectCode("UNSUPPORTED_PLATFORM"),
+  );
+  assert.equal(existsSync(join(base.homeDir, "windows")), false);
+  assert.equal(existsSync(join(base.homeDir, "linux-arm64")), false);
+});
+
+test("Linux activation writes a marker-owned unit and enables it through systemd", async () => {
+  const harness = lifecycleHarness({ platform: "linux" });
+
+  const result = await harness.lifecycle.setupRuntime();
+
+  assert.equal(result.status, "ready");
+  const unit = readFileSync(harness.paths.servicePath, "utf8");
+  assert.equal(unit.startsWith(PLUGIN_SYSTEMD_UNIT_MARKER), true);
+  assert.match(unit, new RegExp(`\n# Unit: ${CAPTURE_AGENT_UNIT}\n`));
+  assert.match(unit, /\nWantedBy=default\.target\n/);
+  assert.match(unit, /\nRestart=always\n/);
+  assert.match(unit, /\nStartLimitIntervalSec=0\n/);
+  assert.match(unit, /\nRestartSec=10\n/);
+  assert.match(unit, /\nTimeoutStopSec=8\n/);
+  assert.match(unit, /\nKillMode=mixed\n/);
+  assert.equal(unit.includes("<plist"), false);
+  const installed = join(
+    harness.paths.runtimeVersionsDirectory,
+    result.current.directoryName,
+  );
+  assert.equal(
+    unit.includes(
+      `ExecStart="${join(installed, "runtime/bun/runner")}" "${join(
+        installed,
+        "scripts/managed-otel-relay.mjs",
+      )}" "serve" "--config" "${harness.paths.relayConfigPath}"`,
+    ),
+    true,
+  );
+  assert.equal(unit.includes(pluginRoot), false);
+  assert.doesNotMatch(unit, /health_token_|Bearer/);
+  assert.equal(lstatSync(harness.paths.servicePath).mode & 0o777, 0o600);
+
+  const systemctl = harness.calls.filter(([executable]) =>
+    executable.endsWith("systemctl"),
+  );
+  assert.equal(
+    systemctl.some(([, args]) => args.join(" ") === "--user daemon-reload"),
+    true,
+  );
+  assert.equal(
+    systemctl.some(
+      ([, args]) =>
+        args.join(" ") === `--user enable --now ${CAPTURE_AGENT_UNIT}`,
+    ),
+    true,
+  );
+  assert.equal(
+    harness.calls.some(([executable]) => executable.includes("launchctl")),
+    false,
+  );
+});
+
+test("Linux uninstall stops the running unit, disables it, and removes it", async () => {
+  const harness = lifecycleHarness({
+    platform: "linux",
+    runCommand: systemdRunCommand({ activeState: "active" }),
+  });
+  await harness.lifecycle.setupRuntime();
+  harness.calls.length = 0;
+
+  const result = await harness.lifecycle.uninstall();
+
+  assert.equal(result.status, "uninstalled");
+  assert.equal(existsSync(harness.paths.servicePath), false);
+  assert.equal(existsSync(harness.paths.statePath), false);
+  const sequence = harness.calls.map(([, args]) => args.join(" "));
+  const stop = sequence.indexOf(`--user stop ${CAPTURE_AGENT_UNIT}`);
+  const disable = sequence.indexOf(`--user disable ${CAPTURE_AGENT_UNIT}`);
+  assert.equal(stop >= 0 && disable > stop, true, sequence.join("\n"));
+  assert.equal(sequence.some((line) => line.includes("--now")), false);
+});
+
+test("a loaded unit whose file is gone is still stopped, never disabled", async () => {
+  const harness = lifecycleHarness({
+    platform: "linux",
+    runCommand: systemdRunCommand({ activeState: "active" }),
+  });
+  await harness.lifecycle.setupRuntime();
+  unlinkSync(harness.paths.servicePath);
+  harness.calls.length = 0;
+
+  const result = await harness.lifecycle.uninstall();
+
+  assert.equal(result.status, "uninstalled");
+  assert.equal(existsSync(harness.paths.statePath), false);
+  const sequence = harness.calls.map(([, args]) => args.join(" "));
+  assert.equal(sequence.includes(`--user stop ${CAPTURE_AGENT_UNIT}`), true);
+  assert.equal(sequence.some((line) => line.includes("disable")), false);
+});
+
+test("an inactive unit is neither stopped nor disabled when nothing is installed", async () => {
+  const harness = lifecycleHarness({ platform: "linux" });
+  await harness.lifecycle.setupRuntime();
+  unlinkSync(harness.paths.servicePath);
+  harness.calls.length = 0;
+
+  await harness.lifecycle.uninstall();
+
+  const sequence = harness.calls.map(([, args]) => args.join(" "));
+  assert.equal(sequence.some((line) => /\b(stop|disable)\b/.test(line)), false);
+});
+
+test("Linux uninstall fails before mutation when systemctl cannot stop the unit", async () => {
+  const harness = lifecycleHarness({
+    platform: "linux",
+    runCommand: async (_executable, args) => {
+      if (args.includes("stop")) throw new Error("PRIVATE systemctl failure");
+      if (args.includes("show")) return "active\n";
+      return undefined;
+    },
+  });
+  await harness.lifecycle.setupRuntime();
+  const state = readFileSync(harness.paths.statePath, "utf8");
+  const unit = readFileSync(harness.paths.servicePath, "utf8");
+
+  await assert.rejects(
+    harness.lifecycle.uninstall(),
+    expectCode("SUPERVISOR_UNAVAILABLE"),
+  );
+  assert.equal(readFileSync(harness.paths.statePath, "utf8"), state);
+  assert.equal(readFileSync(harness.paths.servicePath, "utf8"), unit);
+  assert.equal(existsSync(harness.paths.runtimeRoot), true);
+});
+
+test("Linux setup retries enable once, then rolls back with SUPERVISOR_UNAVAILABLE", async () => {
+  const harness = lifecycleHarness({
+    platform: "linux",
+    runCommand: async (_executable, args) => {
+      if (args.includes("enable")) throw new Error("PRIVATE enable failure");
+      if (args.includes("show")) return "inactive\n";
+      return undefined;
+    },
+  });
+
+  await assert.rejects(
+    harness.lifecycle.setupRuntime(),
+    (error) =>
+      error instanceof CaptureAgentLifecycleError &&
+      error.code === "SUPERVISOR_UNAVAILABLE" &&
+      error.rollback === "restored",
+  );
+
+  const enables = harness.calls.filter(([, args]) => args.includes("enable"));
+  assert.equal(enables.length, 2);
+  assert.equal(existsSync(harness.paths.servicePath), false);
+  assert.equal(existsSync(harness.paths.statePath), false);
+});
+
+test("systemd show failures surface as SUPERVISOR_UNAVAILABLE, never as raw errors", async () => {
+  for (const runCommand of [
+    async (_executable, args) => {
+      if (args.includes("show")) throw new Error("PRIVATE dbus failure");
+      return undefined;
+    },
+    async () => undefined,
+  ]) {
+    const harness = lifecycleHarness({ platform: "linux", runCommand });
+    await harness.lifecycle.setupRuntime();
+    await assert.rejects(
+      harness.lifecycle.preflightDisable(),
+      expectCode("SUPERVISOR_UNAVAILABLE"),
+    );
+  }
+});
+
+test("Linux upgrade health failure restores the previous unit and re-enables it", async () => {
+  let rejectedVersion = null;
+  const harness = lifecycleHarness({
+    platform: "linux",
+    runCommand: systemdRunCommand({ activeState: "active" }),
+    probeHealth: async ({ runtimeVersion }) => {
+      if (runtimeVersion === rejectedVersion) throw new Error("synthetic unhealthy");
+    },
+  });
+  const installed = await harness.lifecycle.setupRuntime();
+  const oldUnit = readFileSync(harness.paths.servicePath, "utf8");
+  const oldState = readFileSync(harness.paths.statePath, "utf8");
+  harness.setBundle(runtimeFixture("2.0.0", "two", "linux-x64"));
+  rejectedVersion = "2.0.0";
+  harness.calls.length = 0;
+
+  await assert.rejects(
+    harness.lifecycle.upgrade(),
+    (error) =>
+      error instanceof CaptureAgentLifecycleError &&
+      error.code === "HEALTH_MISMATCH" &&
+      error.rollback === "restored",
+  );
+
+  assert.equal(readFileSync(harness.paths.servicePath, "utf8"), oldUnit);
+  assert.equal(readFileSync(harness.paths.statePath, "utf8"), oldState);
+  assert.equal(
+    readlinkSync(harness.paths.currentPath),
+    join("runtime", "versions", installed.current.directoryName),
+  );
+  const sequence = harness.calls.map(([, args]) => args.join(" "));
+  const lastStop = sequence.lastIndexOf(`--user stop ${CAPTURE_AGENT_UNIT}`);
+  const lastEnable = sequence.lastIndexOf(
+    `--user enable --now ${CAPTURE_AGENT_UNIT}`,
+  );
+  assert.equal(lastStop >= 0 && lastEnable > lastStop, true, sequence.join("\n"));
+  assert.equal(
+    sequence.lastIndexOf("--user daemon-reload") < lastEnable,
+    true,
+  );
+});
+
+test("systemd unit ownership requires both the marker and the exact unit label", async () => {
+  const harness = lifecycleHarness({ platform: "linux" });
+  await harness.lifecycle.setupRuntime();
+  const owned = readFileSync(harness.paths.servicePath, "utf8");
+  for (const [content, expected] of [
+    [owned, "plugin-v1"],
+    [owned.replace(`${PLUGIN_SYSTEMD_UNIT_MARKER}\n`, ""), "foreign"],
+    [owned.replace(`# Unit: ${CAPTURE_AGENT_UNIT}`, "# Unit: other.service"), "foreign"],
+  ]) {
+    writeFileSync(harness.paths.servicePath, content, { mode: 0o600 });
+    const status = await harness.lifecycle.status();
+    assert.equal(status.launchAgent, expected, content);
+  }
+});
+
+test("a runtime manifest must carry exactly one vendored Bun", () => {
+  const { manifest } = runtimeFixture("1.0.0", "exec-count");
+  const withoutBun = {
+    ...manifest,
+    files: manifest.files.map((file) =>
+      file.path === "runtime/bun/darwin-arm64/bun"
+        ? { ...file, path: "scripts/extra-module.mjs" }
+        : file,
+    ),
+  };
+  const withTwoBuns = {
+    ...manifest,
+    files: manifest.files.map((file) =>
+      file.path === "scripts/project-key.mjs"
+        ? { ...file, path: "runtime/bun/linux-x64/bun" }
+        : file,
+    ),
+  };
+  for (const candidate of [withoutBun, withTwoBuns]) {
+    assert.throws(
+      () => runtimeDigestForManifest(candidate),
+      expectCode("INVALID_RUNTIME_MANIFEST"),
+    );
+  }
+});
+
+test("schema-2 manifest rejects malformed shapes and missing host platforms", () => {
+  const committed = JSON.parse(
+    readFileSync(
+      join(pluginRoot, "runtime", "capture-agent-manifest.json"),
+      "utf8",
+    ),
+  );
+  const darwin = committed.platforms["darwin-arm64"];
+  const cases = [
+    [{ ...committed, schemaVersion: 1 }, "INVALID_RUNTIME_MANIFEST"],
+    [{ ...committed, shared: "nope" }, "INVALID_RUNTIME_MANIFEST"],
+    [{ ...committed, platforms: [] }, "INVALID_RUNTIME_MANIFEST"],
+    [{ ...committed, platforms: {} }, "INVALID_RUNTIME_MANIFEST"],
+    [
+      {
+        ...committed,
+        platforms: { ...committed.platforms, "win32-x64": { sha256: "a".repeat(64) } },
+      },
+      "INVALID_RUNTIME_MANIFEST",
+    ],
+    [
+      {
+        ...committed,
+        platforms: {
+          ...committed.platforms,
+          "linux-x64": { ...committed.platforms["linux-x64"], extra: 1 },
+        },
+      },
+      "INVALID_RUNTIME_MANIFEST",
+    ],
+    [{ ...committed, files: committed.shared }, "INVALID_RUNTIME_MANIFEST"],
+    [{ ...committed, platforms: { "darwin-arm64": darwin } }, "UNSUPPORTED_PLATFORM"],
+  ];
+  for (const [manifest, code] of cases) {
+    const root = mkdtempSync(join(tmpdir(), "coredoc-manifest-"));
+    mkdirSync(join(root, "runtime"), { recursive: true });
+    writeFileSync(
+      join(root, "runtime", "capture-agent-manifest.json"),
+      JSON.stringify(manifest),
+    );
+    writeFileSync(
+      join(root, "package.json"),
+      readFileSync(join(pluginRoot, "package.json")),
+    );
+    assert.throws(
+      () => loadRuntimeBundle({ pluginRoot: root, platformKey: "linux-x64" }),
+      expectCode(code),
+      JSON.stringify(manifest.platforms),
+    );
+  }
+});
+
+test("the shell launchers and the lifecycle agree on which hosts are vendored", () => {
+  const armsOf = (path) =>
+    [...readFileSync(join(pluginRoot, path), "utf8").matchAll(
+      /^\s*([A-Za-z]+\/[A-Za-z0-9_]+)\) runtime_platform=([a-z0-9-]+) ;;/gm,
+    )].map(([, host, key]) => `${host}=${key}`).sort();
+  const expected = Object.keys(PLATFORM_RUNTIME_EXECUTABLES)
+    .map((key) => {
+      const [platform, arch] = key.split("-");
+      const uname = `${platform === "darwin" ? "Darwin" : "Linux"}/${arch === "x64" ? "x86_64" : arch}`;
+      return `${uname}=${key}`;
+    })
+    .sort();
+  assert.deepEqual(armsOf("bin/coredoc-workflows"), expected);
+  assert.deepEqual(armsOf("runtime/bun/runner"), expected);
+});
+
+test("a user-private-group unit directory is accepted on Linux and nowhere else", async () => {
+  const linux = lifecycleHarness({ platform: "linux" });
+  mkdirSync(dirname(linux.paths.servicePath), { recursive: true });
+  chmodSync(dirname(linux.paths.servicePath), 0o775);
+  assert.equal((await linux.lifecycle.setupRuntime()).status, "ready");
+
+  const worldWritable = lifecycleHarness({ platform: "linux" });
+  mkdirSync(dirname(worldWritable.paths.servicePath), { recursive: true });
+  chmodSync(dirname(worldWritable.paths.servicePath), 0o777);
+  await assert.rejects(
+    worldWritable.lifecycle.setupRuntime(),
+    expectCode("UNSAFE_STATE"),
+  );
+
+  // launchd's directory keeps the strict owner-only rule.
+  const darwin = lifecycleHarness();
+  mkdirSync(dirname(darwin.paths.servicePath), { recursive: true });
+  chmodSync(dirname(darwin.paths.servicePath), 0o775);
+  await assert.rejects(darwin.lifecycle.setupRuntime(), expectCode("UNSAFE_STATE"));
+
+  // The plugin's own state root is never group-writable, on any host.
+  const stateRoot = lifecycleHarness({ platform: "linux" });
+  mkdirSync(stateRoot.paths.agentRoot, { recursive: true });
+  chmodSync(stateRoot.paths.agentRoot, 0o775);
+  await assert.rejects(stateRoot.lifecycle.setupRuntime(), expectCode("UNSAFE_STATE"));
+});
+
+test("a missing XDG_RUNTIME_DIR falls back to the uid's own /run/user directory", () => {
+  const owned = mkdtempSync(join(tmpdir(), "coredoc-runtime-dir-"));
+  const forwarded = supervisorEnvironment(
+    {},
+    { uid: FIXTURE_UID, runtimeDirectoryFor: () => owned },
+  );
+  assert.equal(forwarded.XDG_RUNTIME_DIR, owned);
+  const absent = supervisorEnvironment(
+    {},
+    { uid: FIXTURE_UID, runtimeDirectoryFor: () => join(owned, "missing") },
+  );
+  assert.equal(absent.XDG_RUNTIME_DIR, undefined);
+  const explicit = supervisorEnvironment(
+    { XDG_RUNTIME_DIR: "/run/user/42" },
+    { uid: FIXTURE_UID, runtimeDirectoryFor: () => owned },
+  );
+  assert.equal(explicit.XDG_RUNTIME_DIR, "/run/user/42");
+});
+
+test("the systemd unit follows XDG_CONFIG_HOME when the user manager would", () => {
+  const paths = captureAgentPaths({
+    env: { COREDOC_HOME: "/home/test/.coredoc", XDG_CONFIG_HOME: "/home/test/cfg" },
+    homeDir: "/home/test",
+    platform: "linux",
+  });
+  assert.equal(
+    paths.servicePath,
+    join("/home/test/cfg", "systemd", "user", CAPTURE_AGENT_UNIT),
+  );
+  const relative = captureAgentPaths({
+    env: { COREDOC_HOME: "/home/test/.coredoc", XDG_CONFIG_HOME: "cfg" },
+    homeDir: "/home/test",
+    platform: "linux",
+  });
+  assert.equal(
+    relative.servicePath,
+    join("/home/test", ".config", "systemd", "user", CAPTURE_AGENT_UNIT),
+  );
+});
+
+test("an install staged by another host's runtime is refused, not adopted", async () => {
+  const darwin = lifecycleHarness();
+  await darwin.lifecycle.setupRuntime();
+  const linux = createCaptureAgentLifecycle({
+    env: { COREDOC_HOME: darwin.coredocHome },
+    homeDir: darwin.homeDir,
+    pluginRoot,
+    platform: "linux",
+    arch: "x64",
+    uid: FIXTURE_UID,
+    loadRuntimeBundle: () => runtimeFixture("2.0.0", "two", "linux-x64"),
+    runCommand: systemdRunCommand(),
+    probeListener: async () => false,
+    probeHealth: async () => undefined,
+    importSmoke: async () => undefined,
+    wait: async () => undefined,
+  });
+  const before = readFileSync(darwin.paths.statePath, "utf8");
+
+  await assert.rejects(linux.upgrade(), expectCode("UNSUPPORTED_PLATFORM"));
+  await assert.rejects(linux.rollback(), expectCode("OWNERSHIP_CONFLICT"));
+
+  assert.equal(readFileSync(darwin.paths.statePath, "utf8"), before);
+  assert.equal((await linux.status()).status, "degraded");
+});
+
+test("uninstall removes a dangling wants link left by enable and reloads the manager", async () => {
+  const harness = lifecycleHarness({ platform: "linux" });
+  await harness.lifecycle.setupRuntime();
+  const wants = join(
+    dirname(harness.paths.servicePath),
+    "default.target.wants",
+    CAPTURE_AGENT_UNIT,
+  );
+  mkdirSync(dirname(wants), { recursive: true });
+  symlinkSync(harness.paths.servicePath, wants);
+  unlinkSync(harness.paths.servicePath);
+  harness.calls.length = 0;
+
+  const result = await harness.lifecycle.uninstall();
+
+  assert.equal(result.status, "uninstalled");
+  assert.equal(existsSync(wants), false);
+  assert.equal(
+    harness.calls.some(([, args]) => args.includes("disable")),
+    false,
+  );
+
+  const fresh = lifecycleHarness({ platform: "linux" });
+  await fresh.lifecycle.setupRuntime();
+  fresh.calls.length = 0;
+  await fresh.lifecycle.uninstall();
+  const sequence = fresh.calls.map(([, args]) => args.join(" "));
+  assert.equal(sequence.at(-1), "--user daemon-reload", sequence.join("\n"));
+});
+
+test("a wants link that points somewhere else is an ownership conflict", async () => {
+  const harness = lifecycleHarness({ platform: "linux" });
+  await harness.lifecycle.setupRuntime();
+  const wants = join(
+    dirname(harness.paths.servicePath),
+    "default.target.wants",
+    CAPTURE_AGENT_UNIT,
+  );
+  mkdirSync(dirname(wants), { recursive: true });
+  symlinkSync("/etc/systemd/user/someone-else.service", wants);
+  unlinkSync(harness.paths.servicePath);
+
+  await assert.rejects(harness.lifecycle.uninstall(), expectCode("OWNERSHIP_CONFLICT"));
+  assert.equal(lstatSync(wants).isSymbolicLink(), true);
+  assert.equal(existsSync(harness.paths.statePath), true);
+});
+
+test("supervisor commands inherit only PATH plus the user-manager locators", () => {
+  assert.deepEqual(
+    supervisorEnvironment({
+      HOME: "/home/u",
+      NODE_OPTIONS: "--require=/x",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+    }),
+    {
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/user/1000/bus",
+    },
+  );
+  assert.deepEqual(
+    supervisorEnvironment({ XDG_RUNTIME_DIR: "relative/dir", DBUS_SESSION_BUS_ADDRESS: "" }),
+    { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
+  );
+});
+
+
+test("a foreign unit at the plugin path is never adopted or overwritten", async () => {
+  const harness = lifecycleHarness({ platform: "linux" });
+  mkdirSync(dirname(harness.paths.servicePath), { recursive: true });
+  const foreign = "[Unit]\nDescription=someone else\n";
+  writeFileSync(harness.paths.servicePath, foreign);
+
+  await assert.rejects(
+    harness.lifecycle.setupRuntime(),
+    expectCode("OWNERSHIP_CONFLICT"),
+  );
+  assert.equal(readFileSync(harness.paths.servicePath, "utf8"), foreign);
+  assert.equal(existsSync(harness.paths.statePath), false);
+});
+
+test("systemd ActiveState decides whether the plugin service is running", async () => {
+  for (const [activeState, expected] of [
+    ["active", true],
+    ["activating", true],
+    ["deactivating", true],
+    ["inactive", false],
+    ["failed", false],
+  ]) {
+    const harness = lifecycleHarness({
+      platform: "linux",
+      runCommand: systemdRunCommand({ activeState }),
+    });
+    await harness.lifecycle.setupRuntime();
+
+    const preflight = await harness.lifecycle.preflightDisable();
+
+    assert.equal(preflight.loaded, expected, activeState);
+  }
+
+  const unparsable = lifecycleHarness({
+    platform: "linux",
+    runCommand: systemdRunCommand({ activeState: "not-a-state" }),
+  });
+  await unparsable.lifecycle.setupRuntime();
+  await assert.rejects(
+    unparsable.lifecycle.preflightDisable(),
+    expectCode("SUPERVISOR_UNAVAILABLE"),
+  );
+});
+
+test("a Linux relay port that outlives the stop is a failure, not a legacy handover", async () => {
+  let listening = false;
+  const harness = lifecycleHarness({
+    platform: "linux",
+    probeListener: async () => listening,
+  });
+  await harness.lifecycle.setupRuntime();
+  listening = true;
+
+  // macOS tolerates a still-occupied port only when the legacy Desktop agent
+  // owns it; Linux has no such owner, so the stop has to fail loudly.
+  await assert.rejects(
+    harness.lifecycle.disable(),
+    expectCode("SUPERVISOR_UNAVAILABLE"),
+  );
+});
+
+test("systemd unit arguments survive specifier expansion and quoting", () => {
+  const unit = buildCaptureAgentSystemdUnit({
+    runtimeExecutablePath: "/home/u/100% real/runtime/bun/runner",
+    entryPath: "/home/u/100% real/scripts/managed-otel-relay.mjs",
+    configPath: '/home/u/wei"rd/relay.json',
+    statePath: "/home/u/back\\slash/state.json",
+    runtimeVersion: "1.0.0",
+    runtimeDigest: "a".repeat(64),
+  });
+
+  assert.equal(
+    unit.includes('ExecStart="/home/u/100%% real/runtime/bun/runner"'),
+    true,
+  );
+  assert.equal(unit.includes('"/home/u/wei\\"rd/relay.json"'), true);
+  assert.equal(unit.includes('"/home/u/back\\\\slash/state.json"'), true);
+  const dollars = buildCaptureAgentSystemdUnit({
+    runtimeExecutablePath: "/home/u/${HOME}/runtime/bun/runner",
+    entryPath: "/home/u/$X/scripts/managed-otel-relay.mjs",
+    configPath: "/home/u/relay.json",
+    statePath: "/home/u/state.json",
+    runtimeVersion: "1.0.0",
+    runtimeDigest: "a".repeat(64),
+  });
+  // systemd substitutes `${VAR}` even inside double quotes; `$$` is its escape.
+  assert.equal(dollars.includes('"/home/u/$${HOME}/runtime/bun/runner"'), true);
+  assert.equal(dollars.includes('"/home/u/$$X/scripts/managed-otel-relay.mjs"'), true);
+
+  for (const hostile of ["/home/u/new\nline", "/home/u/nul\u0000byte"]) {
+    assert.throws(
+      () =>
+        buildCaptureAgentSystemdUnit({
+          runtimeExecutablePath: hostile,
+          entryPath: "/home/u/entry.mjs",
+          configPath: "/home/u/relay.json",
+          statePath: "/home/u/state.json",
+          runtimeVersion: "1.0.0",
+          runtimeDigest: "a".repeat(64),
+        }),
+      expectCode("UNSAFE_STATE"),
+    );
+  }
 });
 
 test(
   "launcher does not expose raw lifecycle or setup bypass commands",
-  { skip: process.platform !== "darwin" },
+  { skip: !["darwin-arm64", "linux-x64"].includes(`${process.platform}-${process.arch}`) },
   async () => {
     const root = mkdtempSync(join(tmpdir(), "coredoc-agent-cli-"));
     for (const command of ["capture-agent", "capture-agent-setup"]) {

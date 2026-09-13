@@ -2,10 +2,15 @@
 
 import { pathToFileURL } from "node:url";
 
-import { captureHostForHookSession, createConfiguredCaptureRecorder } from "./capture-client.mjs";
-import { translateClaudeCapability } from "./hosts/claude.mjs";
+import {
+  MANAGED_CAPTURE_ENDPOINT,
+  captureHostForHookSession,
+  createConfiguredCaptureRecorder,
+} from "./capture-client.mjs";
+import { translateClaudeCapability, translateClaudeQuestions } from "./hosts/claude.mjs";
 import {
   appendWorkflowObservation,
+  openStageId,
   readWorkflowRun,
 } from "./workflow-run-state.mjs";
 
@@ -69,6 +74,54 @@ export function hookObservation(event, at = new Date().toISOString()) {
   return null;
 }
 
+/**
+ * Whether the configured capture target accepts a schema version. The frequent
+ * observer never performs HTTP, so for the managed relay it relies on the list
+ * `ensure-managed-relay` exported at SessionStart from the relay's own health;
+ * a direct cloud endpoint has no local preflight and decides server-side.
+ */
+export function captureSchemaVersionAccepted(env, schemaVersion) {
+  if (env.COREDOC_CAPTURE_ENDPOINT !== MANAGED_CAPTURE_ENDPOINT) return true;
+  return String(env.COREDOC_CAPTURE_ACCEPTED_SCHEMA_VERSIONS ?? "")
+    .split(",")
+    .map((entry) => Number(entry.trim()))
+    .includes(schemaVersion);
+}
+
+function recordQuestions(event, { env, cwd, at, createRecorder }) {
+  // Question/answer prose needs its own opt-in; ordinary capture remains
+  // identifiers and measurements even when a compatible relay is configured.
+  if (env.COREDOC_CAPTURE_QUESTIONS !== "1" || !captureSchemaVersionAccepted(env, 4)) return;
+  let translated = translateClaudeQuestions(event, { at });
+  if (!translated) return;
+  try {
+    const activeRun = readWorkflowRun(translated.sessionId, { env });
+    if (activeRun?.status === "active") {
+      const stageId = openStageId(activeRun);
+      translated = translateClaudeQuestions(event, {
+        at,
+        runId: activeRun.runId,
+        ...(stageId === undefined ? {} : { stageId }),
+      });
+    }
+  } catch {
+    // A question without readable run state is still a session-scoped fact.
+  }
+  try {
+    const recorder = createConfiguredCaptureRecorder({
+      env,
+      cwd,
+      host: captureHostForHookSession(env, translated.sessionId),
+      sessionId: translated.sessionId,
+      ...(createRecorder === undefined ? {} : { createRecorder }),
+    });
+    // Frequent hooks only persist locally. Route, finish, and SessionStart own flushes.
+    for (const questionEvent of translated.events) recorder.record(questionEvent);
+  } catch {
+    // Capture is fail-open and must never break established workflow observation.
+  }
+}
+
 export function observeHookEvent(
   event,
   {
@@ -123,6 +176,8 @@ export function observeHookEvent(
       // Capture is fail-open and must never break established workflow observation.
     }
   }
+
+  recordQuestions(event, { env, cwd, at, createRecorder });
 
   if (observationError) throw observationError;
   return observationResult;

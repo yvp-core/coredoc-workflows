@@ -27,7 +27,7 @@ import {
   stateRoot,
 } from "./project-key.mjs";
 
-const MANAGED_CAPTURE_ENDPOINT =
+export const MANAGED_CAPTURE_ENDPOINT =
   "http://127.0.0.1:43181/capture/v1/events";
 const BINDING_HASH_RE = /^[0-9a-f]{64}$/;
 const SESSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
