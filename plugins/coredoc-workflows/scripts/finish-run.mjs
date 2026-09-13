@@ -366,9 +366,14 @@ export async function finishWorkflowRun(
       capture.durable !== true ||
       artifacts.pending > 0,
     // The finished run is the last moment a caller is still able to judge the
-    // graph tools it used. `abandoned` is written by session teardown, when no
-    // caller is left to judge anything, so it never owes feedback.
-    feedbackOwed: outcome !== "abandoned" && finished.summary.coredocCalls > 0,
+    // session: the route, the skills, the task context, and any graph tools it
+    // used. `abandoned` is written by session teardown, when no caller is left
+    // to judge anything, so it never owes feedback. `feedbackScope` says
+    // whether graph-tool judgment belongs in the record at all.
+    feedbackOwed: outcome !== "abandoned",
+    ...(outcome === "abandoned"
+      ? {}
+      : { feedbackScope: finished.summary.coredocCalls > 0 ? "graph+session" : "session" }),
   };
 }
 

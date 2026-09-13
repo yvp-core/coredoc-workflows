@@ -19,3 +19,4 @@ skills/coredoc-security-review/SKILL.md linguist-generated=true
 skills/coredoc-spec/SKILL.md linguist-generated=true
 runtime/browse/darwin-arm64/browse-server binary -diff
 runtime/bun/darwin-arm64/bun binary -diff
+runtime/bun/linux-x64/bun binary -diff

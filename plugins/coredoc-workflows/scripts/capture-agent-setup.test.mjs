@@ -24,6 +24,7 @@ import {
   CAPTURE_AGENT_LABEL,
   DESKTOP_CAPTURE_AGENT_LABEL,
   DESKTOP_LAUNCH_AGENT_MARKER,
+  captureAgentPaths,
   createCaptureAgentLifecycle,
 } from "./capture-agent-lifecycle.mjs";
 import { resolveWorkflowRuntime } from "./capture-client.mjs";
@@ -814,7 +815,10 @@ test("setup leaves a stopped Desktop relay root untouched in its disjoint namesp
 
 test("setup compensation removes only plugin state when Desktop takes the shared listener", async () => {
   const homeDir = await mkdtemp(join(tmpdir(), "capture-agent-race-"));
-  const paths = captureAgentSetupPaths({ homeDir, env: {} });
+  const paths = {
+    ...captureAgentSetupPaths({ homeDir, env: {} }),
+    ...captureAgentPaths({ homeDir, env: {}, platform: "darwin" }),
+  };
   const uid = typeof process.getuid === "function" ? process.getuid() : 501;
   let listenerOccupied = false;
   let pluginLoaded = false;
@@ -823,7 +827,7 @@ test("setup compensation removes only plugin state when Desktop takes the shared
   const runCommand = async (_executable, args) => {
     launchctlCalls.push(args);
     if (args[0] === "bootstrap") {
-      if (args[2] === paths.launchAgentPath) pluginLoaded = true;
+      if (args[2] === paths.servicePath) pluginLoaded = true;
       return;
     }
     if (args[0] === "bootout") {
@@ -848,6 +852,7 @@ test("setup compensation removes only plugin state when Desktop takes the shared
     env: {},
     homeDir,
     platform: "darwin",
+    arch: "arm64",
     uid,
     runCommand,
     probeListener: async () => listenerOccupied,
@@ -864,7 +869,7 @@ test("setup compensation removes only plugin state when Desktop takes the shared
         recursive: true,
         mode: 0o700,
       });
-      await writeFile(paths.desktopLaunchAgentPath, desktopPlist, {
+      await writeFile(paths.legacyServicePath, desktopPlist, {
         mode: 0o600,
       });
       desktopLoaded = true;
@@ -910,12 +915,12 @@ test("setup compensation removes only plugin state when Desktop takes the shared
       error.rollback === "restored",
   );
 
-  await assert.rejects(stat(paths.launchAgentPath), { code: "ENOENT" });
+  await assert.rejects(stat(paths.servicePath), { code: "ENOENT" });
   await assert.rejects(stat(paths.statePath), { code: "ENOENT" });
   await assert.rejects(stat(paths.runtimeRoot), { code: "ENOENT" });
   await assert.rejects(stat(paths.relayConfigPath), { code: "ENOENT" });
   await assert.rejects(stat(paths.codexIngressPath), { code: "ENOENT" });
-  assert.equal(await readFile(paths.desktopLaunchAgentPath, "utf8"), desktopPlist);
+  assert.equal(await readFile(paths.legacyServicePath, "utf8"), desktopPlist);
   assert.equal(pluginLoaded, false);
   assert.equal(desktopLoaded, true);
   assert.equal(

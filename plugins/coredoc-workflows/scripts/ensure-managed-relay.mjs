@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
+  acceptedSchemaVersionList,
   relayBindingNonceFromCaptureHeaders,
 } from "./managed-otel-relay.mjs";
 
@@ -87,8 +88,7 @@ function validHealthChannel(value, { capture = false } = {}) {
     (value.lastErrorCode === null ||
       (typeof value.lastErrorCode === "string" &&
         /^[A-Z][A-Z0-9_]{0,63}$/.test(value.lastErrorCode))) &&
-    (!capture ||
-      JSON.stringify(value.acceptedSchemaVersions) === JSON.stringify([1, 2, 3]))
+    (!capture || acceptedSchemaVersionList(value.acceptedSchemaVersions) !== null)
   );
 }
 
@@ -173,7 +173,7 @@ async function pollManagedRelay({
       if (!validHealth(health, expectedWorkspaceId)) {
         throw relayFailure("HEALTH_MISMATCH");
       }
-      return;
+      return health;
     } catch (error) {
       failure = SAFE_FAILURE_CODES.has(error?.code)
         ? error
@@ -227,16 +227,33 @@ export async function ensureManagedRelayAtSessionStart({
   }
 
   try {
-    await pollManagedRelay({
+    const health = await pollManagedRelay({
       bindingNonce,
       expectedWorkspaceId,
       fetchImpl,
       wait,
     });
-    return { status: "ready" };
+    return {
+      status: "ready",
+      acceptedSchemaVersions: acceptedSchemaVersionList(
+        health.capture.acceptedSchemaVersions,
+      ),
+    };
   } catch (error) {
     return unavailable(error, "TRANSPORT_UNAVAILABLE");
   }
+}
+
+/**
+ * Hand the relay's accepted schema versions to the frequent hooks of this
+ * session through the host env file. The observer performs no HTTP, so this
+ * SessionStart read is its only way to know whether the relay takes a newer
+ * event schema before recording one.
+ */
+export function sessionEnvExport(result) {
+  return result?.status === "ready" && result.acceptedSchemaVersions
+    ? `export COREDOC_CAPTURE_ACCEPTED_SCHEMA_VERSIONS=${result.acceptedSchemaVersions.join(",")}\n`
+    : "";
 }
 
 // The one failure worth surfacing: a listener answered on the managed relay
@@ -249,11 +266,21 @@ export const BINDING_MISMATCH_NOTICE =
 
 export async function runSessionStartEnsure({
   write = (line) => process.stdout.write(line),
+  envFile = process.env.CLAUDE_ENV_FILE,
+  appendEnv = (path, text) => appendFileSync(path, text, "utf8"),
   ...options
 } = {}) {
   const result = await ensureManagedRelayAtSessionStart(options);
   if (result.status === "unavailable" && result.code === "BINDING_MISMATCH") {
     write(`${BINDING_MISMATCH_NOTICE}\n`);
+  }
+  const exported = sessionEnvExport(result);
+  if (exported && envFile) {
+    try {
+      appendEnv(envFile, exported);
+    } catch {
+      // The env export is best-effort; a missing version list only keeps newer events local-off.
+    }
   }
   return result;
 }

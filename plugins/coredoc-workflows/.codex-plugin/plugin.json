@@ -1,7 +1,7 @@
 {
   "name": "coredoc-workflows",
   "version": "0.12.0",
-  "description": "Self-contained engineering workflows with read-only Coredoc context, explicit peer adapters, bundled macOS ARM browser QA, and an opt-in macOS capture agent.",
+  "description": "Self-contained engineering workflows with read-only Coredoc context, explicit peer adapters, bundled macOS ARM browser QA, and an opt-in macOS and Linux capture agent.",
   "author": {
     "name": "Coredoc team"
   },
@@ -18,13 +18,15 @@
     "qa",
     "retro",
     "capture",
-    "telemetry"
+    "telemetry",
+    "jira",
+    "git-delivery"
   ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Coredoc Workflows",
     "shortDescription": "Self-contained engineering workflows for Codex.",
-    "longDescription": "Routes work through investigation, planning, adaptive implementation, optional strict TDD, review, spec, browser QA, benchmark, security, learning, and retrospective methods; offers explicit Claude and Codex peer review; grounds decisions with read-only Coredoc context; and includes an optional per-user macOS capture agent.",
+    "longDescription": "Routes work through investigation, planning, adaptive implementation, optional strict TDD, review, spec, browser QA, benchmark, security, learning, and retrospective methods; offers explicit Claude and Codex peer review; grounds decisions with read-only Coredoc context; and includes an optional per-user macOS and Linux capture agent.",
     "developerName": "Coredoc team",
     "category": "Developer Tools",
     "capabilities": [
@@ -36,7 +38,9 @@
       "Coredoc authenticated desktop QA",
       "Read-only Coredoc context policy",
       "Compact learning and retrospectives",
-      "Opt-in macOS capture agent"
+      "Opt-in macOS and Linux capture agent",
+      "Provider-neutral Jira task context and explicitly authorized updates",
+      "Explicit Git delivery with secret preflight"
     ],
     "defaultPrompt": [
       "Route this task through the smallest useful workflow.",

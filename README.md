@@ -6,7 +6,8 @@ a single-plugin marketplace; the installable plugin lives in
 
 The normal workflows work without Coredoc Desktop, the Coredoc MCP server,
 Node.js, Bun, or npm installed on the user's machine. The plugin ships a pinned
-macOS 13+ Apple-silicon Bun runtime and invokes only a closed set of bundled scripts.
+Bun runtime for macOS 13+ Apple silicon and Linux x86_64 with glibc, and invokes
+only a closed set of bundled scripts.
 Coredoc context is an optional enhancement: when it is unavailable, workflows
 continue with repository-native search and explicitly report reduced coverage.
 
@@ -37,14 +38,14 @@ path.
 
 | Capability | Requirement |
 | --- | --- |
-| Core workflow, adaptive implementation, review, spec, explicit TDD, and repository QA | macOS 13 or later on Apple silicon |
+| Core workflow, adaptive implementation, review, spec, explicit TDD, and repository QA | macOS 13+ Apple silicon or Linux x86_64 with glibc |
 | Browser QA | An installed Chrome-compatible browser |
 | Claude/Codex peer review | The explicitly selected provider CLI |
 | Coredoc graph context | An available Coredoc MCP server |
 | Coredoc Desktop QA | An explicitly opted-in Coredoc development app |
-| Plugin-managed workflow and native telemetry capture | macOS on Apple silicon, a compatible Coredoc server, and an operator-provisioned `~/.coredoc/capture-agent-policy.json` |
+| Plugin-managed workflow and native telemetry capture | macOS Apple silicon or Linux x86_64 with a systemd user manager, a compatible Coredoc server, and an operator-provisioned `~/.coredoc/capture-agent-policy.json` |
 
-Installing the plugin does **not** register a LaunchAgent, enable OpenTelemetry,
+Installing the plugin does **not** register a LaunchAgent or systemd unit, enable OpenTelemetry,
 create a cloud credential, or change Claude Code or Codex settings. Capture is
 an explicit, per-user setup step. It works without a repository, Coredoc MCP,
 or Coredoc Desktop and is fixed to the one server origin and workspace UUID in
@@ -71,6 +72,13 @@ An advanced compatibility path can send workflow events directly when the
 operator explicitly supplies `COREDOC_CAPTURE_ENDPOINT` and an independent
 `COREDOC_CAPTURE_HEADERS` credential. Installation never creates or discovers
 those values, and leaving the endpoint unset keeps capture disabled.
+
+Jira task context uses the host's available connector. Jira comments and status
+changes require an explicit user request; accepting a specification posts nothing.
+Git commit, push, and PR operations use the separate `coredoc-git-delivery` skill
+only when requested. Session feedback is optional and never sent automatically.
+Question/answer prose is excluded from capture unless the operator also enables
+`COREDOC_CAPTURE_QUESTIONS=1`; see the capture-agent guide before enabling it.
 
 The plugin has no npm runtime dependencies and performs no runtime downloads.
 The bundled executables, their hashes, and their upstream provenance are

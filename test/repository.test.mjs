@@ -57,22 +57,19 @@ test("uses the bundled, pinned runtime instead of a global Node or Bun", async (
   assert.notEqual(launcherStat.mode & 0o111, 0, "launcher must be executable");
 
   const provenance = await json(join(pluginRoot, "runtime", "bun", "provenance.json"));
-  const binary = join(pluginRoot, "runtime", "bun", provenance.binary);
-  const bytes = await readFile(binary);
-
   assert.equal(provenance.version, "1.3.14");
-  assert.equal(provenance.platform, "darwin-arm64");
-  assert.equal(bytes.byteLength, provenance.sizeBytes);
-  assert.equal(createHash("sha256").update(bytes).digest("hex"), provenance.sha256);
+  assert.equal(provenance.schemaVersion, 2);
+  assert.deepEqual(Object.keys(provenance.platforms).sort(), ["darwin-arm64", "linux-x64"]);
   const captureManifest = await json(
     join(pluginRoot, "runtime", "capture-agent-manifest.json"),
   );
-  assert.deepEqual(
-    captureManifest.files.find(
-      ({ path }) => path === `runtime/bun/${provenance.binary}`,
-    ),
-    { path: `runtime/bun/${provenance.binary}`, sha256: provenance.sha256 },
-  );
+  assert.equal(captureManifest.schemaVersion, 2);
+  for (const [platform, runtime] of Object.entries(provenance.platforms)) {
+    const bytes = await readFile(join(pluginRoot, "runtime", "bun", runtime.binary));
+    assert.equal(bytes.byteLength, runtime.sizeBytes, platform);
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), runtime.sha256, platform);
+    assert.deepEqual(captureManifest.platforms[platform], { sha256: runtime.sha256 });
+  }
   const installedRunner = await stat(join(pluginRoot, "runtime", "bun", "runner"));
   assert.notEqual(installedRunner.mode & 0o111, 0, "runtime runner must be executable");
   const license = await readFile(join(pluginRoot, "runtime", "bun", provenance.license.path));
@@ -153,7 +150,7 @@ test("advertises the optional capture agent without changing OSS release identit
     assert.equal(manifest.repository, "https://github.com/yvp-core/coredoc-workflows");
     assert.match(manifest.description, /capture agent/i);
   }
-  assert.ok(codex.interface.capabilities.includes("Opt-in macOS capture agent"));
+  assert.ok(codex.interface.capabilities.includes("Opt-in macOS and Linux capture agent"));
 });
 
 test("release checksums contain the downloadable asset name without a dist prefix", async () => {

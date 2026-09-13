@@ -1,6 +1,6 @@
 ---
 name: coredoc-capture
-description: Install, inspect, repair, upgrade, disable, or uninstall the Coredoc plugin-managed macOS Coredoc capture agent. Use for workflow/native telemetry setup or relay lifecycle requests; do not use for ordinary workflow event recording.
+description: Install, inspect, repair, upgrade, disable, or uninstall the Coredoc plugin-managed capture agent on macOS or Linux. Use for workflow/native telemetry setup or relay lifecycle requests; do not use for ordinary workflow event recording.
 ---
 
 # Plugin-managed capture agent
@@ -14,9 +14,10 @@ Resolve `<plugin-root>` as two directories above this file. The executable is:
 This is the supported entry point for an installed plugin; do not assume the
 executable is on `PATH`, and do not ask the user to locate a plugin cache.
 
-The optional agent supports macOS on Apple silicon and uses the plugin's pinned
+The optional agent supports macOS Apple silicon and Linux x86_64 with glibc
+and a running systemd user manager. It uses the plugin's pinned
 bundled Bun runtime. It does not require system Node, Bun, or Python. The agent writes only
-per-user state below `~/.coredoc`, a per-user LaunchAgent, and marker-owned global Claude
+per-user state below `~/.coredoc`, a per-user LaunchAgent or systemd unit, and marker-owned global Claude
 Code/Codex settings. It must not create repository files, use Coredoc MCP for
 routing or credentials, read an MCP credential store, or require Coredoc
 Desktop. Plugin ownership uses `ai.coredoc.workflows.capture-relay` and

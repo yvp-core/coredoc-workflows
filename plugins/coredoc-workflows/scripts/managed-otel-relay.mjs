@@ -53,7 +53,26 @@ const MAX_BODY_BYTES = 1_000_000;
 const MAX_NATIVE_BODY_BYTES = 25 * 1024 * 1024;
 const MAX_DELIVERY_BODY_BYTES = 3 * 1024 * 1024;
 const MAX_CAPTURE_EVENTS = 100;
-const ACCEPTED_CAPTURE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3]);
+const ACCEPTED_CAPTURE_SCHEMA_VERSIONS = Object.freeze([1, 2, 3, 4]);
+// A health payload may come from a relay of another plugin version. Its version
+// list is valid when it is a short ascending set of small positive integers
+// that still covers the base contract; callers check the version they need.
+export function acceptedSchemaVersionList(value) {
+  return Array.isArray(value) &&
+    value.length >= 2 &&
+    value.length <= 16 &&
+    value.every(
+      (entry, index) =>
+        Number.isInteger(entry) &&
+        entry >= 1 &&
+        entry <= 99 &&
+        (index === 0 || entry > value[index - 1]),
+    ) &&
+    value[0] === 1 &&
+    value[1] === 2
+    ? [...value]
+    : null;
+}
 const MAX_CONNECTIONS = 32;
 const MAX_HEADERS = 64;
 const MAX_REQUESTS_PER_SOCKET = 100;
@@ -2964,9 +2983,7 @@ function healthChannel(value, { capture = false } = {}) {
     (candidate.lastErrorCode !== null &&
       (typeof candidate.lastErrorCode !== "string" ||
         !/^[A-Z][A-Z0-9_]{0,63}$/.test(candidate.lastErrorCode))) ||
-    (capture &&
-      JSON.stringify(candidate.acceptedSchemaVersions) !==
-        JSON.stringify(ACCEPTED_CAPTURE_SCHEMA_VERSIONS))
+    (capture && acceptedSchemaVersionList(candidate.acceptedSchemaVersions) === null)
   ) {
     fail("HEALTH_MISMATCH");
   }
@@ -2976,7 +2993,11 @@ function healthChannel(value, { capture = false } = {}) {
     lastForwardedAt: candidate.lastForwardedAt,
     lastErrorCode: candidate.lastErrorCode,
     ...(capture
-      ? { acceptedSchemaVersions: [...ACCEPTED_CAPTURE_SCHEMA_VERSIONS] }
+      ? {
+          acceptedSchemaVersions: acceptedSchemaVersionList(
+            candidate.acceptedSchemaVersions,
+          ),
+        }
       : {}),
   };
 }

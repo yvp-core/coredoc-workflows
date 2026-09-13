@@ -1049,7 +1049,7 @@ test("distinguishes unmeasured findings and unused Coredoc from zero findings", 
   assert.equal(result.pending, false);
 });
 
-test("owes graph feedback only when a caller used the graph and is still there", async () => {
+test("owes session feedback whenever a caller is still there, widening to graph when used", async () => {
   const finish = (outcome, coredocCalls) =>
     finishWorkflowRun(
       { sessionId: "session-42", outcome, at: "2026-07-31T10:00:12.000Z" },
@@ -1063,13 +1063,21 @@ test("owes graph feedback only when a caller used the graph and is still there",
       },
     );
 
+  // A run that never touched the graph is exactly where routing, skill, and
+  // task-context problems go unreported unless the caller is asked.
   for (const outcome of ["success", "failed", "blocked"]) {
-    assert.equal((await finish(outcome, 2)).feedbackOwed, true, outcome);
-    assert.equal((await finish(outcome, 0)).feedbackOwed, false, outcome);
+    const withGraph = await finish(outcome, 2);
+    assert.equal(withGraph.feedbackOwed, true, outcome);
+    assert.equal(withGraph.feedbackScope, "graph+session", outcome);
+    const withoutGraph = await finish(outcome, 0);
+    assert.equal(withoutGraph.feedbackOwed, true, outcome);
+    assert.equal(withoutGraph.feedbackScope, "session", outcome);
   }
 
   // Session teardown writes `abandoned` with no caller left to author feedback.
-  assert.equal((await finish("abandoned", 2)).feedbackOwed, false);
+  const abandoned = await finish("abandoned", 2);
+  assert.equal(abandoned.feedbackOwed, false);
+  assert.equal(abandoned.feedbackScope, undefined);
 });
 
 test("claims no feedback is owed when the host supplies no completion evidence", async () => {

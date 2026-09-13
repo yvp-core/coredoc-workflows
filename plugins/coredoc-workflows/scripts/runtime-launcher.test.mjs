@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
-import { mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "../test/test-api.mjs";
@@ -10,10 +10,8 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 const pluginRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const launcher = join(pluginRoot, "bin", "coredoc-workflows");
-const unsupported =
-  process.platform === "darwin" && process.arch === "arm64"
-    ? false
-    : "bundled runtime supports darwin-arm64 only";
+const unsupported = ["darwin-arm64", "linux-x64"].includes(`${process.platform}-${process.arch}`)
+  ? false : "no bundled runtime for this host";
 test("launcher uses its bundled runtime with no global Node or Bun on PATH", { skip: unsupported }, async () => {
   const { stdout } = await run(launcher, ["version"], {
     env: { PATH: "/usr/bin:/bin" },
@@ -81,4 +79,16 @@ test("launcher routes capture lifecycle through bundled Bun without replacing JS
   assert.equal(recorder.status, 1);
   assert.match(recorder.stderr, /Unsupported capture action/);
   assert.doesNotMatch(recorder.stderr, /INVALID_ARGUMENTS/);
+});
+
+test("launcher fails closed when the host's vendored Bun is missing", { skip: unsupported }, async () => {
+  const scratch = await mkdtemp(join(tmpdir(), "coredoc-launcher-missing-bun-"));
+  await mkdir(join(scratch, "bin"), { recursive: true });
+  await copyFile(launcher, join(scratch, "bin", "coredoc-workflows"));
+  await chmod(join(scratch, "bin", "coredoc-workflows"), 0o755);
+  const result = spawnSync(join(scratch, "bin", "coredoc-workflows"), ["version"], {
+    env: { PATH: "/usr/bin:/bin" }, encoding: "utf8",
+  });
+  assert.equal(result.status, 70);
+  assert.match(result.stderr, /bundled runtime is missing or not executable/);
 });

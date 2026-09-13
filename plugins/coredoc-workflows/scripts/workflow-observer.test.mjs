@@ -14,6 +14,7 @@ import test from "../test/test-api.mjs";
 import { pathToFileURL } from "node:url";
 
 import {
+  captureSchemaVersionAccepted,
   hookObservation,
   observeHookEvent,
   verificationKind,
@@ -22,6 +23,7 @@ import {
   readWorkflowObservations,
   readWorkflowRun,
   startWorkflowRun,
+  startWorkflowStage,
 } from "./workflow-run-state.mjs";
 
 const AT = "2026-07-31T10:00:00.000Z";
@@ -67,6 +69,9 @@ test("supported plugin hooks cover skills, failures, agents, and session lifecyc
     hooks.PostToolUseFailure[0].matcher,
     /(?:^|\|)Skill(?:\||$)/,
   );
+  // An answered question is observed; a failed or cancelled one has no answer to record.
+  assert.match(hooks.PostToolUse[0].matcher, /(?:^|\|)AskUserQuestion(?:\||$)/);
+  assert.doesNotMatch(hooks.PostToolUseFailure[0].matcher, /AskUserQuestion/);
   for (const hookName of ["PostToolUse", "PostToolUseFailure"]) {
     const matcher = new RegExp(`^(?:${hooks[hookName][0].matcher})$`);
     assert.equal(matcher.test("mcp__coredoc__find_callers"), true);
@@ -502,4 +507,141 @@ test("frequent hook CLI is silent and never executes Git", () => {
   assert.equal(existsSync(gitSentinel), false);
   assert.equal(existsSync(fetchSentinel), false);
   assert.equal(storedCaptureEvents(join(root, "capture")).length, 1);
+});
+
+const MANAGED_TARGET = "http://127.0.0.1:43181/capture/v1/events";
+
+function askUserQuestionHook(sessionId) {
+  return {
+    hook_event_name: "PostToolUse",
+    tool_name: "AskUserQuestion",
+    session_id: sessionId,
+    cwd: "/private/PATH_SENTINEL",
+    transcript_path: "/private/TRANSCRIPT_SENTINEL",
+    tool_input: {
+      questions: [
+        {
+          question: "Backfill existing rows?",
+          header: "Migration",
+          multiSelect: false,
+          options: [{ label: "Yes" }, { label: "No", description: "Leave null" }],
+        },
+      ],
+    },
+    tool_response: {
+      questions: [],
+      answers: { "Backfill existing rows?": "No" },
+      annotations: {},
+      content: "RESULT_SENTINEL",
+    },
+  };
+}
+
+test("records an answered question locally as a schema-4 event without flushing", () => {
+  const { captureDirectory, env } = testEnvironment("coredoc-claude-question-");
+  env.COREDOC_CAPTURE_QUESTIONS = "1";
+  const result = observeHookEvent(askUserQuestionHook("session-ask"), { env, at: AT });
+
+  // The question is capture evidence, not a local completion observation.
+  assert.deepEqual(result, { status: "ignored" });
+  assert.equal(readWorkflowRun("session-ask", { env }), null);
+  const [captured] = storedCaptureEvents(captureDirectory);
+  assert.equal(captured.schemaVersion, 4);
+  assert.equal(captured.type, "workflow.question.answered");
+  assert.equal(captured.sessionId, "session-ask");
+  assert.equal(captured.runId, undefined);
+  assert.equal(captured.data.question, "Backfill existing rows?");
+  assert.equal(captured.data.answer, "No");
+  assert.equal(captured.data.answerKind, "option");
+  assert.equal(captured.data.stageId, undefined);
+  assert.doesNotMatch(
+    JSON.stringify(captured),
+    /PATH_SENTINEL|TRANSCRIPT_SENTINEL|RESULT_SENTINEL/,
+  );
+});
+
+test("correlates a question with the active run and its open stage", () => {
+  const { captureDirectory, env } = testEnvironment("coredoc-claude-question-run-");
+  env.COREDOC_CAPTURE_QUESTIONS = "1";
+  const snapshot = () => ({ available: false, repoRoot: "", head: "", fingerprint: "" });
+  startWorkflowRun(
+    {
+      sessionId: "session-ask-run",
+      runId: RUN_ID,
+      workflowId: "change:large:normal",
+      intent: "change",
+      risk: "normal",
+      declaredStages: [{ stageId: "spec", after: [] }],
+      at: AT,
+    },
+    { env, snapshot },
+  );
+  startWorkflowStage("session-ask-run", "spec", { at: AT }, { env });
+
+  observeHookEvent(askUserQuestionHook("session-ask-run"), { env, at: AT });
+  const captured = storedCaptureEvents(captureDirectory).find(
+    (event) => event.type === "workflow.question.answered",
+  );
+  assert.equal(captured.runId, RUN_ID);
+  assert.equal(captured.data.stageId, "spec");
+});
+
+test("records a managed-relay question only when SessionStart exported schema 4", () => {
+  assert.equal(captureSchemaVersionAccepted({ COREDOC_CAPTURE_ENDPOINT: TARGET }, 4), true);
+  assert.equal(captureSchemaVersionAccepted({ COREDOC_CAPTURE_ENDPOINT: MANAGED_TARGET }, 4), false);
+  assert.equal(
+    captureSchemaVersionAccepted(
+      { COREDOC_CAPTURE_ENDPOINT: MANAGED_TARGET, COREDOC_CAPTURE_ACCEPTED_SCHEMA_VERSIONS: "1,2,3" },
+      4,
+    ),
+    false,
+  );
+  assert.equal(
+    captureSchemaVersionAccepted(
+      { COREDOC_CAPTURE_ENDPOINT: MANAGED_TARGET, COREDOC_CAPTURE_ACCEPTED_SCHEMA_VERSIONS: "1,2,3,4" },
+      4,
+    ),
+    true,
+  );
+
+  const recorded = [];
+  const stateDirectory = mkdtempSync(join(tmpdir(), "coredoc-claude-question-gate-"));
+  const managedEnv = {
+    COREDOC_CAPTURE_QUESTIONS: "1",
+    COREDOC_CAPTURE_ENDPOINT: MANAGED_TARGET,
+    COREDOC_CAPTURE_HEADERS:
+      "X-Coredoc-Relay-Binding=local_binding_abcdefghijklmnopqrstuvwxyz012345",
+    COREDOC_CAPTURE_WORKSPACE_ID: "ws-1",
+    COREDOC_WORKFLOWS_REPO_KEY: "coredoc/coredoc-parser",
+    COREDOC_WORKFLOWS_STATE_DIR: stateDirectory,
+  };
+  const createRecorder = () => ({
+    record: (event) => {
+      recorded.push(event);
+      return { status: "queued", eventId: "event-1", pending: 1 };
+    },
+    flush: () => {
+      throw new Error("frequent hooks must not flush");
+    },
+  });
+  observeHookEvent(askUserQuestionHook("session-gated"), { env: managedEnv, at: AT, createRecorder });
+  assert.deepEqual(recorded, []);
+
+  observeHookEvent(askUserQuestionHook("session-gated"), {
+    env: { ...managedEnv, COREDOC_CAPTURE_ACCEPTED_SCHEMA_VERSIONS: "1,2,3,4" },
+    at: AT,
+    createRecorder,
+  });
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].schemaVersion, 4);
+  assert.equal(recorded[0].data.answer, "No");
+});
+
+test("question prose stays disabled unless explicitly enabled, even with capture configured", () => {
+  for (const value of [undefined, "", "0", "true"]) {
+    const { captureDirectory, env } = testEnvironment("coredoc-question-off-");
+    if (value !== undefined) env.COREDOC_CAPTURE_QUESTIONS = value;
+    observeHookEvent(askUserQuestionHook("session-private"), { env, at: AT });
+    assert.equal(existsSync(captureDirectory), false, String(value));
+  }
 });

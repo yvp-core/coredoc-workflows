@@ -10,6 +10,28 @@ const V2_EVENT_TYPES = new Set([
   "workflow.stage.started",
   "workflow.stage.finished",
 ]);
+// Schema 4 exists for exactly one event: the question the agent asked the user
+// and the answer it received. It is the one capture event that carries text,
+// so its grammar bounds every string and the producer redacts before recording.
+const V4_EVENT_TYPES = new Set(["workflow.question.answered"]);
+const ANSWER_KINDS = new Set(["option", "typed"]);
+/** Bounds a producer must apply before recording a question event. */
+export const QUESTION_LIMITS = Object.freeze({
+  questionsPerAsk: 4,
+  options: 10,
+  headerChars: 32,
+  questionChars: 500,
+  optionLabelChars: 100,
+  optionDescriptionChars: 300,
+  answerChars: 500,
+});
+const MAX_QUESTIONS_PER_ASK = QUESTION_LIMITS.questionsPerAsk;
+const MAX_QUESTION_OPTIONS = QUESTION_LIMITS.options;
+const MAX_QUESTION_HEADER_CHARS = QUESTION_LIMITS.headerChars;
+const MAX_QUESTION_CHARS = QUESTION_LIMITS.questionChars;
+const MAX_OPTION_LABEL_CHARS = QUESTION_LIMITS.optionLabelChars;
+const MAX_OPTION_DESCRIPTION_CHARS = QUESTION_LIMITS.optionDescriptionChars;
+const MAX_ANSWER_CHARS = QUESTION_LIMITS.answerChars;
 const INTENTS = new Set([
   "direct",
   "diagnose",
@@ -423,6 +445,100 @@ function positiveInteger(value, label, maximum) {
   return value;
 }
 
+// Text fields admit printable characters, tabs, and newlines only. A carriage
+// return or any other control character is a sign the producer copied raw
+// host output rather than a redacted, bounded string.
+const CONTROL_CHARACTER_RE = /[\u0000-\u0008\u000B-\u001F\u007F]/;
+
+function boundedText(value, label, maximum) {
+  if (
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > maximum ||
+    CONTROL_CHARACTER_RE.test(value)
+  ) {
+    throw new Error(
+      `${label} must be text of 1 to ${maximum} characters without control characters`,
+    );
+  }
+  return value;
+}
+
+function questionOptions(value) {
+  if (!Array.isArray(value) || value.length > MAX_QUESTION_OPTIONS) {
+    throw new Error(
+      `question options must contain at most ${MAX_QUESTION_OPTIONS} entries`,
+    );
+  }
+  return value.map((entry) => {
+    const candidate = exactFields(
+      entry,
+      new Set(["label", "description"]),
+      "question option",
+    );
+    return {
+      label: boundedText(candidate.label, "option label", MAX_OPTION_LABEL_CHARS),
+      ...(candidate.description === undefined
+        ? {}
+        : {
+            description: boundedText(
+              candidate.description,
+              "option description",
+              MAX_OPTION_DESCRIPTION_CHARS,
+            ),
+          }),
+    };
+  });
+}
+
+function questionAnsweredData(value) {
+  const candidate = exactFields(
+    value,
+    new Set([
+      "askId",
+      "questionIndex",
+      "questionCount",
+      "header",
+      "question",
+      "options",
+      "multiSelect",
+      "answer",
+      "answerKind",
+      "stageId",
+    ]),
+    "workflow.question.answered data",
+  );
+  const questionCount = positiveInteger(
+    candidate.questionCount,
+    "questionCount",
+    MAX_QUESTIONS_PER_ASK,
+  );
+  const questionIndex = positiveInteger(
+    candidate.questionIndex,
+    "questionIndex",
+    questionCount,
+  );
+  if (typeof candidate.multiSelect !== "boolean") {
+    throw new Error("multiSelect must be a boolean");
+  }
+  return {
+    askId: uuid(candidate.askId, "askId"),
+    questionIndex,
+    questionCount,
+    ...(candidate.header === undefined
+      ? {}
+      : { header: boundedText(candidate.header, "header", MAX_QUESTION_HEADER_CHARS) }),
+    question: boundedText(candidate.question, "question", MAX_QUESTION_CHARS),
+    options: questionOptions(candidate.options),
+    multiSelect: candidate.multiSelect,
+    answer: boundedText(candidate.answer, "answer", MAX_ANSWER_CHARS),
+    answerKind: member(candidate.answerKind, ANSWER_KINDS, "answerKind"),
+    ...(candidate.stageId === undefined
+      ? {}
+      : { stageId: compactId(candidate.stageId, "stageId") }),
+  };
+}
+
 function eventData(schemaVersion, type, value) {
   switch (type) {
     case "workflow.run.started":
@@ -435,6 +551,8 @@ function eventData(schemaVersion, type, value) {
       return stageStartedData(value);
     case "workflow.stage.finished":
       return stageFinishedData(value);
+    case "workflow.question.answered":
+      return questionAnsweredData(value);
     default:
       throw new Error(`Unsupported capture event type: ${type}`);
   }
@@ -458,11 +576,7 @@ export function captureEvent(input) {
     ]),
     "capture event",
   );
-  if (
-    candidate.schemaVersion !== 1 &&
-    candidate.schemaVersion !== 2 &&
-    candidate.schemaVersion !== 3
-  ) {
+  if (![1, 2, 3, 4].includes(candidate.schemaVersion)) {
     throw new Error(
       `Unsupported capture event schemaVersion: ${candidate.schemaVersion}`,
     );
@@ -471,9 +585,16 @@ export function captureEvent(input) {
   if (schemaVersion === 3 && candidate.type !== "workflow.run.started") {
     throw new Error("schemaVersion 3 supports only workflow.run.started");
   }
+  if (schemaVersion === 4 && !V4_EVENT_TYPES.has(candidate.type)) {
+    throw new Error("schemaVersion 4 supports only workflow.question.answered");
+  }
   const type = member(
     candidate.type,
-    schemaVersion === 1 ? V1_EVENT_TYPES : V2_EVENT_TYPES,
+    schemaVersion === 1
+      ? V1_EVENT_TYPES
+      : schemaVersion === 4
+        ? V4_EVENT_TYPES
+        : V2_EVENT_TYPES,
     "capture event type",
   );
   const requiresRun =
@@ -492,6 +613,9 @@ export function captureEvent(input) {
   }
   if (schemaVersion === 3 && candidate.taskId !== undefined) {
     throw new Error("taskId and workItems are mutually exclusive");
+  }
+  if (schemaVersion === 4 && candidate.taskId !== undefined) {
+    throw new Error("taskId is not supported on workflow.question.answered");
   }
   return {
     schemaVersion,

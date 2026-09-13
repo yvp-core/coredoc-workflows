@@ -13,27 +13,33 @@ whose best proof is not a new failing test, use `coredoc-implement` unless the
 user explicitly requires TDD.
 
 1. Read the requested behavior and the real runtime path.
-2. If a routed specification stage preceded this one, read the repository-local
+2. Before any edit, read and apply
+   `<plugin-root>/resources/methodology/branch-start.md` unless the router
+   already did so in this run: fetch the base branch from `origin` and fold it
+   into the checkout so the work starts from the latest trunk. Preserve local
+   work and continue an authorized dirty checkout when trunk is already
+   integrated; apply the method's recovery rules for divergence or conflicts.
+3. If a routed specification stage preceded this one, read the repository-local
    specification. Treat its acceptance criteria as the test list and its
    non-goals as the scope boundary. Track progress against that specification,
    not an ad hoc internal list.
-3. Apply the **Over-scope gate** before editing. Search for an existing implementation
+4. Apply the **Over-scope gate** before editing. Search for an existing implementation
    of each behavior. If an item has no current observer or consumer, protects an
    unreachable state, duplicates an authoritative implementation, or hardens a
    deprecated path outside its support window, stop and request a scope correction.
    Do not implement speculative acceptance criteria merely because they are written.
-4. Inspect existing tests and choose the smallest normal test surface that would
+5. Inspect existing tests and choose the smallest normal test surface that would
    catch the regression. Do not create a parallel runner or workflow check.
-5. Add one meaningful test and run it before implementation.
-6. If it is not RED for the expected missing behavior, correct the test before
+6. Add one meaningful test and run it before implementation.
+7. If it is not RED for the expected missing behavior, correct the test before
    touching production code.
-7. Implement the smallest root-cause change that makes the test GREEN.
-8. Run the targeted test, then the relevant package or repository suite. When the
+8. Implement the smallest root-cause change that makes the test GREEN.
+9. Run the targeted test, then the relevant package or repository suite. When the
    suite comes back red beyond your own test, apply
    `<plugin-root>/resources/methodology/test-failure-triage.md` before deciding
    whether to stop: establish whether each failure is in-branch or pre-existing,
    and never weaken an assertion to reach green.
-9. Refactor only when the green implementation contains concrete duplication or
+10. Refactor only when the green implementation contains concrete duplication or
    obscures the changed behavior.
 
 **Escalate an under-scoped route.** The route was classified from the request

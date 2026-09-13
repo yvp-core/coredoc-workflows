@@ -21,7 +21,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Skill|mcp__(?:[A-Za-z0-9]+[-_])*[Cc][Oo][Rr][Ee][Dd][Oo][Cc](?:[-_][A-Za-z0-9]+)*__.*",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Skill|AskUserQuestion|mcp__(?:[A-Za-z0-9]+[-_])*[Cc][Oo][Rr][Ee][Dd][Oo][Cc](?:[-_][A-Za-z0-9]+)*__.*",
         "hooks": [
           {
             "type": "command",

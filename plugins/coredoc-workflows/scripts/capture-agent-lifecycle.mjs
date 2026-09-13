@@ -42,6 +42,31 @@ export const PLUGIN_LAUNCH_AGENT_MARKER =
   "<!-- Coredoc Workflows plugin capture agent LaunchAgent v1 -->";
 export const DESKTOP_LAUNCH_AGENT_MARKER =
   "<!-- Coredoc managed relay LaunchAgent v1 -->";
+export const PLUGIN_SYSTEMD_UNIT_MARKER =
+  "# Coredoc Workflows plugin capture agent systemd unit v1";
+const SYSTEMD_UNIT_SUFFIX = ".service";
+export const CAPTURE_AGENT_UNIT = `${CAPTURE_AGENT_LABEL}${SYSTEMD_UNIT_SUFFIX}`;
+
+const SYSTEMCTL = "/usr/bin/systemctl";
+// `failed` and `inactive` are the only ActiveState values in which nothing of
+// ours is running and nothing is about to run.
+const SYSTEMD_RUNNING_STATES = new Set([
+  "activating",
+  "active",
+  "deactivating",
+  "maintenance",
+  "refreshing",
+  "reloading",
+]);
+const SYSTEMD_SETTLED_STATES = new Set(["failed", "inactive"]);
+const SYSTEMD_ACTIVE_STATES = new Set([
+  ...SYSTEMD_RUNNING_STATES,
+  ...SYSTEMD_SETTLED_STATES,
+]);
+// `systemctl --user` finds the user manager through these; the child otherwise
+// runs with a pinned PATH only, which launchctl never needed.
+const SUPERVISOR_ENVIRONMENT = ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"];
+const SERVICE_START_RETRY_DELAY_MS = 100;
 
 const AGENT_STATE_MARKER = "coredoc-workflows.capture-agent.v1";
 const AGENT_STATE_SCHEMA_VERSION = 1;
@@ -58,13 +83,25 @@ const ISO_TIMESTAMP_RE =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 const RUNTIME_MODULE_PATH_RE = /^(?:scripts|runtime)\/[A-Za-z0-9._/-]+\.mjs$/;
 const BUNDLED_RUNTIME_CONFIG_PATH = "runtime/bun/bunfig.toml";
-const BUNDLED_RUNTIME_EXECUTABLE_PATH = "runtime/bun/darwin-arm64/bun";
 const BUNDLED_RUNTIME_RUNNER_PATH = "runtime/bun/runner";
-const BUNDLED_RUNTIME_PATHS = new Set([
+const BUNDLED_RUNTIME_SHARED_PATHS = new Set([
   BUNDLED_RUNTIME_CONFIG_PATH,
-  BUNDLED_RUNTIME_EXECUTABLE_PATH,
   BUNDLED_RUNTIME_RUNNER_PATH,
 ]);
+// The plugin vendors one Bun build per supported host. A resolved bundle carries
+// exactly one of them, so a macOS install never stages the Linux binary.
+const BUNDLED_RUNTIME_EXECUTABLES = new Map([
+  ["darwin-arm64", "runtime/bun/darwin-arm64/bun"],
+  ["linux-x64", "runtime/bun/linux-x64/bun"],
+]);
+const BUNDLED_RUNTIME_EXECUTABLE_PATHS = new Set(
+  BUNDLED_RUNTIME_EXECUTABLES.values(),
+);
+const BUNDLED_RUNTIME_PATHS = new Set([
+  ...BUNDLED_RUNTIME_SHARED_PATHS,
+  ...BUNDLED_RUNTIME_EXECUTABLE_PATHS,
+]);
+const BUNDLED_MANIFEST_SCHEMA_VERSION = 2;
 const BUNDLED_RUNTIME_FILE_COUNT = 16;
 const EVENT_ENTRY_RE = /^[0-9a-f-]{36}\.event\.json$/i;
 const ARTIFACT_ENTRY_RE = /^revision-\d{6}-cda_[0-9a-f-]+-[0-9a-f]{64}\.json$/;
@@ -148,7 +185,11 @@ function safeHome(value) {
   return resolve(value);
 }
 
-export function captureAgentPaths({ env = process.env, homeDir = homedir() } = {}) {
+export function captureAgentPaths({
+  env = process.env,
+  homeDir = homedir(),
+  platform = process.platform,
+} = {}) {
   const resolvedHome = safeHome(homeDir);
   const configured = env.COREDOC_HOME?.trim();
   const coredocHome = configured ? safeHome(configured) : join(resolvedHome, ".coredoc");
@@ -169,18 +210,7 @@ export function captureAgentPaths({ env = process.env, homeDir = homedir() } = {
     relayRoot: join(agentRoot, "capture-relay"),
     relayConfigPath: join(agentRoot, "capture-relay", "relay.json"),
     desktopRelayRoot: join(coredocHome, "capture-relay"),
-    launchAgentPath: join(
-      resolvedHome,
-      "Library",
-      "LaunchAgents",
-      `${CAPTURE_AGENT_LABEL}.plist`,
-    ),
-    desktopLaunchAgentPath: join(
-      resolvedHome,
-      "Library",
-      "LaunchAgents",
-      `${DESKTOP_CAPTURE_AGENT_LABEL}.plist`,
-    ),
+    ...captureAgentSupervisor(platform).servicePaths(resolvedHome, env),
   };
 }
 
@@ -220,9 +250,11 @@ function validateManifest(value) {
   if (
     new Set(files.map(({ path }) => path)).size !== files.length ||
     !files.some(({ path }) => path === candidate.entry) ||
-    [...BUNDLED_RUNTIME_PATHS].some(
+    [...BUNDLED_RUNTIME_SHARED_PATHS].some(
       (requiredPath) => !files.some(({ path }) => path === requiredPath),
-    )
+    ) ||
+    files.filter(({ path }) => BUNDLED_RUNTIME_EXECUTABLE_PATHS.has(path))
+      .length !== 1
   ) {
     fail("INVALID_RUNTIME_MANIFEST");
   }
@@ -310,17 +342,72 @@ function normalizeRuntimeBundle(value) {
   };
 }
 
-export function loadRuntimeBundle({ pluginRoot } = {}) {
+export function captureAgentPlatformKey({
+  platform = process.platform,
+  arch = process.arch,
+} = {}) {
+  const key = `${platform}-${arch}`;
+  if (!BUNDLED_RUNTIME_EXECUTABLES.has(key)) fail("UNSUPPORTED_PLATFORM");
+  return key;
+}
+
+// The bundled manifest carries every supported host; installing resolves it to
+// the single-platform manifest that the rest of the lifecycle already speaks.
+function resolveBundledManifest(value, platformKey) {
+  const candidate = exactObject(
+    value,
+    new Set(["schemaVersion", "entry", "shared", "platforms"]),
+    "INVALID_RUNTIME_MANIFEST",
+  );
+  const platforms = candidate.platforms;
+  if (
+    candidate.schemaVersion !== BUNDLED_MANIFEST_SCHEMA_VERSION ||
+    !Array.isArray(candidate.shared) ||
+    !platforms ||
+    typeof platforms !== "object" ||
+    Array.isArray(platforms) ||
+    Object.keys(platforms).length === 0 ||
+    Object.keys(platforms).some((key) => !BUNDLED_RUNTIME_EXECUTABLES.has(key))
+  ) {
+    fail("INVALID_RUNTIME_MANIFEST");
+  }
+  if (!Object.hasOwn(platforms, platformKey)) fail("UNSUPPORTED_PLATFORM");
+  const executable = exactObject(
+    platforms[platformKey],
+    new Set(["sha256"]),
+    "INVALID_RUNTIME_MANIFEST",
+  );
+  return validateManifest({
+    schemaVersion: 1,
+    entry: candidate.entry,
+    files: [
+      ...candidate.shared,
+      {
+        path: BUNDLED_RUNTIME_EXECUTABLES.get(platformKey),
+        sha256: executable.sha256,
+      },
+    ],
+  });
+}
+
+export function loadRuntimeBundle({ pluginRoot, platformKey } = {}) {
   if (typeof pluginRoot !== "string" || !isAbsolute(pluginRoot)) {
     fail("INVALID_RUNTIME_MANIFEST");
   }
+  if (
+    typeof platformKey !== "string" ||
+    !BUNDLED_RUNTIME_EXECUTABLES.has(platformKey)
+  ) {
+    fail("UNSUPPORTED_PLATFORM");
+  }
   const root = resolve(pluginRoot);
-  const manifest = validateManifest(
+  const manifest = resolveBundledManifest(
     readBoundedJson(
       join(root, "runtime", "capture-agent-manifest.json"),
       MAX_MANIFEST_BYTES,
       "INVALID_RUNTIME_MANIFEST",
     ),
+    platformKey,
   );
   const packageJson = readBoundedJson(
     join(root, "package.json"),
@@ -335,11 +422,24 @@ export function loadRuntimeBundle({ pluginRoot } = {}) {
   });
 }
 
-function ensureDirectory(path, mode = 0o700) {
+// "private" is the plugin's own rule for everything it owns. "private-group"
+// exists for one directory the plugin does not own, ~/.config/systemd/user: a
+// Linux user-private-group umask (002) leaves it 0775, which systemd itself
+// treats as owner-only because the group has a single member.
+function ensureDirectory(path, mode = 0o700, policy = "private") {
   if (existsSync(path)) {
     const metadata = lstatSync(path);
     if (!metadata.isDirectory() || metadata.isSymbolicLink()) fail("UNSAFE_STATE");
-    if ((metadata.mode & 0o022) !== 0) fail("UNSAFE_STATE");
+    if ((metadata.mode & 0o002) !== 0) fail("UNSAFE_STATE");
+    if ((metadata.mode & 0o020) !== 0) {
+      const ownGroup =
+        policy === "private-group" &&
+        typeof process.getuid === "function" &&
+        typeof process.getgid === "function" &&
+        metadata.uid === process.getuid() &&
+        metadata.gid === process.getgid();
+      if (!ownGroup) fail("UNSAFE_STATE");
+    }
     return;
   }
   mkdirSync(path, { recursive: true, mode });
@@ -359,8 +459,8 @@ function readOptional(path) {
   }
 }
 
-function atomicWrite(path, content, mode = 0o600) {
-  ensureDirectory(dirname(path));
+function atomicWrite(path, content, mode = 0o600, directoryPolicy = "private") {
+  ensureDirectory(dirname(path), 0o700, directoryPolicy);
   if (existsSync(path) && lstatSync(path).isSymbolicLink()) fail("UNSAFE_STATE");
   const temporary = join(
     dirname(path),
@@ -468,10 +568,8 @@ function publicRuntime(record) {
 }
 
 function runtimeFileMode(path) {
-  return new Set([
-    BUNDLED_RUNTIME_EXECUTABLE_PATH,
-    BUNDLED_RUNTIME_RUNNER_PATH,
-  ]).has(path)
+  return path === BUNDLED_RUNTIME_RUNNER_PATH ||
+    BUNDLED_RUNTIME_EXECUTABLE_PATHS.has(path)
     ? 0o555
     : 0o444;
 }
@@ -735,53 +833,360 @@ ${argumentsList.map((value) => `    <string>${xml(value)}</string>`).join("\n")}
 `;
 }
 
-function plistOwnership(content, { label, marker, ownership }) {
-  if (content === undefined) return "absent";
-  const exactLabel = content.includes(
-    `<key>Label</key><string>${label}</string>`,
-  ) ||
-    content.includes(
-      `<key>Label</key>\n  <string>${label}</string>`,
-    );
-  if (!exactLabel) return "foreign";
-  const expectedMarker = content.includes(marker);
-  const otherMarker = content.includes(
-    marker === PLUGIN_LAUNCH_AGENT_MARKER
-      ? DESKTOP_LAUNCH_AGENT_MARKER
-      : PLUGIN_LAUNCH_AGENT_MARKER,
+// systemd expands `%` specifiers and `${VAR}` references (even inside double
+// quotes) before argument splitting and rejects control characters, so an
+// installation path has to survive all three passes verbatim.
+function systemdLiteral(value) {
+  if (/[\u0000-\u001f\u007f]/.test(value)) fail("UNSAFE_STATE");
+  return value.replaceAll("%", "%%").replaceAll("$", "$$$$");
+}
+
+function systemdArgument(value) {
+  return `"${systemdLiteral(value)
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')}"`;
+}
+
+export function buildCaptureAgentSystemdUnit({
+  runtimeExecutablePath,
+  entryPath,
+  configPath,
+  statePath,
+  runtimeVersion,
+  runtimeDigest,
+} = {}) {
+  for (const value of [runtimeExecutablePath, entryPath, configPath, statePath]) {
+    if (typeof value !== "string" || !isAbsolute(value)) fail("UNSAFE_STATE");
+  }
+  if (!VERSION_RE.test(runtimeVersion) || !SHA256_RE.test(runtimeDigest)) {
+    fail("UNSAFE_STATE");
+  }
+  const command = [
+    runtimeExecutablePath,
+    entryPath,
+    "serve",
+    "--config",
+    configPath,
+    "--agent-state",
+    statePath,
+    "--runtime-version",
+    runtimeVersion,
+    "--runtime-digest",
+    runtimeDigest,
+  ]
+    .map(systemdArgument)
+    .join(" ");
+  // StartLimitIntervalSec=0 gives launchd KeepAlive semantics: the default
+  // 5-starts-per-10s limit would park a briefly crash-looping relay in `failed`
+  // for good, with nothing left to restart it. RestartSec matches launchd's
+  // 10 s throttle, and TimeoutStopSec stays below the 10 s the lifecycle grants
+  // a synchronous `systemctl stop`; the outboxes are durable, so a relay killed
+  // mid-drain loses nothing.
+  return `${PLUGIN_SYSTEMD_UNIT_MARKER}
+# Unit: ${CAPTURE_AGENT_UNIT}
+[Unit]
+Description=Coredoc capture relay
+After=default.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=${command}
+Restart=always
+RestartSec=10
+TimeoutStopSec=8
+KillMode=mixed
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+function launchDomain(uid) {
+  return `gui/${uid}`;
+}
+
+function launchService(uid, label = CAPTURE_AGENT_LABEL) {
+  return `${launchDomain(uid)}/${label}`;
+}
+
+function launchctlServiceNotFound(error, uid, label) {
+  return (
+    error?.code === 113 &&
+    typeof error.stderr === "string" &&
+    error.stderr.includes(
+      `Could not find service "${label}" in domain for user gui: ${uid}`,
+    )
   );
-  return expectedMarker && !otherMarker ? ownership : "foreign";
 }
 
-function launchAgentOwnership(paths) {
-  const content = readOptional(paths.launchAgentPath);
-  const desktopContent = readOptional(paths.desktopLaunchAgentPath);
-  const ownership = plistOwnership(content, {
-    label: CAPTURE_AGENT_LABEL,
-    marker: PLUGIN_LAUNCH_AGENT_MARKER,
-    ownership: "plugin-v1",
-  });
-  const desktopOwnership = plistOwnership(desktopContent, {
-    label: DESKTOP_CAPTURE_AGENT_LABEL,
-    marker: DESKTOP_LAUNCH_AGENT_MARKER,
-    ownership: "desktop-v1",
-  });
-  return { content, desktopContent, ownership, desktopOwnership };
+function wantsLinkPath(paths) {
+  return join(
+    dirname(paths.servicePath),
+    "default.target.wants",
+    CAPTURE_AGENT_UNIT,
+  );
 }
 
-function assertLaunchAgentPlistMatches(paths, expectedContents) {
-  const current = readOptional(paths.launchAgentPath);
+function removeOwnedWantsLink(paths) {
+  const link = wantsLinkPath(paths);
+  let metadata;
+  try {
+    metadata = lstatSync(link);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    fail("UNSAFE_STATE");
+  }
+  if (!metadata.isSymbolicLink() || readlinkSync(link) !== paths.servicePath) {
+    fail("OWNERSHIP_CONFLICT");
+  }
+  unlinkSync(link);
+}
+
+const LAUNCHD_SUPERVISOR = {
+  directoryPolicy: "private",
+  marker: PLUGIN_LAUNCH_AGENT_MARKER,
+  legacyMarker: DESKTOP_LAUNCH_AGENT_MARKER,
+  legacyLabel: DESKTOP_CAPTURE_AGENT_LABEL,
+  buildDefinition: buildCaptureAgentLaunchAgentPlist,
+  servicePaths(homeDir) {
+    return {
+      servicePath: join(
+        homeDir,
+        "Library",
+        "LaunchAgents",
+        `${CAPTURE_AGENT_LABEL}.plist`,
+      ),
+      legacyServicePath: join(
+        homeDir,
+        "Library",
+        "LaunchAgents",
+        `${DESKTOP_CAPTURE_AGENT_LABEL}.plist`,
+      ),
+    };
+  },
+  declaresLabel(content, label) {
+    return (
+      content.includes(`<key>Label</key><string>${label}</string>`) ||
+      content.includes(`<key>Label</key>\n  <string>${label}</string>`)
+    );
+  },
+  async start({ paths, uid, runCommand }) {
+    await runCommand("/bin/launchctl", [
+      "bootstrap",
+      launchDomain(uid),
+      paths.servicePath,
+    ]);
+  },
+  async stop({ uid, runCommand }) {
+    try {
+      await runCommand("/bin/launchctl", ["bootout", launchService(uid)]);
+      return;
+    } catch {
+      try {
+        await runCommand("/bin/launchctl", ["print", launchService(uid)]);
+      } catch (error) {
+        if (launchctlServiceNotFound(error, uid, CAPTURE_AGENT_LABEL)) return;
+        fail("SUPERVISOR_UNAVAILABLE");
+      }
+      fail("SUPERVISOR_UNAVAILABLE");
+    }
+  },
+  async forget() {
+    // launchd forgets a booted-out service immediately.
+  },
+  async isLoaded({ uid, runCommand, label }) {
+    try {
+      await runCommand("/bin/launchctl", ["print", launchService(uid, label)]);
+      return true;
+    } catch (error) {
+      if (launchctlServiceNotFound(error, uid, label)) return false;
+      fail("SUPERVISOR_UNAVAILABLE");
+    }
+  },
+};
+
+const SYSTEMD_SUPERVISOR = {
+  directoryPolicy: "private-group",
+  marker: PLUGIN_SYSTEMD_UNIT_MARKER,
+  legacyMarker: null,
+  legacyLabel: null,
+  buildDefinition: buildCaptureAgentSystemdUnit,
+  servicePaths(homeDir, env = {}) {
+    // systemd.unit(5): the user manager reads $XDG_CONFIG_HOME/systemd/user in
+    // place of ~/.config/systemd/user whenever that variable is set.
+    const configured = env.XDG_CONFIG_HOME?.trim();
+    const configHome =
+      configured && isAbsolute(configured)
+        ? resolve(configured)
+        : join(homeDir, ".config");
+    return {
+      servicePath: join(configHome, "systemd", "user", CAPTURE_AGENT_UNIT),
+      legacyServicePath: null,
+    };
+  },
+  declaresLabel(content, label) {
+    return content.includes(`\n# Unit: ${label}${SYSTEMD_UNIT_SUFFIX}\n`);
+  },
+  async start({ runCommand }) {
+    // A rewritten unit file stays invisible to the user manager until it
+    // reloads, so every activation reloads before enabling.
+    await runCommand(SYSTEMCTL, ["--user", "daemon-reload"]);
+    await runCommand(SYSTEMCTL, ["--user", "enable", "--now", CAPTURE_AGENT_UNIT]);
+  },
+  async stop({ paths, uid, runCommand }) {
+    // A loaded unit outlives its file until the next reload, and `stop` exits
+    // 5 for a unit that is not loaded, so each step is gated on what systemd
+    // and the disk actually hold rather than on one another.
+    const running = await this.isLoaded({
+      paths,
+      uid,
+      runCommand,
+      label: CAPTURE_AGENT_LABEL,
+    });
+    try {
+      if (running) {
+        await runCommand(SYSTEMCTL, ["--user", "stop", CAPTURE_AGENT_UNIT]);
+      }
+      if (readOptional(paths.servicePath) !== undefined) {
+        await runCommand(SYSTEMCTL, ["--user", "disable", CAPTURE_AGENT_UNIT]);
+      } else {
+        // `enable` left this behind and `disable` cannot run without the unit
+        // file; a dangling entry makes every login log a failed unit load.
+        removeOwnedWantsLink(paths);
+      }
+    } catch (error) {
+      if (error instanceof CaptureAgentLifecycleError) throw error;
+      fail("SUPERVISOR_UNAVAILABLE");
+    }
+  },
+  async forget({ runCommand }) {
+    // The manager keeps a removed unit loaded until it reloads. Nothing of
+    // ours is left to protect at this point, so a failed reload is not fatal.
+    try {
+      await runCommand(SYSTEMCTL, ["--user", "daemon-reload"]);
+    } catch {
+      // Best effort: the unit file is already gone.
+    }
+  },
+  async isLoaded({ runCommand, label }) {
+    if (label !== CAPTURE_AGENT_LABEL) fail("SUPERVISOR_UNAVAILABLE");
+    let output;
+    try {
+      output = await runCommand(SYSTEMCTL, [
+        "--user",
+        "show",
+        CAPTURE_AGENT_UNIT,
+        "--property=ActiveState",
+        "--value",
+      ]);
+    } catch {
+      fail("SUPERVISOR_UNAVAILABLE");
+    }
+    if (typeof output !== "string") fail("SUPERVISOR_UNAVAILABLE");
+    const state = output.trim();
+    if (!SYSTEMD_ACTIVE_STATES.has(state)) fail("SUPERVISOR_UNAVAILABLE");
+    return SYSTEMD_RUNNING_STATES.has(state);
+  },
+};
+
+const CAPTURE_AGENT_SUPERVISORS = new Map([
+  ["darwin", LAUNCHD_SUPERVISOR],
+  ["linux", SYSTEMD_SUPERVISOR],
+]);
+
+function captureAgentSupervisor(platform) {
+  const supervisor = CAPTURE_AGENT_SUPERVISORS.get(platform);
+  if (supervisor === undefined) fail("UNSUPPORTED_PLATFORM");
+  return supervisor;
+}
+
+function definitionOwnership(
+  content,
+  { supervisor, label, marker, otherMarker, ownership },
+) {
+  if (content === undefined) return "absent";
+  if (!supervisor.declaresLabel(content, label)) return "foreign";
+  const expectedMarker = content.includes(marker);
+  const conflictingMarker =
+    otherMarker !== null && content.includes(otherMarker);
+  return expectedMarker && !conflictingMarker ? ownership : "foreign";
+}
+
+// Only macOS ever had a Desktop-managed relay, so a host without that namespace
+// reads as permanently absent rather than as an unreadable path.
+function readLegacyDefinition(paths) {
+  return paths.legacyServicePath === null
+    ? undefined
+    : readOptional(paths.legacyServicePath);
+}
+
+function serviceOwnership(paths, supervisor) {
+  const content = readOptional(paths.servicePath);
+  const legacyContent = readLegacyDefinition(paths);
+  return {
+    content,
+    legacyContent,
+    ownership: definitionOwnership(content, {
+      supervisor,
+      label: CAPTURE_AGENT_LABEL,
+      marker: supervisor.marker,
+      otherMarker: supervisor.legacyMarker,
+      ownership: "plugin-v1",
+    }),
+    legacyOwnership: definitionOwnership(legacyContent, {
+      supervisor,
+      label: supervisor.legacyLabel,
+      marker: supervisor.legacyMarker,
+      otherMarker: supervisor.marker,
+      ownership: "desktop-v1",
+    }),
+  };
+}
+
+function assertServiceDefinitionMatches(paths, expectedContents) {
+  const current = readOptional(paths.servicePath);
   if (!expectedContents.some((expected) => current === expected)) {
     fail("OWNERSHIP_CONFLICT");
   }
   return current;
 }
 
-function defaultRunCommand(executable, args) {
+function ownedRuntimeDirectory(path, uid) {
+  try {
+    const metadata = lstatSync(path);
+    return metadata.isDirectory() && !metadata.isSymbolicLink() && metadata.uid === uid;
+  } catch {
+    return false;
+  }
+}
+
+export function supervisorEnvironment(
+  env,
+  { uid, runtimeDirectoryFor = (id) => `/run/user/${id}` } = {},
+) {
+  const forwarded = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
+  for (const name of SUPERVISOR_ENVIRONMENT) {
+    const value = env[name];
+    if (typeof value !== "string" || value.length === 0) continue;
+    if (name === "XDG_RUNTIME_DIR" && !isAbsolute(value)) continue;
+    forwarded[name] = value;
+  }
+  // A shell reached through su, tmux, or a bare SSH session can lack the
+  // variable while the user manager is up; /run/user/<uid> is what systemd
+  // itself assumes in that case.
+  if (forwarded.XDG_RUNTIME_DIR === undefined && Number.isInteger(uid) && uid >= 0) {
+    const fallback = runtimeDirectoryFor(uid);
+    if (ownedRuntimeDirectory(fallback, uid)) forwarded.XDG_RUNTIME_DIR = fallback;
+  }
+  return forwarded;
+}
+
+function defaultRunCommand(executable, args, { env, uid }) {
   return execFileAsync(executable, args, {
     timeout: 10_000,
-    env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" },
-  }).then(() => undefined);
+    env: supervisorEnvironment(env, { uid }),
+  }).then(({ stdout }) => stdout);
 }
 
 async function defaultProbeListener() {
@@ -910,10 +1315,6 @@ async function defaultProbeHealth(expected) {
   }
 }
 
-function validateEnvironment({ platform }) {
-  if (platform !== "darwin") fail("UNSUPPORTED_PLATFORM");
-}
-
 function sameLockIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
@@ -1027,7 +1428,19 @@ function writeRuntimeLinks(paths, state) {
   atomicLink(paths.currentPath, state.current);
 }
 
-function validateInstalledState(paths, state) {
+// A home directory shared between hosts (NFS, dual boot) can present another
+// platform's install as ours; its runner would then exit 70 in a restart loop.
+function assertHostRuntime(record, platformKey) {
+  if (record === null) return;
+  const executable = BUNDLED_RUNTIME_EXECUTABLES.get(platformKey);
+  if (!record.files.some(({ path }) => path === executable)) {
+    fail("UNSUPPORTED_PLATFORM");
+  }
+}
+
+function validateInstalledState(paths, state, platformKey) {
+  assertHostRuntime(state.current, platformKey);
+  assertHostRuntime(state.previous, platformKey);
   verifyInstalledRuntime(installedDirectory(paths, state.current), state.current);
   assertLink(paths.currentPath, state.current);
   if (state.previous === null) {
@@ -1038,7 +1451,9 @@ function validateInstalledState(paths, state) {
   }
 }
 
-function validatePartiallyUninstalledState(paths, state) {
+function validatePartiallyUninstalledState(paths, state, platformKey) {
+  assertHostRuntime(state.current, platformKey);
+  assertHostRuntime(state.previous, platformKey);
   for (const record of [state.current, state.previous]) {
     if (record === null) continue;
     const directory = installedDirectory(paths, record);
@@ -1113,72 +1528,30 @@ function lifecyclePurgeProof(value) {
   return { ...candidate };
 }
 
-function launchService(uid, label = CAPTURE_AGENT_LABEL) {
-  return `gui/${uid}/${label}`;
-}
-
-function launchDomain(uid) {
-  return `gui/${uid}`;
-}
-
-async function bootstrapLaunchAgent({ paths, uid, runCommand, wait }) {
+// One retry after a short pause is lifecycle policy, not a supervisor detail:
+// both launchd and systemd occasionally reject an activation that lands in the
+// same instant as the previous teardown.
+async function startService({ paths, supervisor, uid, runCommand, wait }) {
   try {
-    await runCommand("/bin/launchctl", [
-      "bootstrap",
-      launchDomain(uid),
-      paths.launchAgentPath,
-    ]);
+    await supervisor.start({ paths, uid, runCommand });
   } catch {
-    await wait(100);
+    await wait(SERVICE_START_RETRY_DELAY_MS);
     try {
-      await runCommand("/bin/launchctl", [
-        "bootstrap",
-        launchDomain(uid),
-        paths.launchAgentPath,
-      ]);
+      await supervisor.start({ paths, uid, runCommand });
     } catch {
       fail("SUPERVISOR_UNAVAILABLE");
     }
   }
 }
 
-function launchctlServiceNotFound(error, uid, label = CAPTURE_AGENT_LABEL) {
-  return (
-    error?.code === 113 &&
-    typeof error.stderr === "string" &&
-    error.stderr.includes(
-      `Could not find service "${label}" in domain for user gui: ${uid}`,
-    )
-  );
-}
-
-async function stopLaunchAgent({ uid, runCommand }) {
-  try {
-    await runCommand("/bin/launchctl", ["bootout", launchService(uid)]);
-    return;
-  } catch {
-    try {
-      await runCommand("/bin/launchctl", ["print", launchService(uid)]);
-    } catch (error) {
-      if (launchctlServiceNotFound(error, uid)) return;
-      fail("SUPERVISOR_UNAVAILABLE");
-    }
-    fail("SUPERVISOR_UNAVAILABLE");
-  }
-}
-
-async function isLaunchAgentLoaded({
+async function isServiceLoaded({
+  paths,
+  supervisor,
   uid,
   runCommand,
   label = CAPTURE_AGENT_LABEL,
 }) {
-  try {
-    await runCommand("/bin/launchctl", ["print", launchService(uid, label)]);
-    return true;
-  } catch (error) {
-    if (launchctlServiceNotFound(error, uid, label)) return false;
-    fail("SUPERVISOR_UNAVAILABLE");
-  }
+  return supervisor.isLoaded({ paths, uid, runCommand, label });
 }
 
 async function waitForListenerDown({ probeListener, wait }) {
@@ -1195,6 +1568,7 @@ async function waitForListenerDown({ probeListener, wait }) {
 
 async function waitForPluginStop({
   paths,
+  supervisor,
   uid,
   runCommand,
   probeListener,
@@ -1209,13 +1583,15 @@ async function waitForPluginStop({
     if (attempt + 1 < 20) await wait(100);
   }
 
-  const { ownership, desktopOwnership } = launchAgentOwnership(paths);
-  if (ownership !== "plugin-v1" || desktopOwnership !== "desktop-v1") {
+  const { ownership, legacyOwnership } = serviceOwnership(paths, supervisor);
+  if (ownership !== "plugin-v1" || legacyOwnership !== "desktop-v1") {
     fail("SUPERVISOR_UNAVAILABLE");
   }
   if (
-    await isLaunchAgentLoaded({ uid, runCommand }) ||
-    !(await isLaunchAgentLoaded({
+    await isServiceLoaded({ paths, supervisor, uid, runCommand }) ||
+    !(await isServiceLoaded({
+      paths,
+      supervisor,
       uid,
       runCommand,
       label: DESKTOP_CAPTURE_AGENT_LABEL,
@@ -1225,9 +1601,9 @@ async function waitForPluginStop({
   }
 }
 
-function desiredPlist({ paths, state }) {
+function desiredDefinition({ paths, supervisor, state }) {
   const installed = installedDirectory(paths, state.current);
-  return buildCaptureAgentLaunchAgentPlist({
+  return supervisor.buildDefinition({
     runtimeExecutablePath: installedRuntimeExecutable(installed),
     entryPath: join(installed, state.current.entry),
     configPath: paths.relayConfigPath,
@@ -1239,46 +1615,49 @@ function desiredPlist({ paths, state }) {
 
 async function installAndStart({
   paths,
+  supervisor,
   uid,
   runCommand,
   wait,
-  plist,
-  oldPlist,
+  definition,
+  oldDefinition,
 }) {
-  assertLaunchAgentPlistMatches(paths, [oldPlist]);
-  if (oldPlist !== undefined) {
-    await stopLaunchAgent({ uid, runCommand });
-    assertLaunchAgentPlistMatches(paths, [oldPlist]);
+  assertServiceDefinitionMatches(paths, [oldDefinition]);
+  if (oldDefinition !== undefined) {
+    await supervisor.stop({ paths, uid, runCommand });
+    assertServiceDefinitionMatches(paths, [oldDefinition]);
   }
-  atomicWrite(paths.launchAgentPath, plist, 0o600);
-  assertLaunchAgentPlistMatches(paths, [plist]);
-  await bootstrapLaunchAgent({ paths, uid, runCommand, wait });
-  assertLaunchAgentPlistMatches(paths, [plist]);
+  atomicWrite(paths.servicePath, definition, 0o600, supervisor.directoryPolicy);
+  assertServiceDefinitionMatches(paths, [definition]);
+  await startService({ paths, supervisor, uid, runCommand, wait });
+  assertServiceDefinitionMatches(paths, [definition]);
 }
 
 async function installWithoutStart({
   paths,
+  supervisor,
   uid,
   runCommand,
   wait,
   probeListener,
-  plist,
-  oldPlist,
+  definition,
+  oldDefinition,
 }) {
-  assertLaunchAgentPlistMatches(paths, [oldPlist]);
-  await stopLaunchAgent({ uid, runCommand });
-  assertLaunchAgentPlistMatches(paths, [oldPlist]);
+  assertServiceDefinitionMatches(paths, [oldDefinition]);
+  await supervisor.stop({ paths, uid, runCommand });
+  assertServiceDefinitionMatches(paths, [oldDefinition]);
   await waitForPluginStop({
     paths,
+    supervisor,
     uid,
     runCommand,
     probeListener,
     wait,
   });
-  assertLaunchAgentPlistMatches(paths, [oldPlist]);
-  atomicWrite(paths.launchAgentPath, plist, 0o600);
-  assertLaunchAgentPlistMatches(paths, [plist]);
-  if (await isLaunchAgentLoaded({ uid, runCommand })) {
+  assertServiceDefinitionMatches(paths, [oldDefinition]);
+  atomicWrite(paths.servicePath, definition, 0o600, supervisor.directoryPolicy);
+  assertServiceDefinitionMatches(paths, [definition]);
+  if (await isServiceLoaded({ paths, supervisor, uid, runCommand })) {
     fail("SUPERVISOR_UNAVAILABLE");
   }
 }
@@ -1334,9 +1713,10 @@ function healthDiagnosticState(value) {
 
 async function restoreSnapshot({
   paths,
-  oldPlist,
+  supervisor,
+  oldDefinition,
   oldLoaded,
-  transactionPlist,
+  transactionDefinition,
   oldStateRaw,
   oldState,
   uid,
@@ -1346,18 +1726,19 @@ async function restoreSnapshot({
   probeListener,
 }) {
   try {
-    const transactionPlists = [oldPlist, transactionPlist];
-    assertLaunchAgentPlistMatches(paths, transactionPlists);
-    await stopLaunchAgent({ uid, runCommand });
-    assertLaunchAgentPlistMatches(paths, transactionPlists);
+    const transactionDefinitions = [oldDefinition, transactionDefinition];
+    assertServiceDefinitionMatches(paths, transactionDefinitions);
+    await supervisor.stop({ paths, uid, runCommand });
+    assertServiceDefinitionMatches(paths, transactionDefinitions);
     await waitForPluginStop({
       paths,
+      supervisor,
       uid,
       runCommand,
       probeListener,
       wait,
     });
-    assertLaunchAgentPlistMatches(paths, transactionPlists);
+    assertServiceDefinitionMatches(paths, transactionDefinitions);
     if (oldState === null) {
       removeLink(paths.currentPath);
       removeLink(paths.previousPath);
@@ -1366,25 +1747,28 @@ async function restoreSnapshot({
       writeRuntimeLinks(paths, oldState);
       atomicWrite(paths.statePath, oldStateRaw, 0o600);
     }
-    if (oldPlist === undefined) {
-      const currentPlist = assertLaunchAgentPlistMatches(
+    if (oldDefinition === undefined) {
+      const currentDefinition = assertServiceDefinitionMatches(
         paths,
-        transactionPlists,
+        transactionDefinitions,
       );
-      if (currentPlist !== undefined) unlinkSync(paths.launchAgentPath);
+      if (currentDefinition !== undefined) {
+        unlinkSync(paths.servicePath);
+        await supervisor.forget({ runCommand });
+      }
     } else {
-      assertLaunchAgentPlistMatches(paths, transactionPlists);
-      atomicWrite(paths.launchAgentPath, oldPlist, 0o600);
-      assertLaunchAgentPlistMatches(paths, [oldPlist]);
+      assertServiceDefinitionMatches(paths, transactionDefinitions);
+      atomicWrite(paths.servicePath, oldDefinition, 0o600, supervisor.directoryPolicy);
+      assertServiceDefinitionMatches(paths, [oldDefinition]);
       if (oldLoaded) {
-        await bootstrapLaunchAgent({ paths, uid, runCommand, wait });
-        assertLaunchAgentPlistMatches(paths, [oldPlist]);
+        await startService({ paths, supervisor, uid, runCommand, wait });
+        assertServiceDefinitionMatches(paths, [oldDefinition]);
         if (oldState === null) {
           if (!(await probeListener())) fail("ROLLBACK_FAILED");
         } else {
           await verifyHealthWithRetry({ state: oldState, probeHealth, wait });
         }
-      } else if (await isLaunchAgentLoaded({ uid, runCommand })) {
+      } else if (await isServiceLoaded({ paths, supervisor, uid, runCommand })) {
         fail("ROLLBACK_FAILED");
       }
     }
@@ -1587,9 +1971,14 @@ export function createCaptureAgentLifecycle({
   homeDir = env.HOME && isAbsolute(env.HOME) ? env.HOME : homedir(),
   pluginRoot = dirname(dirname(fileURLToPath(import.meta.url))),
   platform = process.platform,
+  arch = process.arch,
   uid = typeof process.getuid === "function" ? process.getuid() : -1,
-  loadRuntimeBundle: loadBundle = () => loadRuntimeBundle({ pluginRoot }),
-  runCommand = defaultRunCommand,
+  loadRuntimeBundle: loadBundle = () =>
+    loadRuntimeBundle({
+      pluginRoot,
+      platformKey: captureAgentPlatformKey({ platform, arch }),
+    }),
+  runCommand = (executable, args) => defaultRunCommand(executable, args, { env, uid }),
   probeListener = defaultProbeListener,
   probeHealth = defaultProbeHealth,
   importSmoke = defaultImportSmoke,
@@ -1599,11 +1988,16 @@ export function createCaptureAgentLifecycle({
   wait = (milliseconds) =>
     new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds)),
 } = {}) {
-  const paths = captureAgentPaths({ env, homeDir });
+  const paths = captureAgentPaths({ env, homeDir, platform });
+  const supervisor = captureAgentSupervisor(platform);
 
   function environment() {
     if (!Number.isInteger(uid) || uid < 0) fail("SUPERVISOR_UNAVAILABLE");
-    validateEnvironment({ platform });
+    captureAgentPlatformKey({ platform, arch });
+  }
+
+  function hostPlatformKey() {
+    return captureAgentPlatformKey({ platform, arch });
   }
 
   async function withLock(operation) {
@@ -1615,29 +2009,29 @@ export function createCaptureAgentLifecycle({
     }
   }
 
-  function ownedPluginPlist() {
-    const ownership = launchAgentOwnership(paths);
+  function ownedPluginService() {
+    const ownership = serviceOwnership(paths, supervisor);
     if (ownership.ownership === "foreign") fail("OWNERSHIP_CONFLICT");
     return ownership;
   }
 
-  function activationPlists() {
-    const ownership = ownedPluginPlist();
-    if (ownership.desktopOwnership !== "absent") {
+  function activationOwnership() {
+    const ownership = ownedPluginService();
+    if (ownership.legacyOwnership !== "absent") {
       fail("OWNERSHIP_CONFLICT");
     }
     return ownership;
   }
 
-  function assertPlistMatches(expectedContents) {
-    return assertLaunchAgentPlistMatches(paths, expectedContents);
+  function assertDefinitionMatches(expectedContents) {
+    return assertServiceDefinitionMatches(paths, expectedContents);
   }
 
   async function activateBundle(action, { requireInstalled = false } = {}) {
     environment();
     return withLock(async () => {
-      const initialOwnership = activationPlists();
-      const { content: oldPlist, desktopContent: oldDesktopPlist, ownership } =
+      const initialOwnership = activationOwnership();
+      const { content: oldDefinition, legacyContent: oldLegacyDefinition, ownership } =
         initialOwnership;
       const oldState = readAgentState(paths.statePath, { optional: true });
       if (requireInstalled && oldState === null) fail("NOT_INSTALLED");
@@ -1649,14 +2043,14 @@ export function createCaptureAgentLifecycle({
       if (ownership === "absent" && (await probeListener())) {
         fail("FOREIGN_LISTENER");
       }
-      if (oldState !== null) validateInstalledState(paths, oldState);
+      if (oldState !== null) validateInstalledState(paths, oldState, hostPlatformKey());
       const oldLoaded =
         ownership === "plugin-v1"
-          ? await isLaunchAgentLoaded({ uid, runCommand })
+          ? await isServiceLoaded({ paths, supervisor, uid, runCommand })
           : false;
       const bundle = normalizeRuntimeBundle(await loadBundle());
-      assertPlistMatches([oldPlist]);
-      if (readOptional(paths.desktopLaunchAgentPath) !== oldDesktopPlist) {
+      assertDefinitionMatches([oldDefinition]);
+      if (readLegacyDefinition(paths) !== oldLegacyDefinition) {
         fail("OWNERSHIP_CONFLICT");
       }
       const staged = await stageRuntime({
@@ -1681,22 +2075,23 @@ export function createCaptureAgentLifecycle({
           : oldState?.current ?? null,
       });
       let mutated = false;
-      const plist = desiredPlist({ paths, state: nextState });
+      const definition = desiredDefinition({ paths, supervisor, state: nextState });
       try {
-        assertPlistMatches([oldPlist]);
+        assertDefinitionMatches([oldDefinition]);
         mutated = true;
         writeRuntimeLinks(paths, nextState);
         writeAgentState(paths.statePath, nextState);
         await installAndStart({
           paths,
+          supervisor,
           uid,
           runCommand,
           wait,
-          plist,
-          oldPlist,
+          definition,
+          oldDefinition,
         });
         await verifyHealthWithRetry({ state: nextState, probeHealth, wait });
-        assertPlistMatches([plist]);
+        assertDefinitionMatches([definition]);
         if (
           oldState?.previous &&
           oldState.previous.directoryName !== nextState.current.directoryName &&
@@ -1722,9 +2117,10 @@ export function createCaptureAgentLifecycle({
           try {
             await restoreSnapshot({
               paths,
-              oldPlist,
+              supervisor,
+              oldDefinition,
               oldLoaded,
-              transactionPlist: plist,
+              transactionDefinition: definition,
               oldStateRaw,
               oldState,
               uid,
@@ -1756,29 +2152,29 @@ export function createCaptureAgentLifecycle({
   async function startInstalledRuntime() {
     environment();
     return withLock(async () => {
-      const { content: plist, ownership } = activationPlists();
+      const { content: definition, ownership } = activationOwnership();
       const state = readAgentState(paths.statePath, { optional: true });
       if (state === null || ownership !== "plugin-v1") {
         fail("OWNERSHIP_CONFLICT");
       }
-      validateInstalledState(paths, state);
-      const alreadyLoaded = await isLaunchAgentLoaded({ uid, runCommand });
+      validateInstalledState(paths, state, hostPlatformKey());
+      const alreadyLoaded = await isServiceLoaded({ paths, supervisor, uid, runCommand });
       try {
         if (!alreadyLoaded) {
-          assertPlistMatches([plist]);
-          await bootstrapLaunchAgent({ paths, uid, runCommand, wait });
-          assertPlistMatches([plist]);
+          assertDefinitionMatches([definition]);
+          await startService({ paths, supervisor, uid, runCommand, wait });
+          assertDefinitionMatches([definition]);
         }
         await verifyHealthWithRetry({ state, probeHealth, wait });
-        assertPlistMatches([plist]);
+        assertDefinitionMatches([definition]);
       } catch (error) {
         if (!alreadyLoaded) {
           try {
-            assertPlistMatches([plist]);
-            await stopLaunchAgent({ uid, runCommand });
+            assertDefinitionMatches([definition]);
+            await supervisor.stop({ paths, uid, runCommand });
             await waitForListenerDown({ probeListener, wait });
           } catch {
-            // Preserve the activation error without touching a replaced plist.
+            // Preserve the activation error without touching a replaced definition.
           }
         }
         throw error;
@@ -1801,47 +2197,49 @@ export function createCaptureAgentLifecycle({
     environment();
     if (typeof start !== "boolean") fail("INVALID_ARGUMENTS");
     return withLock(async () => {
-      const { content: oldPlist, ownership } = activationPlists();
+      const { content: oldDefinition, ownership } = activationOwnership();
       if (ownership !== "plugin-v1") fail("OWNERSHIP_CONFLICT");
       const oldState = readAgentState(paths.statePath);
-      validateInstalledState(paths, oldState);
+      validateInstalledState(paths, oldState, hostPlatformKey());
       if (oldState.previous === null) fail("NO_PREVIOUS_RUNTIME");
       const oldStateRaw = readFileSync(paths.statePath, "utf8");
-      const oldLoaded = await isLaunchAgentLoaded({ uid, runCommand });
+      const oldLoaded = await isServiceLoaded({ paths, supervisor, uid, runCommand });
       const nextState = agentState({
         ...oldState,
         current: oldState.previous,
         previous: oldState.current,
       });
-      const plist = desiredPlist({ paths, state: nextState });
+      const definition = desiredDefinition({ paths, supervisor, state: nextState });
       let mutated = false;
       try {
-        assertPlistMatches([oldPlist]);
+        assertDefinitionMatches([oldDefinition]);
         mutated = true;
         writeRuntimeLinks(paths, nextState);
         writeAgentState(paths.statePath, nextState);
         if (start) {
           await installAndStart({
             paths,
+            supervisor,
             uid,
             runCommand,
             wait,
-            plist,
-            oldPlist,
+            definition,
+            oldDefinition,
           });
           await verifyHealthWithRetry({ state: nextState, probeHealth, wait });
         } else {
           await installWithoutStart({
             paths,
+            supervisor,
             uid,
             runCommand,
             wait,
             probeListener,
-            plist,
-            oldPlist,
+            definition,
+            oldDefinition,
           });
         }
-        assertPlistMatches([plist]);
+        assertDefinitionMatches([definition]);
         return {
           schemaVersion: 1,
           status: start ? "ready" : "disabled",
@@ -1854,9 +2252,10 @@ export function createCaptureAgentLifecycle({
         try {
           await restoreSnapshot({
             paths,
-            oldPlist,
+            supervisor,
+            oldDefinition,
             oldLoaded,
-            transactionPlist: plist,
+            transactionDefinition: definition,
             oldStateRaw,
             oldState,
             uid,
@@ -1880,7 +2279,7 @@ export function createCaptureAgentLifecycle({
   async function status() {
     environment();
     const state = readAgentState(paths.statePath, { optional: true });
-    const { ownership, desktopOwnership } = launchAgentOwnership(paths);
+    const { ownership, legacyOwnership } = serviceOwnership(paths, supervisor);
     const listener = (await probeListener()) ? "occupied" : "free";
     let pendingCount = 0;
     let queueState = "empty";
@@ -1903,7 +2302,7 @@ export function createCaptureAgentLifecycle({
         runtime: null,
         previousRuntime: null,
         launchAgent: ownership,
-        desktopLaunchAgent: desktopOwnership,
+        desktopLaunchAgent: legacyOwnership,
         listener,
         health: "not-installed",
         pendingCount,
@@ -1914,8 +2313,8 @@ export function createCaptureAgentLifecycle({
     let health = "ready";
     let statusValue = queueState === "empty" ? "ready" : "degraded";
     try {
-      validateInstalledState(paths, state);
-      if (ownership !== "plugin-v1" || desktopOwnership !== "absent") {
+      validateInstalledState(paths, state, hostPlatformKey());
+      if (ownership !== "plugin-v1" || legacyOwnership !== "absent") {
         fail("OWNERSHIP_CONFLICT");
       }
       const diagnostic = healthDiagnosticState(await probeHealth({
@@ -1939,7 +2338,7 @@ export function createCaptureAgentLifecycle({
       runtime: publicRuntime(state.current),
       previousRuntime: publicRuntime(state.previous),
       launchAgent: ownership,
-      desktopLaunchAgent: desktopOwnership,
+      desktopLaunchAgent: legacyOwnership,
       listener,
       health,
       pendingCount,
@@ -1951,23 +2350,24 @@ export function createCaptureAgentLifecycle({
   async function disable() {
     environment();
     return withLock(async () => {
-      const { content: plist, ownership } = ownedPluginPlist();
+      const { content: definition, ownership } = ownedPluginService();
       const state = readAgentState(paths.statePath, { optional: true });
       if (state === null || ownership !== "plugin-v1") {
         fail("OWNERSHIP_CONFLICT");
       }
-      validateInstalledState(paths, state);
-      assertPlistMatches([plist]);
-      await stopLaunchAgent({ uid, runCommand });
-      assertPlistMatches([plist]);
+      validateInstalledState(paths, state, hostPlatformKey());
+      assertDefinitionMatches([definition]);
+      await supervisor.stop({ paths, uid, runCommand });
+      assertDefinitionMatches([definition]);
       await waitForPluginStop({
         paths,
+        supervisor,
         uid,
         runCommand,
         probeListener,
         wait,
       });
-      assertPlistMatches([plist]);
+      assertDefinitionMatches([definition]);
       return {
         schemaVersion: 1,
         status: "disabled",
@@ -1979,22 +2379,22 @@ export function createCaptureAgentLifecycle({
   async function preflightDisable() {
     environment();
     return withLock(async () => {
-      const { ownership } = ownedPluginPlist();
+      const { ownership } = ownedPluginService();
       const state = readAgentState(paths.statePath, { optional: true });
       if (state === null || ownership !== "plugin-v1") {
         fail("OWNERSHIP_CONFLICT");
       }
-      validateInstalledState(paths, state);
+      validateInstalledState(paths, state, hostPlatformKey());
       return {
         schemaVersion: 1,
         status: "ready",
-        loaded: await isLaunchAgentLoaded({ uid, runCommand }),
+        loaded: await isServiceLoaded({ paths, supervisor, uid, runCommand }),
       };
     });
   }
 
   function uninstallPreflight(discardPending, purgeProof) {
-    const { content: plist, ownership } = ownedPluginPlist();
+    const { content: definition, ownership } = ownedPluginService();
     const state = readAgentState(paths.statePath, { optional: true });
     const proof = purgeProof === undefined ? null : lifecyclePurgeProof(purgeProof);
     const absent = state === null && ownership === "absent";
@@ -2005,11 +2405,11 @@ export function createCaptureAgentLifecycle({
     if (state !== null) {
       const stateRaw = readFileSync(paths.statePath, "utf8");
       if (ownership === "plugin-v1") {
-        validateInstalledState(paths, state);
+        validateInstalledState(paths, state, hostPlatformKey());
         const currentProof = {
           schemaVersion: 1,
           stateSha256: sha256(stateRaw),
-          launchAgentSha256: sha256(plist),
+          launchAgentSha256: sha256(definition),
         };
         if (
           proof !== null &&
@@ -2027,7 +2427,7 @@ export function createCaptureAgentLifecycle({
         if (proof !== null && sha256(stateRaw) !== proof.stateSha256) {
           fail("OWNERSHIP_CONFLICT");
         }
-        validatePartiallyUninstalledState(paths, state);
+        validatePartiallyUninstalledState(paths, state, hostPlatformKey());
       } else {
         fail("OWNERSHIP_CONFLICT");
       }
@@ -2036,7 +2436,7 @@ export function createCaptureAgentLifecycle({
     }
     const pending = captureStateInventory(paths).pending;
     return {
-      plist,
+      definition,
       state,
       absent,
       pending,
@@ -2057,7 +2457,7 @@ export function createCaptureAgentLifecycle({
       const plan = uninstallPreflight(discardPending, purgeProof);
       const loaded = plan.absent
         ? false
-        : await isLaunchAgentLoaded({ uid, runCommand });
+        : await isServiceLoaded({ paths, supervisor, uid, runCommand });
       return {
         schemaVersion: 1,
         status: "ready",
@@ -2076,7 +2476,7 @@ export function createCaptureAgentLifecycle({
     if (typeof discardPending !== "boolean") fail("INVALID_ARGUMENTS");
     return withLock(async () => {
       const plan = uninstallPreflight(discardPending, purgeProof);
-      const { plist, state, absent } = plan;
+      const { definition, state, absent } = plan;
       let { pending } = plan;
       if (absent) {
         if (discardPending) purgeCaptureState(paths);
@@ -2087,21 +2487,25 @@ export function createCaptureAgentLifecycle({
           discardedPending: discardPending ? pending.length : 0,
         };
       }
-      assertPlistMatches([plist]);
-      await stopLaunchAgent({ uid, runCommand });
-      assertPlistMatches([plist]);
+      assertDefinitionMatches([definition]);
+      await supervisor.stop({ paths, uid, runCommand });
+      assertDefinitionMatches([definition]);
       await waitForPluginStop({
         paths,
+        supervisor,
         uid,
         runCommand,
         probeListener,
         wait,
       });
-      assertPlistMatches([plist]);
+      assertDefinitionMatches([definition]);
       pending = pendingQueueEntries(paths);
       if (discardPending) purgeCaptureState(paths);
-      const currentPlist = assertPlistMatches([plist]);
-      if (currentPlist !== undefined) unlinkSync(paths.launchAgentPath);
+      const currentDefinition = assertDefinitionMatches([definition]);
+      if (currentDefinition !== undefined) {
+        unlinkSync(paths.servicePath);
+        await supervisor.forget({ runCommand });
+      }
       removeLink(paths.currentPath);
       removeLink(paths.previousPath);
       removeInstalledRuntime(paths, state.current, {

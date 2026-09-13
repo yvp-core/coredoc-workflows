@@ -102,6 +102,9 @@ test("catalog carries the full upstream id set at the expected tiers", () => {
     "github.server": "HIGH",
     "github.fine_grained": "HIGH",
     "gitlab.token": "HIGH",
+    "groq.key": "HIGH",
+    "tavily.key": "HIGH",
+    "notion.token": "HIGH",
     "huggingface.token": "HIGH",
     "npm.token": "HIGH",
     "digitalocean.token": "HIGH",
@@ -245,4 +248,56 @@ test("no finding echoes the full matched span", () => {
   for (const f of scanText(`key = ${secret}`)) {
     assert.ok(!f.masked.includes(secret), "a finding leaked the full span");
   }
+});
+
+test("detects Groq, Tavily and Notion credentials without leaking their values", () => {
+  const payload = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCdEfGhIjKlMn";
+  for (const [id, prefixes] of [
+    ["groq.key", ["gsk_"]],
+    ["tavily.key", ["tvly-", "tvly-dev-", "tvly-prod-"]],
+    ["notion.token", ["ntn_", "secret_"]],
+  ]) {
+    for (const prefix of prefixes) {
+      const value = prefix + payload;
+      const findings = scanText(value);
+      assert.equal(findings.find((f) => f.id === id)?.tier, "HIGH", prefix);
+      assert.ok(!JSON.stringify(findings).includes(value));
+      assert.ok(!ids(scanText(prefix + "short")).includes(id));
+    }
+  }
+});
+
+test("git transport identities are not emails, but actual mailboxes still are", () => {
+  for (const value of [
+    "git@github.com:garrytan/project.git",
+    "ssh -T git@gitlab.com",
+    "builder@forge.acme.com:team/project.git",
+    "ssh://builder@forge.acme.com/team/project.git",
+    "git+ssh://builder@forge.acme.com/team/project.git",
+    "ssh://builder@forge.acme.com:2222/team/project.git",
+    "GIT@GITHUB.COM",
+  ]) assert.ok(!ids(scanText(value)).includes("pii.email"), value);
+  for (const value of [
+    "git@gitmail.com",
+    "person@github.com",
+    "builder@forge.acme.com: please review this",
+    "see builder@forge.acme.com:\n/tmp/project.git",
+  ]) assert.ok(ids(scanText(value)).includes("pii.email"), value);
+});
+
+test("dotenv paths are not internal hostnames, but similarly named hosts still are", () => {
+  for (const value of [".env.local", "./config/.env.production.local", "`.env.staging`"]) {
+    assert.ok(!ids(scanText(value)).includes("internal.hostname"), value);
+  }
+  for (const value of ["api.local", "env.local", "config.env.local", "https://env.local/login", "service.staging"]) {
+    assert.ok(ids(scanText(value)).includes("internal.hostname"), value);
+  }
+});
+
+test("dense normalized findings retain original line numbers", () => {
+  const lines = Array.from({ length: 1500 }, (_, i) =>
+    i % 3 === 0 ? `😀 &amp; ${AWS_KEY.slice(0, 4)}​${AWS_KEY.slice(4)}` : "filler",
+  );
+  const findings = scanText(lines.join("\r\n")).filter((f) => f.id === "aws.access_key");
+  assert.deepEqual(findings.map((f) => f.line), Array.from({ length: 500 }, (_, i) => i * 3 + 1));
 });

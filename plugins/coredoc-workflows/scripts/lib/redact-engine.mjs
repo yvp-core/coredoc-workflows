@@ -1,7 +1,7 @@
 /**
  * redact-engine — PARTIAL port of the upstream `lib/redact-engine.ts` (MIT, see
  * ../../THIRD_PARTY_NOTICES.md). Two pieces only: input normalization and the
- * email allowlist.
+ * email allowlist, including Git transport identities.
  *
  * What came across, and why each is load-bearing:
  *
@@ -18,9 +18,16 @@
  *     with noise, and the catalog's own calibration note applies: a gate that
  *     cries wolf gets ignored.
  *
+ *   isSshGitRemote — `git@github.com:owner/repo.git` and
+ *     `ssh://user@host/repo.git` are transport identities, not mailboxes, and
+ *     they appear in every README and CI config. The exemption matches the
+ *     transport SHAPE (known forge host, scp-style `:path.git`, or an `ssh://`
+ *     URL) rather than exempting `git@` wholesale, so a real address on a
+ *     git-looking host still reports.
+ *
  * What deliberately did NOT come across:
- *   - `applyRedactions` / `redactFindingSpans` — this plugin persists no prompts,
- *     diffs, source or tool output, so there is nothing to rewrite.
+ *   - `applyRedactions` / `redactFindingSpans` — file scanning never rewrites
+ *     source. Bounded, opt-in question capture uses `redact-text.mjs` instead.
  *   - `toolFenceRanges` — degrades findings inside tool-output fences to WARN.
  *     That is for scanning agent transcripts; here the inputs are source files
  *     and specification artifacts.
@@ -107,4 +114,19 @@ export function emailAllowed(email, allow = new Set()) {
   if (EMAIL_ALLOW_DOMAINS.some((re) => re.test(email))) return true;
   if (EMAIL_ALLOW_LOCALPARTS.some((re) => re.test(email))) return true;
   return false;
+}
+
+const SSH_GIT_HOSTS = new Set(["github.com", "gitlab.com", "bitbucket.org", "ssh.dev.azure.com"]);
+
+// Match the transport shape; a blanket git@ exemption would hide real email.
+export function isSshGitRemote(email, text, start) {
+  const at = email.lastIndexOf("@");
+  const local = email.slice(0, at).toLowerCase();
+  const host = email.slice(at + 1).toLowerCase();
+  if (local === "git" && SSH_GIT_HOSTS.has(host)) return true;
+  const rest = text.slice(start + email.length, start + email.length + 512);
+  const scp = /^:(?!\/)([^\s'"`<>]*)/.exec(rest);
+  if (scp && /\.git\/?$/.test(scp[1])) return true;
+  const before = text.slice(Math.max(0, start - 16), start);
+  return /(?:git\+)?ssh:\/\/$/i.test(before) && /^\/[^\s'"`<>]*\.git\/?(?=$|[\s'"`<>])/.test(rest);
 }
