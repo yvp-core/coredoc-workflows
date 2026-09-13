@@ -1,5 +1,5 @@
 // Generated from @coredoc/core intent/anchor-mapping.ts. Do not hand-edit.
-// Source SHA256: b782714ec8f0e344395cf758e1f81789f0153b0a5156cbd5d53c57e5af9e048c
+// Source SHA256: 717d574754ce21d19e139800f6756b7c6e3a0e256d6a8d81be92143a08c4662e
 const BLOCK_PREFIX = 'Coredoc-Intent-Anchors: ';
 const MAX_BLOCK_BYTES = 32 * 1024;
 const MAX_BINDINGS = 50;
@@ -9,34 +9,44 @@ const SHA = /^[a-f0-9]{40}$/;
 const ALLOWED_ENVELOPE_KEYS = new Set(['schemaVersion', 'headSha', 'bindings']);
 const ALLOWED_BINDING_KEYS = new Set(['itemId', 'files', 'symbols', 'replaceNodeIds']);
 function closesFence(line, fence) {
-    const trimmed = line.trim();
+    // CommonMark fences allow at most three leading spaces (spec §4.5).
+    const trimmed = line.replace(/^ {0,3}/, '').replace(/[ \t]+$/, '');
     return trimmed.length >= fence.length && [...trimmed].every((character) => character === fence.marker);
 }
-function liveLines(body) {
+/** Markdown examples are data, never live mapping or delivery instructions. */
+export function scanPrBodyLines(body) {
     const lines = body.split(/\r?\n/);
-    const blocks = [];
-    let hasDelivery = false;
+    const liveIndexes = [];
     let fence;
     for (const [index, line] of lines.entries()) {
-        const opener = /^\s*(`{3,}|~{3,})/.exec(line);
-        if (!fence && opener) {
+        const opener = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+        const validOpener = opener && !(opener[1][0] === '`' && opener[2].includes('`'));
+        if (!fence && validOpener) {
             const run = opener[1];
             fence = { marker: run[0], length: run.length };
-            continue;
         }
-        if (fence) {
+        else if (fence) {
             if (closesFence(line, fence))
                 fence = undefined;
-            continue;
         }
-        if (line.startsWith(BLOCK_PREFIX))
-            blocks.push({ index, encoded: line.slice(BLOCK_PREFIX.length) });
-        else if (/^Coredoc-Intent-Anchors\s*:/.test(line))
-            blocks.push({ index, encoded: '__malformed_mapping_line__' });
+        else if (!/^( {4}| {0,3}\t)/.test(line))
+            liveIndexes.push(index);
+    }
+    return { lines, liveIndexes, unclosedFence: fence !== undefined };
+}
+function liveLines(body) {
+    const { lines, liveIndexes, unclosedFence } = scanPrBodyLines(body);
+    const blocks = [];
+    let hasDelivery = false;
+    for (const index of liveIndexes) {
+        const line = lines[index];
+        const block = /^\s*Coredoc-Intent-Anchors\s*:\s*(.*)$/i.exec(line);
+        if (block)
+            blocks.push({ index, encoded: block[1] });
         if (/^\s*Coredoc-Intent-Delivers\s*:/i.test(line))
             hasDelivery = true;
     }
-    return { lines, blocks, hasDelivery, unclosedFence: fence !== undefined };
+    return { lines, blocks, hasDelivery, unclosedFence };
 }
 function exactKeys(value, allowed) {
     return Object.keys(value).every((key) => allowed.has(key));
@@ -109,7 +119,7 @@ export function parseAnchorBlock(body) {
     if (live.blocks.length !== 1)
         return { kind: 'skipped', reason: 'mapping_block_invalid' };
     const encoded = live.blocks[0].encoded;
-    if (Buffer.byteLength(`${BLOCK_PREFIX}${encoded}`, 'utf8') > MAX_BLOCK_BYTES)
+    if (Buffer.byteLength(live.lines[live.blocks[0].index], 'utf8') > MAX_BLOCK_BYTES)
         return { kind: 'skipped', reason: 'mapping_block_oversized' };
     try {
         const parsed = envelope(JSON.parse(encoded));
@@ -137,8 +147,6 @@ export function upsertAnchorBlock(body, value) {
         throw new Error('Cannot update a PR body with duplicate live anchor blocks');
     const block = live.blocks[0];
     if (block) {
-        if (!live.lines[block.index]?.startsWith(BLOCK_PREFIX))
-            throw new Error('Cannot update a malformed anchor line');
         live.lines[block.index] = replacement;
     }
     else
