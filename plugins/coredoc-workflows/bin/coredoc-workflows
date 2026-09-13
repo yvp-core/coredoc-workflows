@@ -67,6 +67,7 @@ case "$command_name" in
   electron-qa) target=runtime/desktop/desktop.mjs ;;
   ensure-managed-relay) target=scripts/ensure-managed-relay.mjs ;;
   finish-run) target=scripts/finish-run.mjs ;;
+  intent-anchor-block) target=scripts/intent-anchor-block.mjs ;;
   git-delivery-preflight) target=scripts/git-delivery-preflight.mjs ;;
   managed-relay) target=scripts/managed-otel-relay.mjs ;;
   native-otel-sanitize) target=scripts/native-otel-sanitizer.mjs ;;

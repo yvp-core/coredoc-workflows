@@ -329,23 +329,50 @@ that specific gap rather than fabricate approval. The spec's `accepted` status
 alone does not authorize a new decision. Recovery does not require another
 approval for an unchanged request whose original authorization is available.
 
-**After implementation, before review.** The authorized implementation stage
-updates `.coredoc/intent-bindings.json` —
-`{ bindings: [{ itemId, files: ["<path relative to the repository root>"],
-symbols?: ["<path>#<Name>"], rationale? }] }` — for items this change implements,
-not every contextual rule in the working set. Preserve unrelated entries; remove
-or move a target when the implementation is removed or moved. Default to files;
-add symbols only when their names are known from source. This needs neither a
-local parser nor a fresh cloud graph. CI resolves the manifest after publishing
-its snapshot (`coredoc ci run` → `POST …/intent/bindings/sync`, `source: ci`). A
-candidate's binding is skipped until acceptance and reapplied on the next CI run.
-Manual anchors remain separate and require an explicit instruction.
+**After implementation, before review.** Carry the exact working set and existing
+CI anchor identities into review; do not rediscover them from scratch. For each item
+this change implements or relocates, review prepares a structured PR-scoped mapping:
+`{schemaVersion:1, headSha:"<reviewed full Git SHA>", bindings:[{itemId, files:[],
+symbols:[], replaceNodeIds:[]}]}`. No item version in this mapping; delivery trailers
+still require the refreshed accepted version. Do not map every contextual constraint.
+Prefer a few executable boundaries from source. Use `path#Name` or verified source
+spelling `path#Class.method`; choose a file explicitly when that is the meaningful
+scope. No graph IDs are invented and no local parser is needed. For move/delete,
+replaceNodeIds contains only the actual previous CI anchors from cloud context;
+other implementations and manual links remain untouched. Missing IDs are reported,
+not guessed. Empty new targets with replacements means removal of those links only.
 
-The review stage is read-only: inspect the manifest and report missing or wrong
-bindings as suggested changes in the handoff. Do not edit files, propose items,
-create anchors, or update a PR merely because a write tool is available. An
-explicit request to apply review fixes switches to the authorized implementation
-stage for those fixes.
+The review is read-only for source, KB and PR. Its structured mapping is a temporary
+handoff artifact, outside the tracked tree, carried to the next authorized PR-writing
+stage. It is not a maintained manifest or local queue. Save valid JSON (no prose/fence)
+and validate it using the bundled command below. Candidate IDs may be named, but must
+be accepted before CI apply; a skipped item is visible as incomplete, not success.
+
+The authorized PR writer preserves unrelated body content and delivery trailers:
+
+```text
+<plugin-root>/bin/coredoc-workflows intent-anchor-block --input <review-mapping.json> --body <current-pr-body.txt>
+```
+
+Capture stdout as the prepared PR body and use the normal authorized forge operation.
+The helper serializes one top-level `Coredoc-Intent-Anchors:` line, validating bounds
+and ignoring fenced examples. After creation/update, read the actual body back and run
+the same command with `--check`. Report mapping_block_missing_or_changed and repair
+within the already authorized body update if it differs. No user copy/paste or second
+KB approval is required. Delete temporary handoff files after successful readback;
+the PR body carries the operation from that point onward. On resumed work, read that
+body and current cloud anchors. This does not monitor later unrelated human body edits.
+
+CI runs the deterministic partial mapping phase after publishing its graph via
+`POST …/intent/ci-anchors/apply`; no AI call or summarize key is needed. It resolves
+locators on that published snapshot, checks current accepted authority and updates
+only explicitly named CI links. Unrelated fix-up commits need no rerun when the changed
+paths exclude mapping targets/replacements; target changes need refreshed review.
+No block/Delivers on bot/manual PRs means no_mapping. Missing block with Delivers or
+unresolved targets means incomplete, even when the graph and checkpoint progress.
+Manual anchors remain separate and require an explicit instruction.
+Manual removal of a CI anchor stays disabled until explicit manual add/restore.
+The old `.coredoc/intent-bindings.json` is not read by the standard CI flow.
 
 **Release.** Never record availability yourself: merge, pull request, graph
 publication, and ticket transitions are not triggers the agent acts on. In the

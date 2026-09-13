@@ -123,10 +123,10 @@ is not always a new test.
    that could not run. Do not claim test-first work when the chosen evidence was
    validation, compilation, search, or an existing suite. If a cloud Coredoc
    intent write capability is present, follow the implementation mapping stage in
-   `<plugin-root>/resources/methodology/intent-context.md`: update
-   `.coredoc/intent-bindings.json` for items this change implements, preserving
-   unrelated bindings. CI resolves files against its new snapshot; local graph
-   publication and manual anchor approval are not prerequisites. Include the PR
+   `<plugin-root>/resources/methodology/intent-context.md`: carry exact IDs, existing CI anchors and source locators into the review
+   handoff for items this change implements or relocates. PR-writing serializes
+   Coredoc-Intent-Anchors; no maintained manifest, local graph publication or
+   manual anchor approval is required. Include the PR
    trailer block in the handoff. When the user also authorized PR creation or a
    PR body update, that authorized writer applies the block using the same
    methodology's Release instructions. Otherwise carry it to the next authorized

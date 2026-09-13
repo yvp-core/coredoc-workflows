@@ -258,25 +258,13 @@ test("the review adapter hands over the PR trailer block", async () => {
   assert.match(review, /Coredoc-Intent-Delivers/);
   assert.match(review, phrase("next authorized PR-writing stage"));
   assert.match(review, phrase("does not authorize a PR body update"));
-  assert.match(review, phrase("do not write the manifest"));
+  assert.match(review, phrase("do not execute anchors"));
   assert.doesNotMatch(review, phrase("write the block into the PR body yourself"));
 
   const body = await readFile(METHODOLOGY_PATH, "utf8");
   assert.match(body, /`Coredoc-Intent-Delivers:`/);
   assert.match(body, /`Coredoc-Intent-Retires:`/);
   assert.match(body, phrase("gh api -X PATCH"));
-});
-
-// Anchors at CI come from a manifest the write stage leaves in the tree, so the
-// path has to be named where the stage is defined and where the stages run.
-test("the write stage names the bindings manifest", async () => {
-  const body = await readFile(METHODOLOGY_PATH, "utf8");
-  assert.match(body, /`\.coredoc\/intent-bindings\.json`/);
-  assert.match(body, /intent\/bindings\/sync/);
-
-  for (const name of ["coredoc-implement", "coredoc-review"]) {
-    assert.match(await skill(name), /\.coredoc\/intent-bindings\.json/, name);
-  }
 });
 
 // The spec-acceptance moment is the one place an adapter may accept, and only

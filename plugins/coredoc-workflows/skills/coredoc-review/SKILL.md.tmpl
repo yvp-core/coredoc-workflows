@@ -186,9 +186,11 @@ When intent context was used, add a **Reviewed intent** block: the rules that
 influenced the implementation; the rules retrieved and judged not applicable,
 each with its reason; rules newly discovered against the diff; anchors the change
 touches whose status is not `matched`; and any truncation seen. Include suggested
-changes to `.coredoc/intent-bindings.json` when the implementation mapping is
-missing or wrong. Review is read-only: report the suggested diff in the handoff;
-do not write the manifest or execute anchors.
+PR-scoped Coredoc-Intent-Anchors locators and explicit replacements when
+implementation mapping changes. Carry the exact working set; do not rediscover
+IDs or guess node IDs. Save the structured temporary handoff and validate with
+the bundled intent-anchor-block command before passing it to PR-writing.
+Review remains read-only for source, KB and PR; do not execute anchors.
 With a cloud Coredoc intent write capability present, close that block with a
 fenced `text` block of PR trailers: `Coredoc-Intent-Delivers:` lists the ACCEPTED
 items this change implements and `Coredoc-Intent-Retires:` the accepted items the
@@ -231,4 +233,4 @@ tree or public contract changed. Do not commit.
 
 Manual anchor changes require a separate explicit request naming the item and
 node. Do not add a routine anchor-approval questionnaire to review; CI resolves
-the reviewed bindings manifest after graph publication.
+the reviewed PR mapping block after graph publication.
