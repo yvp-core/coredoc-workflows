@@ -67,3 +67,29 @@ Read these six policy dimensions. A repository may set any or all of them:
 
 `HYPOTHESIS` is reserved for uncertainty about factual evidence, reachability, or
 the observable wrong outcome. It is not a substitute for missing policy.
+
+### Evidence for behavior claims
+
+Security findings, reviews, and diagnoses require the relevant source bodies,
+not graph summaries alone. Read the source file or an available source body
+before concluding how code behaves; cite the paths and revision inspected.
+
+A graph miss or empty symbol/caller result cannot prove code absence.
+`search_symbols` matches indexed names, not raw source text. For literals such
+as query parameters, headers, environment keys, or topic names, search targeted
+source directly. A wrapping identifier such as `loginToken` for `login_token`
+can locate candidates, but does not establish how the literal is handled.
+
+For a claim about a value's validation, propagation, persistence, or cleanup,
+inspect its producer through the relevant transport/navigation boundary to
+its consumers, including the handling being assessed. A backend URL writer
+does not establish frontend URL cleanup. Use `find_callers` for function
+relations and cross-repository tools when available; bridge unresolved
+boundaries with targeted source search. A call graph alone is not a value-flow
+proof.
+
+Bound conclusions to the inspected paths. If consumer source or coverage is
+unavailable, retain the factual uncertainty as `HYPOTHESIS`, the workflow's
+unverified status, or an explicit coverage limitation. Do not promote it to a
+confirmed finding or invent a missing symbol. This does not demote a
+source-proven defect merely because release policy is unknown.

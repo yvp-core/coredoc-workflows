@@ -12,6 +12,9 @@ Follow the method below subject to these host rules:
 - Use Coredoc graph tools read-only to trace relevant symbols and impact when
   available. Verify critical gaps against source because graph coverage is a
   lower bound.
+- Before a behavior claim, apply **Evidence for behavior claims** in
+  `<plugin-root>/resources/methodology/review-policy.md`, including literal
+  lookup limits and tracing values to their consumers.
 - Use a database only through a read-only connection or transaction and only
   when production-shaped data is needed to test the hypothesis.
 - Use the repository's normal test runner for regression proof. Do not create a
