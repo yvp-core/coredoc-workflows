@@ -123,14 +123,14 @@ is not always a new test.
    that could not run. Do not claim test-first work when the chosen evidence was
    validation, compilation, search, or an existing suite. If a cloud Coredoc
    intent write capability is present, follow the implementation mapping stage in
-   `<plugin-root>/resources/methodology/intent-context.md`: carry exact IDs, existing CI anchors and source locators into the review
-   handoff for items this change implements or relocates. PR-writing serializes
-   Coredoc-Intent-Anchors; no maintained manifest, local graph publication or
-   manual anchor approval is required. Include the PR
-   trailer block in the handoff. When the user also authorized PR creation or a
-   PR body update, that authorized writer applies the block using the same
-   methodology's Release instructions. Otherwise carry it to the next authorized
-   PR-writing stage; implementation authorization alone does not publish it.
+   `<plugin-root>/resources/methodology/intent-context.md`: save `intent_handoff`
+   with exact IDs, reviewed `headSha`, and source locators for items this change
+   implements or relocates. Save before PR creation, read back the operation,
+   and carry its ID/version into the review handoff. The authorized PR writer
+   attaches the PR number and refreshes the head after subsequent code changes.
+   No manifest, local graph publication or routine anchor approval is required.
+   When hosted writes are unavailable, carry the prepared data and state the
+   missing capability; never substitute a PR-body declaration protocol.
 
 Never add a test merely to assert that deleted private code stays deleted, that
 an implementation detail has a particular shape, or that an unreachable stale

@@ -251,20 +251,22 @@ test("methodology separates a missing capability from an empty overlay", async (
   assert.match(distinction, /not the same|different|is not/i, distinction);
 });
 
-// The release handoff is the PR trailer block, not a free-text delivery line:
-// the automatic actors read only those two keys from the PR body.
-test("the review adapter hands over the PR trailer block", async () => {
+// Every writing stage uses the same hosted handoff contract.
+test("review and delivery carry the structured handoff without a PR-body protocol", async () => {
   const review = await skill("coredoc-review");
-  assert.match(review, /Coredoc-Intent-Delivers/);
-  assert.match(review, phrase("next authorized PR-writing stage"));
-  assert.match(review, phrase("does not authorize a PR body update"));
-  assert.match(review, phrase("do not execute anchors"));
-  assert.doesNotMatch(review, phrase("write the block into the PR body yourself"));
-
+  const writer = await skill("coredoc-git-delivery");
   const body = await readFile(METHODOLOGY_PATH, "utf8");
-  assert.match(body, /`Coredoc-Intent-Delivers:`/);
-  assert.match(body, /`Coredoc-Intent-Retires:`/);
-  assert.match(body, phrase("gh api -X PATCH"));
+  const implement = await skill("coredoc-implement");
+  for (const text of [review, writer, implement, body]) {
+    assert.match(text, /intent_handoff/);
+    assert.match(text, /headSha|reviewed commit SHA/);
+    assert.doesNotMatch(text, /intent-anchor-block|Coredoc-Intent-Anchors/);
+  }
+  assert.match(review, /read-only review request/);
+  assert.match(writer, /expectedVersion/);
+  assert.match(writer, /attach its number/);
+  assert.match(body, /needs_attention/);
+  assert.match(body, /Mapping and delivery are independent/);
 });
 
 // The spec-acceptance moment is the one place an adapter may accept, and only
