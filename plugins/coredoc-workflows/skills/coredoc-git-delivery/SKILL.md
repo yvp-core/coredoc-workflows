@@ -149,6 +149,17 @@ files are classified separately. Generated-file classification must come from
 the committed attribute snapshot; staged attribute drift or repository-local
 attribute overrides block the measurement instead of silently changing it.
 
+When reviewed intent accompanies an authorized implementation, use hosted
+`intent_handoff` to save its structured bindings and strict delivers/retires in the
+user's workspace session. Use the current reviewed commit SHA; refresh after any
+code change. Reuse the existing handoff id and expectedVersion, with a new
+idempotencyKey for each changed request. Before PR creation save without prNumber.
+After creating or finding the PR, attach its number and read the handoff back.
+Compare head, PR identity and declarations with the submitted data; repair a lost
+or stale update within the authorized implementation. No PR-body metadata is read
+by the server and no copy/paste ceremony is required. Pure commit/push requests
+without an implementation handoff do not invent one.
+
 Before creation, query the available forge provider or official CLI for an open
 pull request with this repository and head branch. Classify the lookup as
 `found`, `none`, or `unknown`:

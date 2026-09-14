@@ -329,48 +329,41 @@ that specific gap rather than fabricate approval. The spec's `accepted` status
 alone does not authorize a new decision. Recovery does not require another
 approval for an unchanged request whose original authorization is available.
 
-**After implementation, before review.** The authorized implementation stage
-updates `.coredoc/intent-bindings.json` —
-`{ bindings: [{ itemId, files: ["<path relative to the repository root>"],
-symbols?: ["<path>#<Name>"], rationale? }] }` — for items this change implements,
-not every contextual rule in the working set. Preserve unrelated entries; remove
-or move a target when the implementation is removed or moved. Default to files;
-add symbols only when their names are known from source. This needs neither a
-local parser nor a fresh cloud graph. CI resolves the manifest after publishing
-its snapshot (`coredoc ci run` → `POST …/intent/bindings/sync`, `source: ci`). A
-candidate's binding is skipped until acceptance and reapplied on the next CI run.
+Never record availability during review; the merge/deploy actor records delivery.
 Manual anchors remain separate and require an explicit instruction.
 
-The review stage is read-only: inspect the manifest and report missing or wrong
-bindings as suggested changes in the handoff. Do not edit files, propose items,
-create anchors, or update a PR merely because a write tool is available. An
-explicit request to apply review fixes switches to the authorized implementation
-stage for those fixes.
+### Implementation handoff and delivery
 
-**Release.** Never record availability yourself: merge, pull request, graph
-publication, and ticket transitions are not triggers the agent acts on. In the
-review or merge handoff render the PR trailer block instead of a free-text
-delivery line — a fenced `text` block whose `Coredoc-Intent-Delivers:` line lists
-the ACCEPTED items the change implements and whose `Coredoc-Intent-Retires:` line
-lists the accepted items the accepted specification explicitly retires, each as
-comma-separated `<itemId>@<version>` pairs with the versions from the exact-id
-refresh. Candidates are never listed, because a candidate cannot be released. List
-an item only when this change makes it effective for the first time or re-delivers
-it after a rollback; a change made under a rule that is already effective carries
-no trailer line for that rule.
+Coredoc owns active implementation links and unfinished operations. PR bodies are
+human-readable summaries only. During authorized implementation/review use hosted
+`intent_handoff` in the user's workspace session, with `action: save` and:
 
-When the user explicitly authorizes PR creation or a PR body update, the
-PR-writing stage applies the block as part of that write. For an existing PR,
-read its body, preserve other content, replace any existing
-`Coredoc-Intent-Delivers:` / `Coredoc-Intent-Retires:` lines, and append the block
-as the last lines. Use `gh pr edit <n> --body-file <file>` (or
-`gh api -X PATCH repos/{owner}/{repo}/pulls/{n} --input <json-with-body>` if needed).
-For a new PR include the block in `gh pr create --body-file <file>`.
-Review alone never authorizes either write. If PR writing is not yet authorized
-or the tool is unavailable, retain the block in the handoff for the next
-authorized writer, without asking the user to copy it manually. Coredoc records
-plan and delivery from those lines in `merge` or `deploy` mode; in `manual` mode
-availability stays the maintainer's `intent_release` action.
+- client-generated UUID `id`, `expectedVersion: 0` initially and an idempotencyKey;
+- repoKey and reviewed headSha, optional prNumber (attach after PR creation);
+- bindings [{itemId, files: [path], symbols: [path#Name], replaceNodeIds: []}];
+- delivers/retires [{itemId, version}] from the exact-ID refresh;
+- explicit supersedesMappingIds only when this change replaces a known unfinished
+  mapping operation, never merely because item IDs happen to match.
+
+Do not bind the entire context working set: bind only implementation touchpoints.
+Do not guess stable IDs. File paths and symbol locators may name new code absent
+from the current cloud graph. Handoff needs no local parser or manifest. A binding
+may name a candidate, but the server applies it only after acceptance. Delivery
+requires exact accepted versions. Existing effective rules need no repeat delivery.
+Review-only work returns the prepared data without writing; an authorized
+implementation saves it. Capture/authority approval remains governed separately.
+
+Read back the saved operation. PR writing attaches prNumber and refreshes headSha
+after code changes using expectedVersion. Another agent resumes via list/get.
+At merge the server checks the actual PR head, production branch and membership
+of the merge commit in the published graph. CI only publishes its graph and commit.
+Either merge/publish order converges. Mapping and delivery are independent: an
+unresolved target never blocks a truthful release, and a stale release version
+never prevents valid anchors. Transient missing facts retry automatically;
+needs_attention is visible in task context and is repaired by a session agent.
+Manual/disabled links survive automatic mapping. Do not treat an anchor as proof
+that the behavior conforms. Deploy jobs report deployment identity/ref/time using
+the existing CI token; the server supplies declarations from the handoff.
 
 ### Cite it like evidence
 
