@@ -5,6 +5,7 @@ import {
   closeSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -33,6 +34,11 @@ const PERSISTED_STAGE_OUTCOMES = new Set([
   ...STAGE_FINISH_OUTCOMES,
   "abandoned",
 ]);
+// A run stays live across a resumable session exit: `suspended` is `active`
+// waiting for the same host session to come back. `abandoning` is a suspended
+// run another session has claimed for expiry; it can be finished, never resumed.
+const LIVE_RUN_STATUSES = new Set(["active", "suspended"]);
+const FINISHABLE_RUN_STATUSES = new Set([...LIVE_RUN_STATUSES, "abandoning"]);
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO_TIMESTAMP_RE =
@@ -40,6 +46,10 @@ const ISO_TIMESTAMP_RE =
 
 export function hasWorkflowSessionAttribution(sessionId) {
   return SESSION_ID_RE.test(String(sessionId ?? ""));
+}
+
+export function isLiveWorkflowRun(state) {
+  return Boolean(state) && LIVE_RUN_STATUSES.has(state.status);
 }
 
 function stateDirectory(env = process.env) {
@@ -258,9 +268,9 @@ export function startWorkflowRun(
   }
 
   const active = readWorkflowRun(sessionId, { env });
-  if (active?.status === "active") {
+  if (active && LIVE_RUN_STATUSES.has(active.status)) {
     throw new Error(
-      `workflow run ${active.runId} is already active; finish or abandon it before routing another task`,
+      `workflow run ${active.runId} is already ${active.status}; finish or abandon it before routing another task`,
     );
   }
 
@@ -322,12 +332,213 @@ function stageOccurrenceId(value) {
   return value.toLowerCase();
 }
 
-function activeStageRun(sessionId, env) {
+function resumeLocked(sessionId, state, env, now) {
+  if (state.status !== "suspended") return state;
+  const {
+    suspendedAt,
+    capture: _capture,
+    suspendedEnd: _suspendedEnd,
+    ...rest
+  } = state;
+  const next = {
+    ...rest,
+    status: "active",
+    // Time spent suspended is not work; the finish subtracts it.
+    suspendedMs:
+      nonNegativeInteger(rest.suspendedMs) +
+      nonNegativeInteger(now - Date.parse(suspendedAt)),
+  };
+  atomicWriteJson(statePaths(sessionId, env).state, next);
+  return next;
+}
+
+// The live run for a session, resumed if a resumable SessionEnd suspended it.
+// A lifecycle command from the same host session is proof the session is back;
+// abandonment is not, so it reads with `resume: false`. Callers hold the stage
+// lock: the resume rewrites the whole file.
+function liveRunLocked(sessionId, env, { resume = true, now = Date.now() } = {}) {
+  const state = readWorkflowRun(sessionId, { env });
+  if (!state || !LIVE_RUN_STATUSES.has(state.status)) return null;
+  return resume ? resumeLocked(sessionId, state, env, now) : state;
+}
+
+export function liveWorkflowRun(
+  sessionId,
+  { env = process.env, now = Date.now() } = {},
+) {
+  if (!hasWorkflowSessionAttribution(sessionId)) return null;
+  const state = readWorkflowRun(sessionId, { env });
+  if (!state || !LIVE_RUN_STATUSES.has(state.status)) return null;
+  if (state.status === "active") return state;
+  return withStageStateLock(sessionId, env, () =>
+    liveRunLocked(sessionId, env, { now }),
+  );
+}
+
+function capturedEnd(snapshot) {
+  const {
+    available,
+    head,
+    fingerprint,
+    filesChanged,
+    trackedLinesAdded,
+    trackedLinesRemoved,
+  } = snapshot;
+  return {
+    available,
+    head,
+    fingerprint,
+    filesChanged,
+    trackedLinesAdded,
+    trackedLinesRemoved,
+  };
+}
+
+/**
+ * Park a live run while its session is away. `capture` is the session's own
+ * capture identity, kept so a later expiry records the run under its
+ * repository and binding rather than under whichever router notices it. The
+ * repository is snapshotted now, while it still reflects the session's work.
+ */
+export function suspendWorkflowRun(
+  sessionId,
+  { at = new Date().toISOString(), capture = {} } = {},
+  { env = process.env, snapshot = gitSnapshot } = {},
+) {
+  if (!hasWorkflowSessionAttribution(sessionId)) return null;
+  // Most sessions never routed a run: read first so they neither create state
+  // nor contend for the lock.
+  const current = readWorkflowRun(sessionId, { env });
+  if (!current || !LIVE_RUN_STATUSES.has(current.status)) return null;
+  return withStageStateLock(sessionId, env, () => {
+    const state = readWorkflowRun(sessionId, { env });
+    if (!state || !LIVE_RUN_STATUSES.has(state.status)) return null;
+    if (state.status === "suspended") return state;
+    const next = {
+      ...state,
+      status: "suspended",
+      suspendedAt: stageTimestamp(at),
+      capture,
+      suspendedEnd: capturedEnd(snapshot(state.repoRoot || process.cwd())),
+    };
+    atomicWriteJson(statePaths(sessionId, env).state, next);
+    return next;
+  });
+}
+
+/**
+ * Runs parked by other sessions that expiry may take: suspended ones, and
+ * `abandoning` ones whose claimant evidently died. Oldest suspension first.
+ */
+export function listSuspendedWorkflowRuns({ env = process.env } = {}) {
+  const directory = stateDirectory(env);
+  let entries;
+  try {
+    entries = readdirSync(directory);
+  } catch {
+    return [];
+  }
+  const suspended = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(".json")) continue;
+    let state;
+    try {
+      state = JSON.parse(readFileSync(join(directory, entry), "utf8"));
+    } catch {
+      continue;
+    }
+    if (
+      state?.schemaVersion !== RUN_STATE_VERSION ||
+      (state.status !== "suspended" && state.status !== "abandoning") ||
+      !hasWorkflowSessionAttribution(state.sessionId) ||
+      !validStageTimestamp(state.suspendedAt) ||
+      (state.status === "abandoning" &&
+        !validStageTimestamp(state.abandoningAt)) ||
+      // Only the file its own session addresses counts; a stray copy must not
+      // be abandoned through a session that never owned it.
+      entry !== `${sessionKey(state.sessionId)}.json`
+    ) {
+      continue;
+    }
+    suspended.push({
+      sessionId: state.sessionId,
+      runId: state.runId,
+      status: state.status,
+      suspendedAt: state.suspendedAt,
+      ...(state.status === "abandoning"
+        ? { abandoningAt: state.abandoningAt }
+        : {}),
+      repoRoot: typeof state.repoRoot === "string" ? state.repoRoot : "",
+    });
+  }
+  return suspended.sort((a, b) => a.suspendedAt.localeCompare(b.suspendedAt));
+}
+
+function expiryDue(state, now, ttlMs, staleClaimMs) {
+  if (state.status === "suspended") {
+    return Date.parse(state.suspendedAt) + ttlMs <= now;
+  }
+  return (
+    state.status === "abandoning" &&
+    validStageTimestamp(state.abandoningAt) &&
+    Date.parse(state.abandoningAt) + staleClaimMs <= now
+  );
+}
+
+/**
+ * Take an expired run for abandonment. Under the lock the status and TTL are
+ * re-checked, the open stage is closed as abandoned at the suspension time, and
+ * the run becomes `abandoning`, which no session can resume and no other
+ * sweeper can claim until `staleClaimMs` passes. Returns the state and the
+ * stage event to record, or null when the run is not due.
+ */
+export function claimExpiredWorkflowRun(
+  sessionId,
+  { now = Date.now(), ttlMs, staleClaimMs },
+  { env = process.env } = {},
+) {
+  if (!hasWorkflowSessionAttribution(sessionId)) return null;
+  return withStageStateLock(sessionId, env, () => {
+    const state = readWorkflowRun(sessionId, { env });
+    if (
+      !state ||
+      !validStageTimestamp(state.suspendedAt) ||
+      !expiryDue(state, now, ttlMs, staleClaimMs)
+    ) {
+      return null;
+    }
+    let stageEvent = null;
+    if (state.status === "suspended" && state.stageCaptureVersion === 1) {
+      const open = openStage(
+        activeStageRun(sessionId, env, { resume: false }).state,
+      );
+      if (open) {
+        stageEvent = finishStageLocked(
+          sessionId,
+          open.stageId,
+          "abandoned",
+          state.suspendedAt,
+          env,
+          { allowReplay: false, resume: false },
+        ).event;
+      }
+    }
+    const claimed = {
+      ...readWorkflowRun(sessionId, { env }),
+      status: "abandoning",
+      abandoningAt: new Date(now).toISOString(),
+    };
+    atomicWriteJson(statePaths(sessionId, env).state, claimed);
+    return { state: claimed, stageEvent };
+  });
+}
+
+function activeStageRun(sessionId, env, { resume = true } = {}) {
   if (!hasWorkflowSessionAttribution(sessionId)) {
     return { result: { status: "unattributed" } };
   }
-  const state = readWorkflowRun(sessionId, { env });
-  if (!state || state.status !== "active") {
+  const state = liveRunLocked(sessionId, env, { resume });
+  if (!state) {
     return {
       result: {
         status: "inactive",
@@ -401,9 +612,11 @@ function openStage(state) {
   );
 }
 
-/** The stage currently open on an active run, or undefined outside a stage. */
+/** The stage currently open on a live run, or undefined outside a stage. */
 export function openStageId(state) {
-  if (!state || state.status !== "active" || !state.stageProgress) return undefined;
+  if (!state || !LIVE_RUN_STATUSES.has(state.status) || !state.stageProgress) {
+    return undefined;
+  }
   return openStage(state)?.stageId;
 }
 
@@ -514,9 +727,9 @@ function finishStageLocked(
   outcome,
   at,
   env,
-  { allowReplay = true } = {},
+  { allowReplay = true, resume = true } = {},
 ) {
-  const active = activeStageRun(sessionId, env);
+  const active = activeStageRun(sessionId, env, { resume });
   if (active.result) return active.result;
   const { state } = active;
   declaredStage(state, stageId);
@@ -588,15 +801,24 @@ export function abandonOpenWorkflowStage(
   // first so those sessions never create state or contend for the lock; the
   // authoritative check happens again under it.
   const current = readWorkflowRun(sessionId, { env });
-  if (!current || current.status !== "active" || current.stageCaptureVersion !== 1) {
+  if (
+    !current ||
+    !LIVE_RUN_STATUSES.has(current.status) ||
+    current.stageCaptureVersion !== 1
+  ) {
     return null;
   }
   return withStageStateLock(sessionId, env, () => {
     const state = readWorkflowRun(sessionId, { env });
-    if (!state || state.status !== "active" || state.stageCaptureVersion !== 1) {
+    if (
+      !state ||
+      !LIVE_RUN_STATUSES.has(state.status) ||
+      state.stageCaptureVersion !== 1
+    ) {
       return null;
     }
-    const active = activeStageRun(sessionId, env);
+    // Abandonment is not a sign of life: a suspended run stays suspended.
+    const active = activeStageRun(sessionId, env, { resume: false });
     if (active.result || !openStage(active.state)) return null;
     return finishStageLocked(
       sessionId,
@@ -604,7 +826,7 @@ export function abandonOpenWorkflowStage(
       "abandoned",
       at,
       env,
-      { allowReplay: false },
+      { allowReplay: false, resume: false },
     );
   });
 }
@@ -640,8 +862,8 @@ export function appendWorkflowObservation(
   input,
   { env = process.env } = {},
 ) {
-  const state = readWorkflowRun(sessionId, { env });
-  if (!state || state.status !== "active") return { status: "inactive" };
+  const state = liveWorkflowRun(sessionId, { env });
+  if (!state) return { status: "inactive" };
   const event = normalizedObservation(input);
   if (!event) return { status: "ignored" };
 
@@ -748,7 +970,7 @@ export function completeWorkflowRun(
   } = {},
 ) {
   const state = readWorkflowRun(sessionId, { env });
-  if (!state || state.status !== "active") return null;
+  if (!state || !FINISHABLE_RUN_STATUSES.has(state.status)) return null;
 
   const end = snapshot(state.repoRoot || process.cwd());
   const observations = summarizeWorkflowObservations(
@@ -764,7 +986,9 @@ export function completeWorkflowRun(
   const endMs = Date.parse(at);
   const durationMs =
     Number.isFinite(startMs) && Number.isFinite(endMs)
-      ? nonNegativeInteger(endMs - startMs)
+      ? nonNegativeInteger(
+          endMs - startMs - nonNegativeInteger(state.suspendedMs),
+        )
       : 0;
 
   return {
@@ -794,7 +1018,7 @@ export function finalizeWorkflowRun(
   { env = process.env } = {},
 ) {
   const state = readWorkflowRun(sessionId, { env });
-  if (!state || state.status !== "active") return null;
+  if (!state || !FINISHABLE_RUN_STATUSES.has(state.status)) return null;
   if (runId !== state.runId) {
     throw new Error("finished workflow run must match the active run");
   }

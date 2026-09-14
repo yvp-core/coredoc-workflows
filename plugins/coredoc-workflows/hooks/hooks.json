@@ -17,6 +17,15 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/coredoc-workflows\" retry-pending"
           }
         ]
+      },
+      {
+        "matcher": "resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/coredoc-workflows\" session-start"
+          }
+        ]
       }
     ],
     "PostToolUse": [

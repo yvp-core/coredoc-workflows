@@ -10,6 +10,7 @@ import {
   resolveWorkflowRuntime,
 } from "./capture-client.mjs";
 import { mintRunId, workflowEvent } from "./workflow-events.mjs";
+import { abandonExpiredWorkflowRuns } from "./expired-runs.mjs";
 import { startWorkflowRun } from "./workflow-run-state.mjs";
 
 const INTENTS = new Set([
@@ -552,6 +553,7 @@ export async function executeRoutedTask(
     preflight = preflightCaptureSchemaVersion,
     startRun = startWorkflowRun,
     recordCapture = recordRoutedTaskCapture,
+    expireRuns = abandonExpiredWorkflowRuns,
   } = {},
 ) {
   const routed = prepareRoutedTask(signals);
@@ -571,10 +573,23 @@ export async function executeRoutedTask(
     { env },
   );
   const capture = await recordCapture(routed, { env, cwd });
+  // Other sessions' suspended runs that never came back are recorded here,
+  // where a resolved capture environment exists. Their bookkeeping must never
+  // fail this route, so a failure is reported instead of thrown.
+  let expiredRuns;
+  try {
+    expiredRuns = await expireRuns(
+      { ownSessionId: env.COREDOC_WORKFLOWS_SESSION_ID },
+      { env },
+    );
+  } catch (error) {
+    expiredRuns = [{ status: "failed", message: error.message }];
+  }
   return {
     ...routed.route,
     runStateStatus: runState.status,
     capture,
+    ...(expiredRuns.length === 0 ? {} : { expiredRuns }),
   };
 }
 

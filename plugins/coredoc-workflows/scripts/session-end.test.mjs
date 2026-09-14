@@ -26,6 +26,7 @@ import {
   readWorkflowRun,
   startWorkflowStage,
   startWorkflowRun,
+  suspendWorkflowRun,
 } from "./workflow-run-state.mjs";
 
 test("SessionEnd queues an open stage abandonment before run finish at one timestamp", () => {
@@ -561,4 +562,155 @@ test("SessionEnd queues configured artifacts locally without artifact fetch and 
   assert.equal(pending.body.checkpoint, "session-end");
   assert.equal(pending.body.runId, "cdr-20260816-a1b2c3");
   assert.equal(pending.body.repositoryKey, "coredoc/coredoc-parser");
+});
+
+const NO_GIT = () => ({ available: false, repoRoot: "", head: "", fingerprint: "" });
+
+function startRunWithOpenStage(sessionId, env, { at = "2026-08-01T10:00:00.000Z" } = {}) {
+  startWorkflowRun(
+    {
+      sessionId,
+      runId: "cdr-20260801-a1b2c3",
+      workflowId: "change:normal",
+      intent: "change",
+      risk: "normal",
+      declaredStages: [{ stageId: "spec", after: [] }],
+      at,
+    },
+    { env, snapshot: NO_GIT },
+  );
+  startWorkflowStage(
+    sessionId,
+    "spec",
+    { at: "2026-08-01T10:00:01.000Z" },
+    { env, idFactory: () => "11111111-1111-4111-8111-111111111111" },
+  );
+}
+
+test("a resumable SessionEnd suspends the run and leaves its open stage open", async () => {
+  const sessionId = "session-resumable-exit";
+  const env = {
+    COREDOC_WORKFLOWS_STATE_DIR: mkdtempSync(
+      join(tmpdir(), "coredoc-workflow-session-suspend-"),
+    ),
+  };
+  startRunWithOpenStage(sessionId, env);
+  const calls = [];
+  for (const reason of ["prompt_input_exit", "resume", "other"]) {
+    const result = await finishWorkflowSession(
+      { sessionId, at: "2026-08-01T10:00:05.000Z", reason },
+      {
+        env: {
+          ...env,
+          COREDOC_CAPTURE_ENDPOINT: "http://127.0.0.1:1/capture",
+          COREDOC_CAPTURE_BINDING_ID: "binding-own",
+          COREDOC_WORKFLOWS_REPO_KEY: "yvp-core/coredoc-parser",
+          HOME: "/private/HOME_SENTINEL",
+        },
+        queueStage: () => calls.push("stage"),
+        finishRun: async () => {
+          calls.push("run");
+          return { status: "finished" };
+        },
+      },
+    );
+    assert.deepEqual(result, {
+      run: { status: "suspended", runId: "cdr-20260801-a1b2c3" },
+    });
+  }
+  assert.deepEqual(calls, []);
+  const state = readWorkflowRun(sessionId, { env });
+  assert.equal(state.status, "suspended");
+  assert.equal(state.suspendedAt, "2026-08-01T10:00:05.000Z");
+  assert.equal(state.stageProgress.spec.finishedAt, undefined);
+  // The session's own capture identity travels with the parked run; nothing
+  // else from the environment does.
+  assert.deepEqual(state.capture, {
+    COREDOC_CAPTURE_ENDPOINT: "http://127.0.0.1:1/capture",
+    COREDOC_CAPTURE_BINDING_ID: "binding-own",
+    COREDOC_WORKFLOWS_REPO_KEY: "yvp-core/coredoc-parser",
+  });
+  assert.equal(typeof state.suspendedEnd.available, "boolean");
+});
+
+test("clear, logout, unknown, and missing reasons still abandon the run", async () => {
+  for (const reason of ["clear", "logout", "shutdown", undefined]) {
+    const sessionId = `session-terminal-${reason ?? "none"}`;
+    const env = {
+      COREDOC_WORKFLOWS_STATE_DIR: mkdtempSync(
+        join(tmpdir(), "coredoc-workflow-session-terminal-"),
+      ),
+    };
+    startRunWithOpenStage(sessionId, env);
+    const calls = [];
+    await finishWorkflowSession(
+      {
+        sessionId,
+        at: "2026-08-01T10:00:05.000Z",
+        ...(reason === undefined ? {} : { reason }),
+      },
+      {
+        env,
+        queueStage: (event) => calls.push(["stage", event.data.outcome]),
+        finishRun: async (input) => {
+          calls.push(["run", input.outcome]);
+          return { status: "finished" };
+        },
+      },
+    );
+    assert.deepEqual(
+      calls,
+      [
+        ["stage", "abandoned"],
+        ["run", "abandoned"],
+      ],
+      String(reason),
+    );
+  }
+});
+
+test("a resumable SessionEnd without a run reports inactive and creates no state", async () => {
+  const env = {
+    COREDOC_WORKFLOWS_STATE_DIR: join(
+      mkdtempSync(join(tmpdir(), "coredoc-workflow-session-no-run-")),
+      "runs",
+    ),
+  };
+  assert.deepEqual(
+    await finishWorkflowSession(
+      { sessionId: "session-never-routed", reason: "other" },
+      { env },
+    ),
+    { run: { status: "inactive" } },
+  );
+  assert.equal(existsSync(env.COREDOC_WORKFLOWS_STATE_DIR), false);
+});
+
+test("SessionEnd CLI passes the host reason through and stays silent", () => {
+  const sessionId = "session-cli-resumable";
+  const env = {
+    COREDOC_WORKFLOWS_STATE_DIR: mkdtempSync(
+      join(tmpdir(), "coredoc-workflow-session-cli-suspend-"),
+    ),
+    HOME: mkdtempSync(join(tmpdir(), "coredoc-workflow-session-cli-home-")),
+  };
+  startRunWithOpenStage(sessionId, env);
+  const result = spawnSync(
+    process.execPath,
+    [new URL("./session-end.mjs", import.meta.url).pathname],
+    {
+      encoding: "utf8",
+      env,
+      input: JSON.stringify({
+        hook_event_name: "SessionEnd",
+        session_id: sessionId,
+        reason: "prompt_input_exit",
+      }),
+      timeout: 2_500,
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+  assert.equal(readWorkflowRun(sessionId, { env }).status, "suspended");
 });

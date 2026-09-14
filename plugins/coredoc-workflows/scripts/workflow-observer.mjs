@@ -10,8 +10,8 @@ import {
 import { translateClaudeCapability, translateClaudeQuestions } from "./hosts/claude.mjs";
 import {
   appendWorkflowObservation,
+  liveWorkflowRun,
   openStageId,
-  readWorkflowRun,
 } from "./workflow-run-state.mjs";
 
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
@@ -95,8 +95,8 @@ function recordQuestions(event, { env, cwd, at, createRecorder }) {
   let translated = translateClaudeQuestions(event, { at });
   if (!translated) return;
   try {
-    const activeRun = readWorkflowRun(translated.sessionId, { env });
-    if (activeRun?.status === "active") {
+    const activeRun = liveWorkflowRun(translated.sessionId, { env });
+    if (activeRun) {
       const stageId = openStageId(activeRun);
       translated = translateClaudeQuestions(event, {
         at,
@@ -149,11 +149,11 @@ export function observeHookEvent(
   if (translated) {
     let activeRun;
     try {
-      activeRun = readWorkflowRun(translated.sessionId, { env });
+      activeRun = liveWorkflowRun(translated.sessionId, { env });
     } catch {
       // A capability without readable run state is still a session-scoped fact.
     }
-    if (activeRun?.status === "active") {
+    if (activeRun) {
       translated = translateClaudeCapability(event, {
         at,
         runId: activeRun.runId,

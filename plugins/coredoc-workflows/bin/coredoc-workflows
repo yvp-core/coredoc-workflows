@@ -75,8 +75,10 @@ case "$command_name" in
   retry-pending) target=scripts/retry-pending.mjs ;;
   retro-evidence) target=scripts/retro-evidence.mjs ;;
   route-task) target=scripts/route-task.mjs ;;
+  run-status) target=scripts/run-status.mjs ;;
   session-end) target=scripts/session-end.mjs ;;
   session-env) target=scripts/session-env.mjs ;;
+  session-start) target=scripts/session-start.mjs ;;
   stage-run) target=scripts/stage-run.mjs ;;
   workflow-observer) target=scripts/workflow-observer.mjs ;;
   test)

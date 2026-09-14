@@ -16,13 +16,18 @@ import {
   appendWorkflowObservation,
   completeWorkflowRun,
   finalizeWorkflowRun,
+  claimExpiredWorkflowRun,
   finishWorkflowStage,
   gitSnapshot,
+  listSuspendedWorkflowRuns,
+  liveWorkflowRun,
+  openStageId,
   readWorkflowObservations,
   readWorkflowRun,
   startWorkflowStage,
   startWorkflowRun,
   summarizeWorkflowObservations,
+  suspendWorkflowRun,
 } from "./workflow-run-state.mjs";
 
 const SESSION_ID = "session-42";
@@ -828,4 +833,273 @@ test("retains routed skills when bounded observations fill with foreign skills",
     ),
     false,
   );
+});
+
+const SUSPEND_RUN = {
+  sessionId: SESSION_ID,
+  runId: RUN_ID,
+  workflowId: "change:normal",
+  intent: "change",
+  risk: "normal",
+  declaredStages: [
+    { stageId: "spec", after: [] },
+    { stageId: "tdd", after: ["spec"] },
+  ],
+  at: "2026-08-01T10:00:00.000Z",
+};
+
+test("a suspended run resumes on its next lifecycle command and stays live for evidence", () => {
+  const env = testEnv();
+  startWorkflowRun(SUSPEND_RUN, { env, snapshot: () => START });
+  startWorkflowStage(
+    SESSION_ID,
+    "spec",
+    { at: "2026-08-01T10:00:01.000Z" },
+    { env, idFactory: () => "11111111-1111-4111-8111-111111111111" },
+  );
+
+  const suspended = suspendWorkflowRun(
+    SESSION_ID,
+    {
+      at: "2026-08-01T10:05:00.000Z",
+      capture: { COREDOC_CAPTURE_BINDING_ID: "binding-own" },
+    },
+    { env, snapshot: () => END },
+  );
+  assert.equal(suspended.status, "suspended");
+  const parked = readWorkflowRun(SESSION_ID, { env });
+  assert.equal(parked.suspendedAt, "2026-08-01T10:05:00.000Z");
+  assert.deepEqual(parked.capture, { COREDOC_CAPTURE_BINDING_ID: "binding-own" });
+  assert.equal(parked.suspendedEnd.fingerprint, END.fingerprint);
+  assert.equal(parked.suspendedEnd.repoRoot, undefined);
+  // A second resumable exit keeps the first suspension time.
+  assert.equal(
+    suspendWorkflowRun(
+      SESSION_ID,
+      { at: "2026-08-01T11:00:00.000Z" },
+      { env, snapshot: () => END },
+    ).suspendedAt,
+    "2026-08-01T10:05:00.000Z",
+  );
+  assert.deepEqual(listSuspendedWorkflowRuns({ env }), [
+    {
+      sessionId: SESSION_ID,
+      runId: RUN_ID,
+      status: "suspended",
+      suspendedAt: "2026-08-01T10:05:00.000Z",
+      repoRoot: START.repoRoot,
+    },
+  ]);
+  // Routing again is refused exactly as for an active run.
+  assert.throws(
+    () => startWorkflowRun(SUSPEND_RUN, { env, snapshot: () => START }),
+    /is already suspended.*finish or abandon it/i,
+  );
+  assert.equal(openStageId(readWorkflowRun(SESSION_ID, { env })), "spec");
+
+  const finished = finishWorkflowStage(
+    SESSION_ID,
+    "spec",
+    "success",
+    { at: "2026-08-02T09:00:00.000Z" },
+    { env },
+  );
+  assert.equal(finished.status, "finished");
+  const state = readWorkflowRun(SESSION_ID, { env });
+  assert.equal(state.status, "active");
+  assert.equal(state.suspendedAt, undefined);
+  assert.equal(state.capture, undefined);
+  assert.equal(state.suspendedEnd, undefined);
+  assert.equal(state.stageProgress.spec.outcome, "success");
+  assert.deepEqual(listSuspendedWorkflowRuns({ env }), []);
+});
+
+test("observations resume a suspended run and completion accepts one", () => {
+  const env = testEnv();
+  startWorkflowRun(SUSPEND_RUN, { env, snapshot: () => START });
+  suspendWorkflowRun(
+    SESSION_ID,
+    { at: "2026-08-01T10:05:00.000Z" },
+    { env, snapshot: () => END },
+  );
+  assert.equal(
+    appendWorkflowObservation(
+      SESSION_ID,
+      { type: "edit", at: "2026-08-02T09:00:00.000Z" },
+      { env },
+    ).status,
+    "recorded",
+  );
+  assert.equal(readWorkflowRun(SESSION_ID, { env }).status, "active");
+
+  suspendWorkflowRun(
+    SESSION_ID,
+    { at: "2026-08-02T10:00:00.000Z" },
+    { env, snapshot: () => END },
+  );
+  const completed = completeWorkflowRun(SESSION_ID, {
+    env,
+    at: "2026-08-02T10:00:00.000Z",
+    snapshot: () => END,
+  });
+  assert.equal(completed.state.status, "suspended");
+  assert.equal(completed.summary.editCalls, 1);
+  assert.equal(finalizeWorkflowRun(SESSION_ID, RUN_ID, { env }).runId, RUN_ID);
+  assert.equal(readWorkflowRun(SESSION_ID, { env }), null);
+});
+
+test("the suspended-run listing skips other statuses, stray copies, and non-run files", () => {
+  const env = testEnv();
+  const directory = env.COREDOC_WORKFLOWS_STATE_DIR;
+  startWorkflowRun(
+    { ...SUSPEND_RUN, sessionId: "session-still-active", runId: "cdr-20260731-ffffff" },
+    { env, snapshot: () => START },
+  );
+  startWorkflowRun(SUSPEND_RUN, { env, snapshot: () => START });
+  suspendWorkflowRun(
+    SESSION_ID,
+    { at: "2026-08-01T10:05:00.000Z" },
+    { env, snapshot: () => END },
+  );
+  writeFileSync(
+    join(directory, "stray-copy.json"),
+    JSON.stringify(readWorkflowRun(SESSION_ID, { env })),
+  );
+  writeFileSync(join(directory, "garbage.json"), "{not json");
+  writeFileSync(join(directory, "held.json.lock"), "");
+  writeFileSync(join(directory, "partial.json.123.tmp"), "{}");
+
+  assert.deepEqual(
+    listSuspendedWorkflowRuns({ env }).map((run) => run.sessionId),
+    [SESSION_ID],
+  );
+  assert.deepEqual(
+    listSuspendedWorkflowRuns({
+      env: { COREDOC_WORKFLOWS_STATE_DIR: join(directory, "missing") },
+    }),
+    [],
+  );
+});
+
+test("resume subtracts the time spent suspended from the run duration", () => {
+  const env = testEnv();
+  startWorkflowRun(SUSPEND_RUN, { env, snapshot: () => START });
+  suspendWorkflowRun(
+    SESSION_ID,
+    { at: "2026-08-01T10:10:00.000Z" },
+    { env, snapshot: () => END },
+  );
+  // Resumed 64 hours later, at a stage boundary.
+  const resumedAt = Date.parse("2026-08-04T02:10:00.000Z");
+  assert.equal(
+    liveWorkflowRun(SESSION_ID, { env, now: resumedAt }).suspendedMs,
+    64 * 60 * 60 * 1000,
+  );
+  const completed = completeWorkflowRun(SESSION_ID, {
+    env,
+    at: "2026-08-04T02:20:00.000Z",
+    snapshot: () => END,
+  });
+  assert.equal(completed.summary.durationMs, 20 * 60 * 1000);
+});
+
+test("abandoning an open stage never resumes a suspended run", () => {
+  const env = testEnv();
+  startWorkflowRun(SUSPEND_RUN, { env, snapshot: () => START });
+  startWorkflowStage(
+    SESSION_ID,
+    "spec",
+    { at: "2026-08-01T10:00:01.000Z" },
+    { env, idFactory: () => "11111111-1111-4111-8111-111111111111" },
+  );
+  suspendWorkflowRun(
+    SESSION_ID,
+    { at: "2026-08-01T10:05:00.000Z" },
+    { env, snapshot: () => END },
+  );
+  const abandoned = abandonOpenWorkflowStage(
+    SESSION_ID,
+    { at: "2026-08-01T10:05:00.000Z" },
+    { env },
+  );
+  assert.equal(abandoned.event.data.outcome, "abandoned");
+  const state = readWorkflowRun(SESSION_ID, { env });
+  assert.equal(state.status, "suspended");
+  assert.equal(state.stageProgress.spec.outcome, "abandoned");
+});
+
+test("claiming an expired run closes its stage at the suspension time and blocks resume", () => {
+  const env = testEnv();
+  const ttlMs = 72 * 60 * 60 * 1000;
+  const staleClaimMs = 10 * 60 * 1000;
+  startWorkflowRun(SUSPEND_RUN, { env, snapshot: () => START });
+  startWorkflowStage(
+    SESSION_ID,
+    "spec",
+    { at: "2026-08-01T10:00:01.000Z" },
+    { env, idFactory: () => "11111111-1111-4111-8111-111111111111" },
+  );
+  suspendWorkflowRun(
+    SESSION_ID,
+    { at: "2026-08-01T10:05:00.000Z" },
+    { env, snapshot: () => END },
+  );
+  const suspendedAt = Date.parse("2026-08-01T10:05:00.000Z");
+
+  // One millisecond short of the TTL: not due, nothing changes.
+  assert.equal(
+    claimExpiredWorkflowRun(
+      SESSION_ID,
+      { now: suspendedAt + ttlMs - 1, ttlMs, staleClaimMs },
+      { env },
+    ),
+    null,
+  );
+  assert.equal(readWorkflowRun(SESSION_ID, { env }).status, "suspended");
+
+  const now = suspendedAt + ttlMs;
+  const claimed = claimExpiredWorkflowRun(
+    SESSION_ID,
+    { now, ttlMs, staleClaimMs },
+    { env },
+  );
+  assert.equal(claimed.state.status, "abandoning");
+  assert.equal(claimed.state.abandoningAt, new Date(now).toISOString());
+  assert.equal(claimed.stageEvent.type, "workflow.stage.finished");
+  assert.equal(claimed.stageEvent.occurredAt, "2026-08-01T10:05:00.000Z");
+  assert.equal(claimed.stageEvent.data.outcome, "abandoned");
+  const state = readWorkflowRun(SESSION_ID, { env });
+  assert.equal(state.status, "abandoning");
+  assert.equal(state.stageProgress.spec.finishedAt, "2026-08-01T10:05:00.000Z");
+
+  // The owner coming back finds no live run, and stage boundaries agree.
+  assert.equal(liveWorkflowRun(SESSION_ID, { env, now }), null);
+  assert.equal(
+    finishWorkflowStage(SESSION_ID, "spec", "success", { at: new Date(now).toISOString() }, { env })
+      .status,
+    "inactive",
+  );
+  // A second sweeper inside the claim window gets nothing.
+  assert.equal(
+    claimExpiredWorkflowRun(
+      SESSION_ID,
+      { now: now + staleClaimMs - 1, ttlMs, staleClaimMs },
+      { env },
+    ),
+    null,
+  );
+  assert.deepEqual(listSuspendedWorkflowRuns({ env })[0].abandoningAt, new Date(now).toISOString());
+  // A claimant that died is superseded once its claim is stale; the stage was
+  // already closed, so there is no second stage event.
+  const reclaimed = claimExpiredWorkflowRun(
+    SESSION_ID,
+    { now: now + staleClaimMs, ttlMs, staleClaimMs },
+    { env },
+  );
+  assert.equal(reclaimed.state.status, "abandoning");
+  assert.equal(reclaimed.stageEvent, null);
+  // Only finishing removes it.
+  assert.equal(completeWorkflowRun(SESSION_ID, { env, snapshot: () => END }).state.runId, RUN_ID);
+  assert.equal(finalizeWorkflowRun(SESSION_ID, RUN_ID, { env }).runId, RUN_ID);
+  assert.equal(readWorkflowRun(SESSION_ID, { env }), null);
 });
