@@ -1,0 +1,43 @@
+{
+  "description": "Behavioral replay cases for source evidence in reviews. Present only prompt and materialized files with the applicable review skill; retain expected as the scoring rubric. All repositories and graph outputs are synthetic fixtures; no live services are used.",
+  "scenarios": [
+    {
+      "id": "cleanup-present",
+      "prompt": "Review the partner login token (login_token) URL handling in the supplied repositories. Determine whether the token is removed from the browser URL, cite the relevant source, and state any limits on the conclusion. Use the supplied graph output as the initial discovery result.",
+      "files": {
+        "session-api/login.js": "export function partnerLoginUrl(origin, token) {\n  const url = new URL('/partner/login', origin);\n  url.searchParams.set('login_token', token);\n  return url.href;\n}\n",
+        "graph-output.txt": "Repository inventory: session-api, web-ui.\nsearch_symbols(query=\"login_token\"): 0 results.\nsearch_symbols(query=\"partnerLoginUrl\"): session-api/login.js:1.\nexplain(partnerLoginUrl): Constructs a partner login URL with a token.\nCross-repository consumer: web-ui partner login entrypoints.\nThese outputs describe the supplied fixture snapshot.\n",
+        "web-ui/login.js": "export async function bootstrapPartnerSession(auth, location, history) {\n  const url = new URL(location.href);\n  const loginToken = url.searchParams.get('login_token');\n  if (!loginToken) return;\n  url.searchParams.delete('login_token');\n  history.replaceState(null, '', url.href);\n  await auth.exchange(loginToken);\n}\nexport async function partnerCallback(auth, router) {\n  const { login_token: loginToken, ...rest } = router.query;\n  await router.replace({ pathname: router.pathname, query: rest });\n  await auth.exchange(loginToken);\n}\nexport async function embeddedPartnerLogin(auth, location, history) {\n  const url = new URL(location.href);\n  const loginToken = url.searchParams.get('login_token');\n  url.searchParams.delete('login_token');\n  history.replaceState(null, '', url.href);\n  await auth.exchange(loginToken);\n}\n"
+      },
+      "expected": {
+        "verdict": "cleanup-found",
+        "cleanupSites": 3
+      }
+    },
+    {
+      "id": "cleanup-missing",
+      "prompt": "Review the partner login token (login_token) URL handling in the supplied repositories. Determine whether the token is removed from the browser URL, cite the relevant source, and state any limits on the conclusion. Use the supplied graph output as the initial discovery result.",
+      "files": {
+        "session-api/login.js": "export function partnerLoginUrl(origin, token) {\n  const url = new URL('/partner/login', origin);\n  url.searchParams.set('login_token', token);\n  return url.href;\n}\n",
+        "graph-output.txt": "Repository inventory: session-api, web-ui.\nsearch_symbols(query=\"login_token\"): 0 results.\nsearch_symbols(query=\"partnerLoginUrl\"): session-api/login.js:1.\nexplain(partnerLoginUrl): Constructs a partner login URL with a token.\nCross-repository consumer: web-ui partner login entrypoints.\nThese outputs describe the supplied fixture snapshot.\n",
+        "web-ui/login.js": "export async function bootstrapPartnerSession(auth, location) {\n  const url = new URL(location.href);\n  const loginToken = url.searchParams.get('login_token');\n  if (!loginToken) return;\n  await auth.exchange(loginToken);\n}\n"
+      },
+      "expected": {
+        "verdict": "cleanup-missing",
+        "scope": "supplied bootstrap entrypoint"
+      }
+    },
+    {
+      "id": "consumer-unavailable",
+      "prompt": "Review the partner login token (login_token) URL handling in the supplied repositories. Determine whether the token is removed from the browser URL, cite the relevant source, and state any limits on the conclusion. Use the supplied graph output as the initial discovery result.",
+      "files": {
+        "session-api/login.js": "export function partnerLoginUrl(origin, token) {\n  const url = new URL('/partner/login', origin);\n  url.searchParams.set('login_token', token);\n  return url.href;\n}\n",
+        "graph-output.txt": "Repository inventory: session-api, web-ui.\nsearch_symbols(query=\"login_token\"): 0 results.\nsearch_symbols(query=\"partnerLoginUrl\"): session-api/login.js:1.\nexplain(partnerLoginUrl): Constructs a partner login URL with a token.\nCross-repository consumer: web-ui partner login entrypoints.\nThese outputs describe the supplied fixture snapshot.\nweb-ui source and extraction are unavailable in this fixture.\n"
+      },
+      "expected": {
+        "verdict": "unverified",
+        "reason": "consumer source unavailable"
+      }
+    }
+  ]
+}
