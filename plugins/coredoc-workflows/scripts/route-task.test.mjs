@@ -1178,3 +1178,47 @@ test("rejects unknown routing values", () => {
     /Unsupported scale "epic"/,
   );
 });
+
+test("the router reports expired suspended runs it abandoned and never fails on them", async () => {
+  const deps = {
+    env: { COREDOC_WORKFLOWS_SESSION_ID: "session-router" },
+    preflight: async () => {},
+    startRun: () => ({ status: "started" }),
+    recordCapture: async () => ({ status: "disabled" }),
+  };
+  const calls = [];
+  const reported = await executeRoutedTask(
+    { intent: "change" },
+    {
+      ...deps,
+      expireRuns: async (input) => {
+        calls.push(input);
+        return [{ runId: "cdr-20260801-a1b2c3", sessionId: "session-gone", status: "finished" }];
+      },
+    },
+  );
+  assert.deepEqual(calls, [{ ownSessionId: "session-router" }]);
+  assert.deepEqual(reported.expiredRuns, [
+    { runId: "cdr-20260801-a1b2c3", sessionId: "session-gone", status: "finished" },
+  ]);
+  assert.equal(reported.runStateStatus, "started");
+
+  const failed = await executeRoutedTask(
+    { intent: "change" },
+    {
+      ...deps,
+      expireRuns: async () => {
+        throw new Error("state directory unreadable");
+      },
+    },
+  );
+  assert.deepEqual(failed.expiredRuns, [
+    { status: "failed", message: "state directory unreadable" },
+  ]);
+
+  const clean = await executeRoutedTask(
+    { intent: "change" },
+    { ...deps, expireRuns: async () => [] },
+  );
+  assert.equal(Object.hasOwn(clean, "expiredRuns"), false);
+});

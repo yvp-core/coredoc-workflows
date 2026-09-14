@@ -3,8 +3,20 @@
 import { pathToFileURL } from "node:url";
 
 import { createConfiguredCaptureRecorder } from "./capture-client.mjs";
+import { captureIdentityEnv } from "./expired-runs.mjs";
 import { finishWorkflowRun } from "./finish-run.mjs";
-import { abandonOpenWorkflowStage } from "./workflow-run-state.mjs";
+import {
+  abandonOpenWorkflowStage,
+  suspendWorkflowRun,
+} from "./workflow-run-state.mjs";
+
+// Claude reports why a session ended. `clear` and `logout` discard the
+// conversation, so its run can never continue. An exit from the prompt, a
+// switch to another session with /resume, or any other exit is resumable with
+// the same session ID, so the run waits instead of being recorded abandoned.
+// A missing or unknown reason abandons, as every SessionEnd did before
+// suspension existed.
+const RESUMABLE_END_REASONS = new Set(["prompt_input_exit", "resume", "other"]);
 
 function queueStageCapture(
   event,
@@ -29,6 +41,7 @@ export async function finishWorkflowSession(
   {
     sessionId,
     at = new Date().toISOString(),
+    reason,
   },
   {
     env = process.env,
@@ -37,6 +50,18 @@ export async function finishWorkflowSession(
     finishRun = finishWorkflowRun,
   } = {},
 ) {
+  if (RESUMABLE_END_REASONS.has(reason)) {
+    const suspended = suspendWorkflowRun(
+      sessionId,
+      { at, capture: captureIdentityEnv(env) },
+      { env },
+    );
+    return {
+      run: suspended
+        ? { status: "suspended", runId: suspended.runId }
+        : { status: "inactive" },
+    };
+  }
   let abandoned = null;
   let stageAbandonFailed = false;
   try {
@@ -73,7 +98,10 @@ async function main() {
   ) {
     return;
   }
-  await finishWorkflowSession({ sessionId: event.session_id });
+  await finishWorkflowSession({
+    sessionId: event.session_id,
+    ...(typeof event.reason === "string" ? { reason: event.reason } : {}),
+  });
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

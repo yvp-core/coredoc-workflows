@@ -24,6 +24,7 @@ import {
   readWorkflowRun,
   startWorkflowRun,
   startWorkflowStage,
+  suspendWorkflowRun,
 } from "./workflow-run-state.mjs";
 
 const AT = "2026-07-31T10:00:00.000Z";
@@ -85,7 +86,16 @@ test("supported plugin hooks cover skills, failures, agents, and session lifecyc
   }
   assert.equal(hooks.UserPromptExpansion.length, 1);
   assert.equal(hooks.SubagentStart.length, 1);
-  assert.equal(hooks.SessionStart.length, 1);
+  // Environment, relay, and pending flush run for every start; the run summary
+  // only for a session that may have lost its memory of an open run.
+  assert.equal(hooks.SessionStart.length, 2);
+  assert.equal(hooks.SessionStart[1].matcher, "resume|compact");
+  assert.deepEqual(hooks.SessionStart[1].hooks, [
+    {
+      type: "command",
+      command: '"${CLAUDE_PLUGIN_ROOT}/bin/coredoc-workflows" session-start',
+    },
+  ]);
   assert.equal(hooks.SessionEnd.length, 1);
   // No real Claude fixture currently proves that Skill Pre/Post hooks share a
   // stable tool-use identity, so stage intervals remain deliberately unavailable.
@@ -644,4 +654,43 @@ test("question prose stays disabled unless explicitly enabled, even with capture
     observeHookEvent(askUserQuestionHook("session-private"), { env, at: AT });
     assert.equal(existsSync(captureDirectory), false, String(value));
   }
+});
+
+test("an observation in a resumed session reactivates its suspended run", () => {
+  const { env } = testEnvironment("coredoc-claude-suspended-observation-");
+  startWorkflowRun(
+    {
+      sessionId: "session-resumed",
+      runId: RUN_ID,
+      workflowId: "change:normal",
+      intent: "change",
+      risk: "normal",
+      at: AT,
+    },
+    {
+      env,
+      snapshot: () => ({ available: false, repoRoot: "", head: "", fingerprint: "" }),
+    },
+  );
+  suspendWorkflowRun(
+    "session-resumed",
+    { at: "2026-07-31T10:05:00.000Z" },
+    {
+      env,
+      snapshot: () => ({ available: false, repoRoot: "", head: "", fingerprint: "" }),
+    },
+  );
+  const result = observeHookEvent(
+    {
+      hook_event_name: "PostToolUse",
+      session_id: "session-resumed",
+      tool_name: "Edit",
+    },
+    { env, at: "2026-07-31T11:00:00.000Z" },
+  );
+  assert.equal(result.status, "recorded");
+  assert.equal(readWorkflowRun("session-resumed", { env }).status, "active");
+  assert.deepEqual(readWorkflowObservations("session-resumed", { env }), [
+    { type: "edit", at: "2026-07-31T11:00:00.000Z" },
+  ]);
 });

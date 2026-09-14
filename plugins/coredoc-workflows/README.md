@@ -73,10 +73,13 @@ A large change routes through a repository-local Markdown specification, plan
 review, an explicit user-approval pause, implementation, and final code review.
 Within the same host session, the routed run stays open during the pause
 and resumes with the same run ID after approval; it is not marked successful
-before every routed skill has been observed. If the session ends while paused,
-`SessionEnd` records the run as `abandoned`. A new session routes again, reuses
-the repository-local specification, and re-executes the required spec and design
-context stages before requesting approval.
+before every routed skill has been observed. If the session is cleared or logged
+out while paused, `SessionEnd` records the run as `abandoned`. A plain exit
+suspends it instead: resuming the same Claude session reactivates the run, and
+`SessionStart` on `resume` or `compact` tells the model which run and stage are
+open. A new session routes again, reuses the repository-local specification, and
+re-executes the required spec and design context stages before requesting
+approval.
 
 Active run coordination is session-scoped under `~/.coredoc/workflow-runs`, so
 changing directories between a workspace root, repository, or worktree does not
@@ -328,6 +331,27 @@ outcomes.
 The preceding `workflow.run.started` event identifies use of the router itself;
 capability events cover observable skill and agent adoption after the run starts
 and direct supported use outside a run.
+
+`SessionEnd` reads Claude's `reason`. `clear` and `logout` end the conversation,
+so the run is closed as described next. `prompt_input_exit`, `resume`, and
+`other` are resumable exits: the run is marked `suspended` in local state with
+its open stage, the session's own capture identity, and a repository snapshot
+taken at that moment; nothing is captured. The next lifecycle command from the
+same session, or the `SessionStart` hook on `resume`, makes it `active` again,
+and the time spent suspended is excluded from the run duration. A suspended run
+whose session never returns is abandoned by the next `route-task` of another
+session once 72 hours have passed: the router claims it under the run's stage
+lock so no session can resume it and no other router can take it, then records
+the abandonment at the suspension time under the run's own repository key and
+binding, with the snapshot taken when it was parked. The router lists them as
+`expiredRuns` and never fails on them. Headless `-p` sessions end with reason
+`other`, so their runs are recorded the same way, 72 hours later.
+`coredoc-workflows run-status` prints
+the current session's run, open stage, and closed stages without changing
+anything, and the `SessionStart` hook on `resume` and `compact` injects the same
+summary as additional context so a compacted session neither closes a run twice
+nor routes it again. A closing `stage-run` or `finish-run` that reports
+`status: inactive` found no live run: the run was already closed.
 
 `SessionEnd` records the same bounded finish event as `abandoned` when a routed
 run did not finish normally, preserving its original Claude session and

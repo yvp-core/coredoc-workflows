@@ -52,6 +52,12 @@ its capability preflight. If `runStateStatus` is `unattributed`, state that the
 host cannot provide the completion gate, execute the stage methods, and skip all
 `coredoc-workflows stage-run` and `finish-run` commands.
 
+After a context compaction, in a resumed session, or whenever the run state is
+uncertain, run `<plugin-root>/bin/coredoc-workflows run-status` before any
+lifecycle command. It is read-only. `status: inactive` there means no run is
+open: if this session already finished the run, report that plainly instead of
+finishing it again; otherwise route again.
+
 Tell the user the selected route in one sentence. Preflight available tools for
 a delimited `Coredoc` MCP namespace. If absent, say graph grounding is
 unavailable, mention the project's `.mcp.json` or `claude mcp add`, then continue.
@@ -115,8 +121,9 @@ The parent coordinator exclusively owns `route-task`, `stage-run`, and
 `finish-run`. Never delegate those lifecycle commands, and explicitly prohibit
 them in every subagent dispatch prompt. If `stage-run` returns
 `status: inactive`, stop: do not continue the stage method or claim recorded
-progress. Run `route-task` again, then reopen the stage returned by the new
-route.
+progress. Run `run-status`; if this session already finished the run, report
+that. Otherwise run `route-task` again, then reopen the stage returned by the
+new route.
 
 On Codex, every `coredoc-workflows stage-run` and `coredoc-workflows finish-run`
 command requires the same elevated execution as routing.
@@ -155,9 +162,10 @@ request, pre-spec alignment approval, spec existence, an already accepted
 status, or a successful review verdict does not count.
 Do not run `coredoc-workflows finish-run` while paused.
 In the same host session, resume the same `runId` without routing again. If the
-session ends, `SessionEnd` marks only
-an actually open stage `abandoned` and closes the run. In a new session, route
-again and reuse the local spec. For an authorized continuation, verify the
+session is cleared or logged out, `SessionEnd` marks only
+an actually open stage `abandoned` and closes the run. A plain exit suspends the
+run; resuming the same session continues it with the same `runId`. In a
+new session, route again and reuse the local spec. For an authorized continuation, verify the
 recorded post-review approval and that the approved source and scope are
 unchanged, then continue under that approval. The accepted status alone is not
 enough. Revisit spec/design and obtain fresh approval only if the approved
@@ -174,7 +182,11 @@ After the final stage, run:
 
 A successful finish fails closed unless every routed stage is closed
 successfully. Execute a missing stage; never bypass the gate. Missing attributed
-state requires routing again. An unattributed run cannot claim successful
+state requires routing again. `status: inactive` from a closing `stage-run` or
+`finish-run` means no live run exists for this session: usually this session
+already closed it, or its suspended run expired while the session was away.
+Say which, and never attribute it to capture or relay delivery, which cannot
+produce it. An unattributed run cannot claim successful
 completion. `NEEDS_CONTEXT` remains open; do not finish it. If a stage method was
 unreadable or stale, or substantial work continued after finish, say so rather
 than overstating recorded evidence.
