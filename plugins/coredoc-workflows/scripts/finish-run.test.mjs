@@ -67,9 +67,9 @@ function stageCaptureState(stageProgress) {
 test("rejects abandoned as a caller-supplied outcome", () => {
   assert.throws(
     () => parseFinishArgs(["--outcome", "abandoned"]),
-    /--outcome must be one of: success, failed, blocked$/m,
+    /--outcome must be one of: success, failed, blocked, delivered-draft$/m,
   );
-  for (const outcome of ["success", "failed", "blocked"]) {
+  for (const outcome of ["success", "failed", "blocked", "delivered-draft"]) {
     assert.equal(parseFinishArgs(["--outcome", outcome]).outcome, outcome);
   }
 });
@@ -797,7 +797,13 @@ test("delivers one exact C1 finish event before finalizing local run evidence", 
         },
       },
     },
-    { env: {}, sessionId: "session-42", timeoutMs: 750 },
+    {
+      env: {},
+      sessionId: "session-42",
+      timeoutMs: 750,
+      // Issue 05: delivery state is written through an injected recorder.
+      createRecorder: calls[0][2].createRecorder,
+    },
   ]);
   assert.deepEqual(calls[1], [
     "finalize",
@@ -1001,7 +1007,14 @@ test("capture misconfiguration never blocks the next routed run", async () => {
     },
   );
 
-  assert.deepEqual(result.capture, { status: "failed", durable: false });
+  // Issue 05: the misconfiguration still never blocks — but it is named now,
+  // instead of being reported as an anonymous failure nobody can act on.
+  assert.deepEqual(result.capture, {
+    status: "failed",
+    durable: false,
+    error:
+      "CAPTURE_BINDING_CONFLICT: configured capture requires exactly one supported binding header",
+  });
   assert.equal(readWorkflowRun("session-42", { env }), null);
   assert.equal(
     startWorkflowRun(

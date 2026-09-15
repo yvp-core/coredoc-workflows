@@ -60,7 +60,12 @@ case "$command_name" in
       *) target=runtime/capture/cli.mjs ;;
     esac
     ;;
-  capture-health) target=scripts/capture-health-report.mjs ;;
+  capture-health)
+    case "${1:-}" in
+      --ack|prune) target=scripts/capture-ack.mjs ;;
+      *) target=scripts/capture-health-report.mjs ;;
+    esac
+    ;;
   claude-peer) target=skills/coredoc-claude/scripts/run.mjs ;;
   codex-peer) target=skills/coredoc-codex/scripts/run.mjs ;;
   coredoc-desktop) target=runtime/desktop/coredoc.mjs ;;
@@ -79,6 +84,7 @@ case "$command_name" in
   session-end) target=scripts/session-end.mjs ;;
   session-env) target=scripts/session-env.mjs ;;
   session-start) target=scripts/session-start.mjs ;;
+  spec) target=scripts/spec-acceptance.mjs ;;
   stage-run) target=scripts/stage-run.mjs ;;
   workflow-observer) target=scripts/workflow-observer.mjs ;;
   test)

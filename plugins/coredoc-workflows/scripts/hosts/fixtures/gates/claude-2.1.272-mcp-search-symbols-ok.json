@@ -1,0 +1,33 @@
+{
+  "provenance": {
+    "host": "claude",
+    "version": "2.1.272",
+    "capture": "real-cli-structurally-redacted",
+    "scenario": "mcp-search-symbols-ok",
+    "capturedAt": "2026-09-15T01:31:46Z"
+  },
+  "redaction": "session ids -> 11111111-1111-4111-8111-111111111111; workspace id -> 00000000-0000-4000-8000-000000000000; transcript_path -> /redacted/TRANSCRIPT_SENTINEL.jsonl; absolute paths -> /redacted/PATH_SENTINEL; long text fields truncated to 600 chars with a …[truncated] marker. Field names, JSON types, tool_name, hook_event_name, tool_input argument names/values (non-path), and tool_response structure are preserved from the real captured payload.",
+  "payload": {
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "transcript_path": "/redacted/TRANSCRIPT_SENTINEL.jsonl",
+    "cwd": "/redacted/PATH_SENTINEL",
+    "prompt_id": "6317b610-14e3-4b36-b325-191604ee9c36",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PostToolUse",
+    "tool_name": "mcp__coredoc-localserver__search_symbols",
+    "tool_input": {
+      "query": "finishWorkflowRun"
+    },
+    "tool_response": [
+      {
+        "type": "text",
+        "text": "> Data reflects parsed stable branch, not local changes\n> Last parsed: 2026-09-14T22:44:06.344Z\n> Parsed at commit: 5e0d03b07cae29ba37395beab03764b2d424b462\n\n## Search results for \"finishWorkflowRun\"\n\n**0 results** — nothing matched in this scope (the query/filter is in the heading above)\n\n> Basic detail (name · repo · file:line). Re-call with `detailLevel: \"full\"` for summaries and full refs."
+      }
+    ],
+    "tool_use_id": "toolu_01UvqNeNKCmXtrCLamn2uX7n",
+    "duration_ms": 43
+  }
+}

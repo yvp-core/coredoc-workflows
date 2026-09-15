@@ -1,0 +1,33 @@
+{
+  "provenance": {
+    "host": "codex",
+    "version": "0.150.1",
+    "capture": "real-cli-structurally-redacted",
+    "scenario": "mcp-get-intent-context-invalid-limit",
+    "capturedAt": "2026-09-15T01:31:47Z"
+  },
+  "redaction": "session ids -> 11111111-1111-4111-8111-111111111111; workspace id -> 00000000-0000-4000-8000-000000000000; transcript_path -> /redacted/TRANSCRIPT_SENTINEL.jsonl; absolute paths -> /redacted/PATH_SENTINEL; long text fields truncated to 600 chars with a …[truncated] marker. Field names, JSON types, tool_name, hook_event_name, tool_input argument names/values (non-path), and tool_response structure are preserved from the real captured payload.",
+  "payload": {
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "turn_id": "11111111-1111-4111-8111-111111111111",
+    "transcript_path": "/redacted/TRANSCRIPT_SENTINEL.jsonl",
+    "cwd": "/redacted/PATH_SENTINEL",
+    "hook_event_name": "PostToolUse",
+    "model": "gpt-5.6-luna",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "mcp__coredoc_localserver__get_intent_context",
+    "tool_input": {
+      "task": "probe",
+      "limit": 999
+    },
+    "tool_response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\n  \"status\": \"error\",\n  \"error\": {\n    \"code\": \"invalid_page_limit\",\n    \"message\": \"limit must be an integer between 1 and 20 in context mode\",\n    \"path\": [\n      \"limit\"\n    ]\n  }\n}"
+        }
+      ]
+    },
+    "tool_use_id": "exec-0986858c-063d-4249-9756-b4002e0f900e"
+  }
+}

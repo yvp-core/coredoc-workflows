@@ -1,6 +1,6 @@
 ---
 name: coredoc-workflows
-description: Route engineering work through the smallest useful self-contained Coredoc workflow for investigation, planning, adaptive implementation, review, specification, browser QA, benchmarking, security review, learning, or retrospectives. Use when asked to route, orchestrate, or choose a workflow for a task.
+description: Route engineering work through the smallest useful self-contained Coredoc workflow for investigation, planning, adaptive implementation, review, specification, browser QA, benchmarking, security review, learning, or retrospectives. Use when asked to route, orchestrate, or choose a workflow for a task. On a checkout bound to a Coredoc workspace, stages close on observed evidence, not on the agent's report: intent reads, candidates and Coredoc MCP reads are checked, and skips are signed with a reason that the next route shows.
 ---
 
 # Coredoc workflow router
@@ -110,6 +110,20 @@ When that attempt ends, run:
 <plugin-root>/bin/coredoc-workflows stage-run finish --stage-id <stage-id> --outcome <success|failed|blocked>
 ```
 
+A successful stage close is checked against what the host observed in that
+attempt, on a checkout enrolled to a Coredoc workspace. Closing `spec`
+successfully requires an observed intent-context read; closing `implement`
+successfully requires the candidate batch when the specification is `accepted`
+and does not declare `intentChanges: none`; closing `implement` or `review`
+successfully requires at least one observed Coredoc read that answered —
+repository searches (Grep/Glob/Read/`rg`) and Coredoc writes never count. A
+refusal names the remedy and leaves the stage open — satisfy it, or close with
+`--skip-intent "<reason>"` (or `--skip-mcp "<reason>"`), never with a fabricated
+reason. `failed` and `blocked` closes are never refused: they record which gates
+were unmet. Pass the spec stage's artifact with `--spec-path <repo-relative
+path>`. With `COREDOC_WORKFLOW_GATES=warn` (today's default) a refusal is
+printed and the close proceeds; `enforce` refuses.
+
 Run stage boundary commands sequentially: never batch them in parallel. Only one
 stage occurrence may be open. Map `DONE` and `DONE_WITH_CONCERNS` to `success`,
 and `BLOCKED` to `blocked`. On `NEEDS_CONTEXT`, finish the current stage as
@@ -180,6 +194,11 @@ After the final stage, run:
   [--require-skill <approved-id> ...]
 ```
 
+A standalone specification run that delivered a draft is parked instead, with
+`--outcome delivered-draft --spec-path <repo-relative path>`: it sends no
+record, waits up to 14 days for the user's approval, and is closed later by
+`coredoc-workflows spec accept --finish` or `spec abandon --reason "<text>"`.
+
 A successful finish fails closed unless every routed stage is closed
 successfully. Execute a missing stage; never bypass the gate. Missing attributed
 state requires routing again. `status: inactive` from a closing `stage-run` or
@@ -194,8 +213,11 @@ than overstating recorded evidence.
 For workflows with findings, pass `--findings-measurement measured` and balanced
 integer counts (`remaining = initial - resolved + introduced`); otherwise use
 `not-applicable` or leave `not-measured`. If graph tools were used, pass
-`--coredoc-status complete|partial|unavailable|not-assessed` and only a supported
-closed-vocabulary gap. When finish reports `feedbackOwed` and the user requested
+`--coredoc-status complete|partial|unavailable` and only a supported
+closed-vocabulary gap: a successful finish is refused when the status would
+resolve to `not-assessed`, and `--skip-intent "<reason>"` is the alternative.
+`route-task` prints the previous run's unmet and skipped gates as
+`previousRunGates`; read them before repeating the same skip. When finish reports `feedbackOwed` and the user requested
 feedback, read and apply
 `<plugin-root>/resources/methodology/workflow-feedback.md`; resolve
 `submit_session_feedback` by tool contract, never by a skill name.

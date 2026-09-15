@@ -1,0 +1,36 @@
+{
+  "provenance": {
+    "host": "claude",
+    "version": "2.1.272",
+    "capture": "real-cli-structurally-redacted",
+    "scenario": "write",
+    "capturedAt": "2026-09-15T01:31:47Z"
+  },
+  "redaction": "session ids -> 11111111-1111-4111-8111-111111111111; workspace id -> 00000000-0000-4000-8000-000000000000; transcript_path -> /redacted/TRANSCRIPT_SENTINEL.jsonl; absolute paths -> /redacted/PATH_SENTINEL; long text fields truncated to 600 chars with a …[truncated] marker. Field names, JSON types, tool_name, hook_event_name, tool_input argument names/values (non-path), and tool_response structure are preserved from the real captured payload.",
+  "payload": {
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "transcript_path": "/redacted/TRANSCRIPT_SENTINEL.jsonl",
+    "cwd": "/redacted/PATH_SENTINEL",
+    "prompt_id": "0ff6bf1b-d1bb-4837-9fe3-0c3844e06a56",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/redacted/PATH_SENTINEL",
+      "content": "hello from write tool"
+    },
+    "tool_response": {
+      "type": "create",
+      "filePath": "/redacted/PATH_SENTINEL",
+      "content": "hello from write tool",
+      "structuredPatch": [],
+      "originalFile": null,
+      "userModified": false
+    },
+    "tool_use_id": "toolu_01D1cSdi4vF3eKAkke8dQrNb",
+    "duration_ms": 6
+  }
+}

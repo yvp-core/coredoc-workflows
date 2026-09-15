@@ -5,10 +5,33 @@ import { pathToFileURL } from "node:url";
 
 import { retryReconcileConfiguredArtifacts } from "./artifact-checkpoints.mjs";
 import { createConfiguredCaptureRecorder } from "./capture-client.mjs";
+import {
+  captureNoticeText,
+  captureStateProjectKey,
+  captureStateRecorder,
+  outboxPayloadIds,
+  reconcileCaptureFiles,
+} from "./capture-state.mjs";
 
 const RETRY_TIMEOUT_MS = 750;
 const MAX_SESSION_START_INPUT_BYTES = 64 * 1024;
 const MAX_CWD_LENGTH = 4_096;
+
+/**
+ * An event the state still calls queued or failed whose payload is no longer in
+ * the outbox will never be retried: record it as lost instead of retriable.
+ */
+function reconcilePending(recorder, projectKey, env, cwd) {
+  try {
+    reconcileCaptureFiles(
+      projectKey,
+      recorder.pending().map(({ eventId }) => eventId),
+      { env, present: outboxPayloadIds({ env, cwd }) },
+    );
+  } catch {
+    // Fail-open: reconciliation never changes the retry's outcome.
+  }
+}
 
 /** Flush the current capture binding once; persisted events own their session IDs. */
 export async function retryPendingCaptureEvents({
@@ -23,12 +46,22 @@ export async function retryPendingCaptureEvents({
   }
 
   let recorder;
+  // Replay is outbox-based: the persisted envelope is re-sent with its original
+  // eventId, occurredAt and session attribution, so a retry from another
+  // session is byte-identical to the attempt that failed. Delivery state is
+  // updated through the same transitions the first attempt used.
+  const projectKey = captureStateProjectKey({ env, cwd });
   try {
-    recorder = createRecorder({ env, cwd });
+    recorder = createRecorder({
+      env,
+      cwd,
+      createRecorder: captureStateRecorder({ projectKey, env, cwd }),
+    });
     const delivered = await recorder.flush({
       ...(send === undefined ? {} : { send }),
       timeoutMs,
     });
+    reconcilePending(recorder, projectKey, env, cwd);
     return {
       status: delivered.pending === 0 ? "sent" : "pending",
       attempted: delivered.attempted,
@@ -42,6 +75,7 @@ export async function retryPendingCaptureEvents({
       return { status: "failed", attempted: 0, sent: 0 };
     }
     try {
+      reconcilePending(recorder, projectKey, env, cwd);
       const pending = recorder.pending().length;
       return {
         status: "pending",
@@ -100,6 +134,11 @@ async function sessionStartCwd(
 async function main() {
   const cwd = await sessionStartCwd();
   await retrySessionStartDelivery({ cwd });
+  // Loud fail-open, after the flush: this hook runs last of the SessionStart
+  // group, so what is still undelivered here is what the session inherits.
+  // stdout stays empty — the notice is a diagnostic, never hook output.
+  const notice = captureNoticeText({ cwd });
+  if (notice) process.stderr.write(`${notice}\n`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {

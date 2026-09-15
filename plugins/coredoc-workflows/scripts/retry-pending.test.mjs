@@ -108,9 +108,11 @@ test("flushes the current capture binding once within the SessionStart budget wi
   });
 
   assert.deepEqual(calls, [
-    ["create", { env, cwd: "/repository" }],
+    // Issue 05: the replay writes delivery state through an injected recorder.
+    ["create", { env, cwd: "/repository", createRecorder: calls[0][1].createRecorder }],
     ["flush", { send, timeoutMs: 750 }],
   ]);
+  assert.equal(typeof calls[0][1].createRecorder, "function");
   assert.deepEqual(result, {
     status: "sent",
     attempted: 0,

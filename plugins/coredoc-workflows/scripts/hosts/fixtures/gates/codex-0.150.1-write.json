@@ -1,0 +1,25 @@
+{
+  "provenance": {
+    "host": "codex",
+    "version": "0.150.1",
+    "capture": "real-cli-structurally-redacted",
+    "scenario": "write",
+    "capturedAt": "2026-09-15T01:31:48Z"
+  },
+  "redaction": "session ids -> 11111111-1111-4111-8111-111111111111; workspace id -> 00000000-0000-4000-8000-000000000000; transcript_path -> /redacted/TRANSCRIPT_SENTINEL.jsonl; absolute paths -> /redacted/PATH_SENTINEL; long text fields truncated to 600 chars with a …[truncated] marker. Field names, JSON types, tool_name, hook_event_name, tool_input argument names/values (non-path), and tool_response structure are preserved from the real captured payload.",
+  "payload": {
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "turn_id": "11111111-1111-4111-8111-111111111111",
+    "transcript_path": "/redacted/TRANSCRIPT_SENTINEL.jsonl",
+    "cwd": "/redacted/PATH_SENTINEL",
+    "hook_event_name": "PostToolUse",
+    "model": "gpt-5.6-luna",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "apply_patch",
+    "tool_input": {
+      "command": "*** Begin Patch\n*** Add File: /redacted/PATH_SENTINEL\n+hello from write tool\n*** End Patch"
+    },
+    "tool_response": "Exit code: 0\nWall time: 0 seconds\nOutput:\nSuccess. Updated the following files:\nA /redacted/PATH_SENTINEL\n",
+    "tool_use_id": "exec-563f3d71-6f47-4e0c-aea8-c94d7398726f"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "provenance": {
+    "host": "codex",
+    "version": "0.150.1",
+    "capture": "real-cli-structurally-redacted",
+    "scenario": "bash-rg-version",
+    "capturedAt": "2026-09-15T01:31:48Z"
+  },
+  "redaction": "session ids -> 11111111-1111-4111-8111-111111111111; workspace id -> 00000000-0000-4000-8000-000000000000; transcript_path -> /redacted/TRANSCRIPT_SENTINEL.jsonl; absolute paths -> /redacted/PATH_SENTINEL; long text fields truncated to 600 chars with a …[truncated] marker. Field names, JSON types, tool_name, hook_event_name, tool_input argument names/values (non-path), and tool_response structure are preserved from the real captured payload.",
+  "payload": {
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "turn_id": "11111111-1111-4111-8111-111111111111",
+    "transcript_path": "/redacted/TRANSCRIPT_SENTINEL.jsonl",
+    "cwd": "/redacted/PATH_SENTINEL",
+    "hook_event_name": "PostToolUse",
+    "model": "gpt-5.6-luna",
+    "permission_mode": "bypassPermissions",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "rg --version --"
+    },
+    "tool_response": "ripgrep 15.2.0 (rev e89fff89ac)\n\nfeatures:+pcre2\nsimd(compile):+NEON\nsimd(runtime):+NEON\n\nPCRE2 10.45 is available (JIT is available)\n",
+    "tool_use_id": "exec-d1325d76-7d48-40f3-9bd6-90c0ad488ab9"
+  }
+}

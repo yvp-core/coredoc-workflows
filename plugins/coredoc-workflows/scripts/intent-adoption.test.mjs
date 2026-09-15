@@ -66,8 +66,14 @@ test("intent-context methodology states the exact-ID-first protocol", async () =
   // Applies only when the capability is there; its absence is normal (BR-9, AC-9).
   assert.match(body, /get_intent_context/);
   assert.match(body, phrase("coredoc intent context"));
-  assert.match(body, /optional/i);
-  assert.match(body, phrase("never blocks"));
+  // Since the workflow gates landed the read is evidence a bound spec close is
+  // checked against, so the section no longer claims it never blocks (DEC-4).
+  assert.doesNotMatch(body, phrase("Intent context is optional evidence"));
+  assert.match(
+    body,
+    phrase("a successful spec-stage close requires an observed intent context read"),
+  );
+  assert.match(body, phrase("On an unbound checkout, proceed from repository evidence"));
 
   // BR-8: reuse routed IDs, fetch only absent payload, one bounded lookup.
   assert.match(body, /exact[- ]ID[- ]first/i);

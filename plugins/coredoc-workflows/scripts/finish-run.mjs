@@ -13,20 +13,69 @@ import {
   deliverCaptureEvent,
   resolveWorkflowRuntime,
 } from "./capture-client.mjs";
+import { captureIdentityEnv, runCaptureEnv } from "./capture-identity.mjs";
+import {
+  captureStateRecorder,
+  foldCaptureState,
+  relayHealth,
+  undeliveredCaptureNotice,
+} from "./capture-state.mjs";
+
 import { runConfiguredArtifactCheckpoint } from "./artifact-checkpoints.mjs";
+import {
+  normalizedSpecPath,
+  readSpecArtifact,
+  removeSpecArtifactKey,
+  specAbsolutePath,
+  specRefFor,
+  writeSpecArtifactKey,
+} from "./spec-artifact.mjs";
+import {
+  appendRunHistory,
+  applyGates,
+  hasUndeliveredCapture,
+  lastRunAddendum,
+  evaluateFinishGate,
+  gateMode,
+  recordAbandonedStageGates,
+  resolveCoredocStatus,
+  runIsBound,
+  skipReason,
+} from "./workflow-gates.mjs";
 import {
   abandonOpenWorkflowStage,
   completeWorkflowRun,
   finalizeWorkflowRun,
   hasWorkflowSessionAttribution,
   normalizedWorkflowSkillId,
+  liveWorkflowRun,
+  parkWorkflowRun,
+  readWorkflowObservations,
+  readWorkflowRun,
+  terminateRun,
+  workflowRunGates,
 } from "./workflow-run-state.mjs";
 
 // The outcomes a caller of this command may record. `abandoned` is deliberately
 // absent — only session teardown writes it, and it goes through the library.
-export const CALLER_OUTCOMES = Object.freeze(
-  WORKFLOW_OUTCOMES.filter((outcome) => outcome !== "abandoned"),
-);
+// `delivered-draft` is local-only: it parks a standalone specification run to
+// wait for the user's acceptance (BR-5) and sends no capture event, so it is
+// deliberately absent from the contract's outcomes.
+export const PARKED_OUTCOME = "delivered-draft";
+export const CALLER_OUTCOMES = Object.freeze([
+  ...WORKFLOW_OUTCOMES.filter((outcome) => outcome !== "abandoned"),
+  PARKED_OUTCOME,
+]);
+export const ACCEPTANCE_TTL_DAYS = 14;
+
+// BR-5 — a run awaiting acceptance has exactly two successful ends, and this
+// command is neither: `spec accept --finish` applies the candidate check that
+// the draft -> accepted transition is conditioned on. Finishing it here would
+// close the run, delete its state and leave the specification a draft pointing
+// at a run that no longer exists. Not a gate: no mode relaxes it, because it is
+// the wrong terminal path rather than missing evidence.
+export const ACCEPTANCE_REFUSAL_CODE = "acceptance-run-not-finishable";
+export const ACCEPTANCE_REFUSAL = `${ACCEPTANCE_REFUSAL_CODE}: this run is a standalone specification awaiting acceptance: close it with \`coredoc-workflows spec accept --finish\` or \`spec abandon --reason "<text>"\`; \`--outcome failed|blocked\` records the unmet gates and removes the specification's run pointer.`;
 
 const VALUE_FLAGS = new Set([
   "outcome",
@@ -38,6 +87,8 @@ const VALUE_FLAGS = new Set([
   "coredoc-status",
   "coredoc-gap",
   "require-skill",
+  "spec-path",
+  "skip-intent",
 ]);
 const FINDING_KEYS = {
   "findings-initial": "findingsInitial",
@@ -83,6 +134,10 @@ export function parseFinishArgs(args) {
       options.findingsMeasurement = value;
     } else if (name === "coredoc-status") {
       options.coredocStatus = value;
+    } else if (name === "spec-path") {
+      options.specPath = value;
+    } else if (name === "skip-intent") {
+      options.skipIntentReason = skipReason("skip-intent", value);
     } else {
       options.outcome = value;
     }
@@ -204,6 +259,10 @@ async function abandonOpenStage({
   sessionId,
   at,
   env,
+  projectKey,
+  historyEnv,
+  deliverEnv,
+  deliverSessionId,
   timeoutMs,
   abandonStage,
   deliver,
@@ -217,11 +276,157 @@ async function abandonOpenStage({
   }
   if (!abandoned?.event) return { status: "failed" };
   const capture = await deliver(abandoned.event, {
-    env,
-    sessionId,
+    env: deliverEnv,
+    sessionId: deliverSessionId,
+    createRecorder: captureStateRecorder({ projectKey, env: historyEnv }),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
   });
   return { status: "abandoned", stageId: abandoned.occurrence.stageId, capture };
+}
+
+/**
+ * One durable line per run, in the checkout's own history, written before the
+ * ledger is deleted. Bookkeeping never blocks a finish: a run routed before
+ * gates existed has no project key and simply records nothing.
+ */
+function recordRunHistory(state, line, { env, appendHistory }) {
+  if (state.projectKey === undefined) return undefined;
+  try {
+    // The run's delivery state joins its history line here (issue 05): the
+    // file is keyed by run id, so a retry from another session has already
+    // updated it by the time the run is closed.
+    const capture = foldCaptureState(state.projectKey, state.runId, { env });
+    return appendHistory(
+      state.projectKey,
+      {
+        runId: state.runId,
+        intent: state.intent,
+        workflowId: state.workflowId,
+        ...(state.specRef === undefined ? {} : { specRef: state.specRef }),
+        ...line,
+        ...(capture === undefined ? {} : { capture }),
+      },
+      { env },
+    );
+  } catch {
+    // Deliberate fail-open: an unwritable history must not keep the run open.
+    return undefined;
+  }
+}
+
+function parkedCoredocStatus(state, observations) {
+  return resolveCoredocStatus({
+    bound: state.bound,
+    coredocCalls: observations.filter((event) => event.type === "coredoc").length,
+    observations,
+  });
+}
+
+/** The specification this run is about, from `--spec-path` or from the route. */
+export function runSpecRef(state, specPath) {
+  if (specPath === undefined) return state.specRef;
+  return specRefFor(
+    state.repositoryKey,
+    normalizedSpecPath(specPath, state.repoRoot),
+  );
+}
+
+/**
+ * BR-5 — a standalone specification run that delivered a draft is parked, not
+ * finished. The run keeps its observations and its capture identity, the spec
+ * carries the pointer back to it, the session slot is freed, and NO capture
+ * event is sent: `delivered-draft` is a local, non-terminal transition.
+ */
+async function parkDeliveredDraft(
+  { sessionId, specPath, at },
+  { env, historyEnv, park, appendHistory, readObservations },
+) {
+  if (!hasWorkflowSessionAttribution(sessionId)) {
+    return { status: "unattributed" };
+  }
+  const state = liveWorkflowRun(sessionId, { env });
+  if (!state) return { status: "inactive", ...lastRunAddendum({ env: historyEnv }) };
+  if (state.intent !== "spec") {
+    throw new Error(
+      `--outcome ${PARKED_OUTCOME} is only for a standalone spec run; this run's intent is ${state.intent}`,
+    );
+  }
+  const specRef = runSpecRef(state, specPath);
+  if (specRef === undefined) {
+    throw new Error(
+      `--outcome ${PARKED_OUTCOME} requires --spec-path <repository-relative path> to the delivered draft`,
+    );
+  }
+  const absolute = specAbsolutePath(specRef, { repoRoot: state.repoRoot });
+  const artifact = readSpecArtifact(absolute);
+  if (artifact === undefined) {
+    throw new Error(`the specification ${specRef} does not exist at ${absolute}`);
+  }
+  if (artifact.status !== "draft") {
+    throw new Error(
+      `the specification ${specRef} is ${artifact.status ?? "unstated"}, not draft; finish the run instead of parking it`,
+    );
+  }
+  const parked = park(
+    sessionId,
+    {
+      runId: state.runId,
+      reason: "awaiting-acceptance",
+      ttlDays: ACCEPTANCE_TTL_DAYS,
+      specRef,
+      capture: captureIdentityEnv(env),
+      at,
+    },
+    { env },
+  );
+  if (!parked) {
+    return {
+      status: "inactive",
+      ...lastRunAddendum({ env: historyEnv, projectKey: state.projectKey }),
+    };
+  }
+  // The pointer the later `spec accept` follows back to this run, written only
+  // once the run is actually parked. `spec accept` also finds the run by its
+  // `specRef`, so a document that could not be updated is still recoverable.
+  const pointed = writeSpecArtifactKey(absolute, "run", state.runId);
+  const history = recordRunHistory(
+    { ...state, specRef },
+    {
+      outcome: "pending-acceptance",
+      finishedAt: at,
+      coredocStatus: parkedCoredocStatus(state, readObservations(sessionId, { env })),
+      gates: workflowRunGates(state),
+    },
+    { env: historyEnv, appendHistory },
+  );
+  return {
+    status: "pending-acceptance",
+    runId: state.runId,
+    specRef,
+    ttlDays: ACCEPTANCE_TTL_DAYS,
+    ...(pointed ? {} : { specPointer: "not-written" }),
+    acceptWith: `coredoc-workflows spec accept --path ${specRef.slice(specRef.indexOf(":") + 1)}`,
+    ...(history === undefined ? {} : { history }),
+  };
+}
+
+/**
+ * The terminal end of an acceptance run closed as `failed` or `blocked`: the
+ * run and its parked directory go together, and the specification stops
+ * pointing at a run that no longer exists.
+ */
+function terminateAcceptanceRun(state, sessionId, { env, cwd }) {
+  const specRef = state.specRef ?? state.acceptance?.specRef;
+  if (specRef !== undefined) {
+    removeSpecArtifactKey(
+      specAbsolutePath(specRef, { repoRoot: state.repoRoot, cwd }),
+      "run",
+    );
+  }
+  return terminateRun(sessionId, state.runId, {
+    env,
+    ...(state.projectKey === undefined ? {} : { projectKey: state.projectKey }),
+  });
 }
 
 export async function finishWorkflowRun(
@@ -236,11 +441,14 @@ export async function finishWorkflowRun(
     coredocStatus,
     coredocGapCodes = [],
     requiredSkillIds = [],
+    specPath,
+    skipIntentReason,
     at = new Date().toISOString(),
   },
   {
     env = process.env,
     cwd = process.cwd(),
+    stderr = process.stderr,
     timeoutMs,
     now = Date.now,
     complete = completeWorkflowRun,
@@ -248,8 +456,28 @@ export async function finishWorkflowRun(
     deliver = deliverCaptureEvent,
     finalize = finalizeWorkflowRun,
     abandonStage = abandonOpenWorkflowStage,
+    park = parkWorkflowRun,
+    appendHistory = appendRunHistory,
+    readObservations = readWorkflowObservations,
+    // The parked-run sweep addresses a run through its own directory; the
+    // durable history still belongs to the checkout, never inside the run.
+    historyEnv = env,
+    historyOutcome,
+    historyReason,
+    // BR-3 belongs to `finish-run`; BR-5's acceptance finish is gated on its
+    // candidate batch instead and passes false.
+    assessCoredocStatus = true,
+    // Set only by `spec-acceptance.mjs`, the one caller allowed to end a run
+    // that is awaiting acceptance.
+    acceptanceTerminal = false,
   } = {},
 ) {
+  if (outcome === PARKED_OUTCOME) {
+    return parkDeliveredDraft(
+      { sessionId, specPath, at },
+      { env, historyEnv, park, appendHistory, readObservations },
+    );
+  }
   const finished = complete(sessionId, {
     env,
     at,
@@ -269,15 +497,57 @@ export async function finishWorkflowRun(
         "active workflow run state is missing or no longer active; route again before verifying required skills",
       );
     }
-    return { status: "inactive" };
+    return { status: "inactive", ...lastRunAddendum({ env: historyEnv, cwd }) };
   }
   assertCapturedStages(finished, outcome);
   assertRequiredSkills(finished, outcome, requiredSkillIds);
-  const stageAbandon = openCapturedStage(finished)
+  const { state } = finished;
+  // The generic finish of an acceptance run: `success` is refused outright, and
+  // `failed`/`blocked` are allowed but routed through the acceptance terminal
+  // path below, so the run leaves no dangling `run:` pointer behind.
+  const acceptanceClose = !acceptanceTerminal && state.acceptance !== undefined;
+  if (acceptanceClose && outcome === "success") {
+    throw new Error(ACCEPTANCE_REFUSAL);
+  }
+  const resolvedCoredocStatus = resolveCoredocStatus({
+    explicit: coredocStatus,
+    bound: state.bound,
+    coredocCalls: finished.summary.coredocCalls,
+    observations: readObservations(sessionId, { env }),
+  });
+  const gated = applyGates(
+    assessCoredocStatus
+      ? [
+          evaluateFinishGate({
+            coredocStatus: resolvedCoredocStatus,
+            bound: runIsBound(state),
+            ...(skipIntentReason === undefined ? {} : { reason: skipIntentReason }),
+          }),
+        ]
+      : [],
+    { outcome, bound: runIsBound(state), mode: gateMode(env) },
+  );
+  if (gated.refusal !== undefined) throw new Error(gated.refusal);
+  // A run parked for acceptance is recorded under the session that started it:
+  // the server rejects a `workflow.run.finished` whose session is not the one
+  // that opened the run.
+  const deliverSessionId = state.acceptance?.originSessionId ?? sessionId;
+  const deliverEnv = state.acceptance?.capture
+    ? runCaptureEnv(env, state.acceptance.capture)
+    : env;
+  const openStage = openCapturedStage(finished);
+  // AC-7: a non-success finish abandons the open occurrence; its gates are
+  // recorded as unmet first, so the history line below carries them.
+  if (openStage) recordAbandonedStageGates(sessionId, { env, cwd, at });
+  const stageAbandon = openStage
     ? await abandonOpenStage({
         sessionId,
         at,
         env,
+        projectKey: state.projectKey,
+        historyEnv,
+        deliverEnv,
+        deliverSessionId,
         timeoutMs,
         abandonStage,
         deliver,
@@ -291,9 +561,7 @@ export async function finishWorkflowRun(
     findingsResolved,
     findingsRemaining,
     findingsIntroduced,
-    coredocStatus:
-      coredocStatus ??
-      (finished.summary.coredocCalls === 0 ? "not-used" : "not-assessed"),
+    coredocStatus: resolvedCoredocStatus,
     coredocGapCodes,
   };
   const event = workflowEvent({
@@ -348,18 +616,59 @@ export async function finishWorkflowRun(
     };
   }
   const capture = await deliver(captureEvent, {
-    env,
-    sessionId,
+    env: deliverEnv,
+    sessionId: deliverSessionId,
+    // The delivery identity is the run's own (BR-5); the state file it updates
+    // belongs to the checkout's history, so it is keyed by `historyEnv`.
+    createRecorder: captureStateRecorder({
+      projectKey: state.projectKey,
+      env: historyEnv,
+      cwd,
+    }),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
   });
+  // The gate outcomes outlive the ledger (BR-6): the history line is written
+  // before the finalize that deletes the run state and its observations.
+  const history = recordRunHistory(
+    state,
+    {
+      outcome: historyOutcome ?? outcome,
+      finishedAt: at,
+      ...(historyReason === undefined ? {} : { reason: historyReason }),
+      coredocStatus: resolvedCoredocStatus,
+      // Re-read: an abandoned open stage recorded its gates on the run after
+      // `complete` took this snapshot.
+      gates: [
+        ...workflowRunGates(readWorkflowRun(sessionId, { env }) ?? state),
+        ...gated.results,
+      ],
+    },
+    { env: historyEnv, appendHistory },
+  );
+  // Loud fail-open (issue 05): the run closes either way, but never silently
+  // when its own events are still sitting in the outbox.
+  const captureNotice = hasUndeliveredCapture(history)
+    ? undeliveredCaptureNotice(history.capture, {
+        relay: relayHealth({ env: deliverEnv, cwd }),
+      })
+    : "";
+  if (captureNotice !== "") stderr.write(`${captureNotice}\n`);
   // Capture is fail-open: delivery state must never keep the completed local
   // workflow active and block the next route in the same host session.
-  finalize(sessionId, finished.state.runId, { env });
+  if (acceptanceClose) {
+    terminateAcceptanceRun(state, sessionId, { env, cwd });
+  } else {
+    finalize(sessionId, finished.state.runId, { env });
+  }
   return {
     status: "finished",
+    ...(captureNotice === "" ? {} : { captureNotice }),
     event,
     capture,
     artifacts,
+    ...(gated.results.length === 0 ? {} : { gates: gated.results }),
+    ...(gated.warned === undefined ? {} : { gatesWarned: true }),
+    ...(history === undefined ? {} : { history }),
     ...(stageAbandon === undefined ? {} : { stageAbandon }),
     pending:
       capture.status === "pending" ||

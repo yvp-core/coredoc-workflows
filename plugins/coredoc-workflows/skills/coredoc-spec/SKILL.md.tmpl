@@ -1,6 +1,6 @@
 ---
 name: coredoc-spec
-description: Turn vague product or engineering intent into a precise executable specification with scope, acceptance criteria, testing, rollout, and rollback. Use when asked to write a spec, ticket, issue, or backlog item.
+description: Turn vague product or engineering intent into a precise executable specification with scope, acceptance criteria, testing, rollout, and rollback. Use when asked to write a spec, ticket, issue, or backlog item. Closing the spec stage successfully requires an observed intent context read; when the specification becomes accepted, run the `intent-capture` skill so the candidates it introduces exist before the implement stage (or `spec accept`) closes.
 ---
 
 # Specification adapter
@@ -184,6 +184,29 @@ specification delivery without an implementation stage, deliver the draft as
 the handoff and set `status: accepted` only when the user explicitly approves
 the completed draft; do not add a confirmation round to obtain it. Alignment
 approval or a review verdict alone never accepts the specification.
+
+Tell the coordinator which artifact you wrote, so the run records it: the
+specification stage is closed with `stage-run finish --stage-id spec --outcome
+success --spec-path <repo-relative spec path>`, and a standalone delivery is
+closed with the router's `finish-run --outcome delivered-draft --spec-path
+<repo-relative spec path>` instead of an ordinary finish. Those two are the
+coordinator's commands; never run them yourself.
+
+`delivered-draft` parks the run for the approval rather than finishing it, for
+up to 14 days, and the draft carries `run: <runId>` back to it. The approval
+usually arrives in a later session. Do not edit `status:` by hand there: reopen
+the parked run, propose the candidate intent as below, and let the acceptance
+command make the transition. These two are yours to run:
+
+```text
+<plugin-root>/bin/coredoc-workflows spec accept --path <repo-relative spec path>
+<plugin-root>/bin/coredoc-workflows spec accept --finish
+```
+
+`--finish` writes `status: accepted` itself, and refuses while no candidate
+batch citing this specification was observed; pass `--skip-intent "<reason>"`
+only when there is a real reason there can be none. If the user drops the draft
+instead, run `spec abandon --reason "<text>"`.
 
 If the specification has reached `status: accepted` and this session has a cloud
 Coredoc intent write capability — `intent_propose` is visible — run the "After

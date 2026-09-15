@@ -1103,3 +1103,143 @@ test("claiming an expired run closes its stage at the suspension time and blocks
   assert.equal(finalizeWorkflowRun(SESSION_ID, RUN_ID, { env }).runId, RUN_ID);
   assert.equal(readWorkflowRun(SESSION_ID, { env }), null);
 });
+
+/* --------------------------------------------- issue 01: gate evidence --- */
+
+test("whitelists the new coredoc observation fields and drops invalid values", () => {
+  const env = testEnv();
+  startDeclaredRun(env);
+
+  const recorded = appendWorkflowObservation(
+    SESSION_ID,
+    {
+      type: "coredoc",
+      at: "2026-07-31T10:00:01.000Z",
+      success: true,
+      tool: "intent_propose",
+      access: "write",
+      result: "ok",
+      specMatch: true,
+      created: 2,
+      refs: ["coredoc-parser:spec.md", 7, "b".repeat(200), "third"],
+      unclassified: true,
+      // Nothing outside the whitelist survives, however it is spelled.
+      toolInput: { statement: "STATEMENT_SENTINEL" },
+    },
+    { env },
+  );
+  assert.deepEqual(recorded.event, {
+    type: "coredoc",
+    at: "2026-07-31T10:00:01.000Z",
+    success: true,
+    tool: "intent_propose",
+    access: "write",
+    result: "ok",
+    unclassified: true,
+    specMatch: true,
+    created: 2,
+    refs: ["coredoc-parser:spec.md", "b".repeat(120)],
+  });
+
+  const dropped = appendWorkflowObservation(
+    SESSION_ID,
+    {
+      type: "coredoc",
+      at: "2026-07-31T10:00:02.000Z",
+      success: false,
+      tool: "Not A Tool",
+      access: "admin",
+      result: "maybe",
+      specMatch: "yes",
+      created: -1,
+      refs: "spec.md",
+      unclassified: "true",
+    },
+    { env },
+  );
+  assert.deepEqual(dropped.event, {
+    type: "coredoc",
+    at: "2026-07-31T10:00:02.000Z",
+    success: false,
+  });
+});
+
+test("records repository searches and leaves the capture counters untouched", () => {
+  const env = testEnv();
+  startDeclaredRun(env);
+  for (const tool of ["Grep", "Glob", "Read", "Bash"]) {
+    assert.equal(
+      appendWorkflowObservation(
+        SESSION_ID,
+        { type: "search", at: "2026-07-31T10:00:01.000Z", tool },
+        { env },
+      ).status,
+      "recorded",
+    );
+  }
+  assert.equal(
+    appendWorkflowObservation(
+      SESSION_ID,
+      { type: "search", at: "2026-07-31T10:00:01.000Z", tool: "WebSearch" },
+      { env },
+    ).status,
+    "ignored",
+  );
+
+  const events = readWorkflowObservations(SESSION_ID, { env });
+  assert.equal(events.length, 4);
+  const summary = summarizeWorkflowObservations(events);
+  assert.equal(summary.coredocCalls, 0);
+  assert.equal(summary.editCalls, 0);
+  assert.equal(summary.verificationRuns, 0);
+});
+
+test("reads observations of the current stage attempt only", () => {
+  const env = testEnv();
+  startDeclaredRun(env);
+  const observe = (at, tool) =>
+    appendWorkflowObservation(
+      SESSION_ID,
+      { type: "coredoc", at, success: true, tool, access: "read", result: "ok" },
+      { env },
+    );
+
+  startWorkflowStage(SESSION_ID, "spec", { at: "2026-07-31T10:00:01.000Z" }, { env });
+  observe("2026-07-31T10:00:02.000Z", "get_intent_context");
+  finishWorkflowStage(
+    SESSION_ID,
+    "spec",
+    "failed",
+    { at: "2026-07-31T10:00:03.000Z" },
+    { env },
+  );
+  // Between the attempts: inside the run, outside every occurrence.
+  observe("2026-07-31T10:00:04.000Z", "search_symbols");
+  startWorkflowStage(SESSION_ID, "spec", { at: "2026-07-31T10:00:05.000Z" }, { env });
+  observe("2026-07-31T10:00:06.000Z", "explain");
+
+  assert.equal(readWorkflowObservations(SESSION_ID, { env }).length, 3);
+  assert.deepEqual(
+    readWorkflowObservations(SESSION_ID, { env, stageId: "spec" }).map(
+      (event) => event.tool,
+    ),
+    ["explain"],
+  );
+  assert.deepEqual(
+    readWorkflowObservations(SESSION_ID, {
+      env,
+      stageId: "spec",
+      attempt: 2,
+    }).map((event) => event.tool),
+    ["explain"],
+  );
+  // Only the latest occurrence is kept, so an earlier attempt has no evidence.
+  assert.deepEqual(
+    readWorkflowObservations(SESSION_ID, { env, stageId: "spec", attempt: 1 }),
+    [],
+  );
+  assert.deepEqual(
+    readWorkflowObservations(SESSION_ID, { env, stageId: "tdd" }),
+    [],
+  );
+});

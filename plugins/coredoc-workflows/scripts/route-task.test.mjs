@@ -1197,7 +1197,10 @@ test("the router reports expired suspended runs it abandoned and never fails on 
       },
     },
   );
-  assert.deepEqual(calls, [{ ownSessionId: "session-router" }]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].ownSessionId, "session-router");
+  // The sweep now also covers runs parked for acceptance under this checkout.
+  assert.equal(typeof calls[0].projectKey, "string");
   assert.deepEqual(reported.expiredRuns, [
     { runId: "cdr-20260801-a1b2c3", sessionId: "session-gone", status: "finished" },
   ]);

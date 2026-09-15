@@ -57,8 +57,14 @@ test("a compacted session is told about its open run", () => {
   const output = sessionStartOutput(event({ source: "compact" }), { env });
   const parsed = JSON.parse(output);
   assert.equal(parsed.hookSpecificOutput.hookEventName, "SessionStart");
+  const context = parsed.hookSpecificOutput.additionalContext;
+  assert.ok(
+    context.startsWith("Coredoc workflows plugin (SessionStart hook) —"),
+    context,
+  );
+  assert.ok(context.endsWith("Continue that run from this state."), context);
   assert.match(
-    parsed.hookSpecificOutput.additionalContext,
+    context,
     new RegExp(`run ${RUN_ID} .* is active in this session\\. Open stage: spec\\.`),
   );
 });

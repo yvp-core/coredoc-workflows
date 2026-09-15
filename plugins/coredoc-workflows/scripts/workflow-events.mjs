@@ -12,12 +12,17 @@ export const FINDINGS_MEASUREMENTS = Object.freeze([
   "not-measured",
   "not-applicable",
 ]);
+// Local vocabulary only: the `workflow.run.finished` capture event carries the
+// outcome and the counters, never a Coredoc status, so the two values the gates
+// resolve from local facts are not a contract change (LIM-3).
 export const COREDOC_STATUSES = Object.freeze([
   "complete",
   "partial",
   "unavailable",
   "not-assessed",
   "not-used",
+  "not-configured",
+  "not-bound",
 ]);
 export const COREDOC_GAP_CODES = Object.freeze([
   "repo-not-indexed",
