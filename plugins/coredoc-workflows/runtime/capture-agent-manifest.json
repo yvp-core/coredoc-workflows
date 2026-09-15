@@ -28,7 +28,7 @@
     },
     {
       "path": "runtime/capture/index.mjs",
-      "sha256": "1160d330e904e80c4b881deaeb5d1300fd270bbd6f3a5726ff3169d0518cd241"
+      "sha256": "d37ccf28ebcd330daa733dcf56098a9aab678831b0c2a1a3cedef04b51ceeebc"
     },
     {
       "path": "scripts/artifact-checkpoints.mjs",

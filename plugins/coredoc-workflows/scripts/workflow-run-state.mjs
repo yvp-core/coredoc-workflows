@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import {
   appendFileSync,
   closeSync,
+  existsSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -18,10 +19,44 @@ import { declaredWorkflowStagesV2 } from "../runtime/capture/contract.mjs";
 import { stateRoot } from "./project-key.mjs";
 
 const SESSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
+const SAFE_SEGMENT_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+const RUN_ID_SEGMENT_RE = /^cdr-\d{8}-[0-9a-f]{6}$/;
+const GATE_NAMES = new Set(["intent", "candidates", "mcp"]);
+const GATE_RESULTS = new Set([
+  "passed",
+  "skipped",
+  "unmet",
+  "not-configured",
+  "not-observed",
+  "not-bound",
+  "not-applicable",
+]);
+const MAX_GATE_RESULTS = 60;
+const MAX_GATE_REASON_CHARS = 200;
+const MAX_SPEC_REF_CHARS = 400;
 const MAX_EVENT_BYTES = 4_096;
 const RUN_STATE_VERSION = 1;
-const OBSERVATION_TYPES = new Set(["edit", "verify", "coredoc", "skill"]);
+const OBSERVATION_TYPES = new Set([
+  "edit",
+  "verify",
+  "coredoc",
+  "skill",
+  "search",
+]);
 const VERIFY_KINDS = new Set(["test", "typecheck", "check", "build"]);
+const SEARCH_TOOLS = new Set(["Grep", "Glob", "Read", "Bash"]);
+const COREDOC_TOOL_NAME_RE = /^[a-z0-9_]{1,64}$/;
+const COREDOC_ACCESS = new Set(["read", "write"]);
+const COREDOC_RESULTS = new Set([
+  "ok",
+  "error",
+  "denied",
+  "not_configured",
+  "invalid",
+  "unknown",
+]);
+const MAX_OBSERVATION_REFS = 2;
+const MAX_OBSERVATION_REF_CHARS = 120;
 const SKILL_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,75}$/;
 const WORKFLOW_SKILL_PREFIX = "coredoc-workflows:";
 // Leaves room under the server's 200-key per-event usage bound for lifecycle
@@ -60,6 +95,32 @@ function stateDirectory(env = process.env) {
     env.COREDOC_WORKFLOWS_STATE_DIR ??
     join(resolve(stateRoot(env)), "workflow-runs")
   );
+}
+
+/** Where the durable per-project history and parked runs live beside the ledger. */
+export { stateDirectory as workflowStateDirectory };
+
+/**
+ * A run parked out of its session slot keeps its own directory, addressed the
+ * same way a session slot is. Pointing `COREDOC_WORKFLOWS_STATE_DIR` at that
+ * directory is therefore enough to read, complete, or finalise the parked run
+ * with the ordinary functions — no second code path anywhere.
+ */
+export function parkedRunDirectory(projectKey, runId, env = process.env) {
+  if (!SAFE_SEGMENT_RE.test(String(projectKey ?? ""))) {
+    throw new Error("a parked workflow run requires a project key");
+  }
+  if (!RUN_ID_SEGMENT_RE.test(String(runId ?? ""))) {
+    throw new Error("a parked workflow run requires a run id");
+  }
+  return join(stateDirectory(env), projectKey, "runs", runId);
+}
+
+export function parkedRunEnv(projectKey, runId, env = process.env) {
+  return {
+    ...env,
+    COREDOC_WORKFLOWS_STATE_DIR: parkedRunDirectory(projectKey, runId, env),
+  };
 }
 
 function sessionKey(sessionId) {
@@ -140,6 +201,14 @@ function runGit(cwd, args) {
   } catch {
     return "";
   }
+}
+
+function normalizedSpecRef(value) {
+  const specRef = String(value ?? "").trim();
+  if (specRef === "" || specRef.length > MAX_SPEC_REF_CHARS) {
+    throw new Error("specRef must be <repositoryKey>:<repository-relative path>");
+  }
+  return specRef;
 }
 
 function nonNegativeInteger(value) {
@@ -258,6 +327,10 @@ export function startWorkflowRun(
     risk,
     requiredSkills = [],
     declaredStages,
+    repositoryKey,
+    bound,
+    projectKey,
+    specRef,
     at = new Date().toISOString(),
     cwd = process.cwd(),
   },
@@ -288,6 +361,13 @@ export function startWorkflowRun(
     intent,
     risk,
     requiredSkills: normalizedRequiredSkills(requiredSkills),
+    // What the gates are judged against: the repository the run is in, whether
+    // this checkout is enrolled to a workspace at all, the durable-history
+    // namespace, and the specification artifact the run is about.
+    ...(repositoryKey === undefined ? {} : { repositoryKey }),
+    ...(bound === undefined ? {} : { bound: bound === true }),
+    ...(projectKey === undefined ? {} : { projectKey }),
+    ...(specRef === undefined ? {} : { specRef: normalizedSpecRef(specRef) }),
     ...(normalizedDeclaredStages === undefined
       ? {}
       : {
@@ -467,6 +547,11 @@ export function listSuspendedWorkflowRuns({ env = process.env } = {}) {
       suspendedAt: state.suspendedAt,
       ...(state.status === "abandoning"
         ? { abandoningAt: state.abandoningAt }
+        : {}),
+      // A run waiting for the user to accept a delivered draft outlives an
+      // ordinary suspension; it carries its own TTL for the sweep to honour.
+      ...(Number.isInteger(state.acceptance?.ttlDays)
+        ? { ttlDays: state.acceptance.ttlDays }
         : {}),
       repoRoot: typeof state.repoRoot === "string" ? state.repoRoot : "",
     });
@@ -853,8 +938,39 @@ function normalizedObservation(input) {
       success: input.success,
     };
   }
+  if (input.type === "search") {
+    return SEARCH_TOOLS.has(input.tool)
+      ? { type: "search", at: input.at, tool: input.tool }
+      : null;
+  }
   if (typeof input.success !== "boolean") return null;
-  return { type: "coredoc", at: input.at, success: input.success };
+  // Every field below is optional: an observation written by an older plugin
+  // carries none of them, and an invalid value is dropped, never thrown on.
+  return {
+    type: "coredoc",
+    at: input.at,
+    success: input.success,
+    ...(typeof input.tool === "string" && COREDOC_TOOL_NAME_RE.test(input.tool)
+      ? { tool: input.tool }
+      : {}),
+    ...(COREDOC_ACCESS.has(input.access) ? { access: input.access } : {}),
+    ...(COREDOC_RESULTS.has(input.result) ? { result: input.result } : {}),
+    ...(input.unclassified === true ? { unclassified: true } : {}),
+    ...(typeof input.specMatch === "boolean"
+      ? { specMatch: input.specMatch }
+      : {}),
+    ...(Number.isSafeInteger(input.created) && input.created >= 0
+      ? { created: input.created }
+      : {}),
+    ...(Array.isArray(input.refs)
+      ? {
+          refs: input.refs
+            .filter((ref) => typeof ref === "string")
+            .slice(0, MAX_OBSERVATION_REFS)
+            .map((ref) => ref.slice(0, MAX_OBSERVATION_REF_CHARS)),
+        }
+      : {}),
+  };
 }
 
 export function appendWorkflowObservation(
@@ -878,10 +994,37 @@ export function appendWorkflowObservation(
   return { status: "recorded", event };
 }
 
+/**
+ * Read the run's observations, optionally narrowed to the CURRENT occurrence of
+ * one stage — `stageProgress` keeps only the latest attempt per stage, so the
+ * occurrence's own start/finish timestamps are the attempt boundary (LIM-1).
+ * An `attempt` that is not the current one returns nothing.
+ */
 export function readWorkflowObservations(
   sessionId,
-  { env = process.env } = {},
+  { env = process.env, stageId, attempt } = {},
 ) {
+  const events = readObservationLines(sessionId, env);
+  if (stageId === undefined) return events;
+  const state = readWorkflowRun(sessionId, { env });
+  const occurrence =
+    state?.stageProgress && typeof state.stageProgress === "object"
+      ? state.stageProgress[stageId]
+      : undefined;
+  if (!occurrence) return [];
+  if (attempt !== undefined && occurrence.attempt !== attempt) return [];
+  const from = Date.parse(occurrence.startedAt);
+  const until =
+    occurrence.finishedAt === undefined
+      ? Number.POSITIVE_INFINITY
+      : Date.parse(occurrence.finishedAt);
+  return events.filter((event) => {
+    const at = Date.parse(event.at);
+    return at >= from && at <= until;
+  });
+}
+
+function readObservationLines(sessionId, env) {
   try {
     return readFileSync(statePaths(sessionId, env).events, "utf8")
       .split("\n")
@@ -1012,6 +1155,42 @@ export function completeWorkflowRun(
   };
 }
 
+/**
+ * The single end of a run: its session slot, its observations, and its parked
+ * directory go together. A second call for the same run finds nothing to
+ * remove and says so — callers log it instead of sending a second finished
+ * event, which the server rejects anyway (BR-5).
+ */
+export function terminateRun(
+  sessionId,
+  runId,
+  { env = process.env, projectKey } = {},
+) {
+  const state = readWorkflowRun(sessionId, { env });
+  const owned = state !== null && state.runId === runId;
+  if (owned) {
+    const paths = statePaths(sessionId, env);
+    rmSync(paths.state, { force: true });
+    rmSync(paths.events, { force: true });
+  }
+  let parked = false;
+  const key = projectKey ?? state?.projectKey;
+  if (key !== undefined) {
+    try {
+      const directory = parkedRunDirectory(key, runId, env);
+      parked = existsSync(directory);
+      rmSync(directory, { force: true, recursive: true });
+    } catch {
+      // A run without a usable project key was never parked.
+    }
+  }
+  return {
+    status: owned || parked ? "terminated" : "already-terminated",
+    runId,
+    ...(owned ? { state } : {}),
+  };
+}
+
 export function finalizeWorkflowRun(
   sessionId,
   runId,
@@ -1023,8 +1202,289 @@ export function finalizeWorkflowRun(
     throw new Error("finished workflow run must match the active run");
   }
 
-  const paths = statePaths(sessionId, env);
-  rmSync(paths.state, { force: true });
-  rmSync(paths.events, { force: true });
+  terminateRun(sessionId, runId, { env });
   return state;
+}
+
+function normalizedGateResults(entries) {
+  return (Array.isArray(entries) ? entries : [])
+    .filter(
+      (entry) =>
+        entry &&
+        GATE_NAMES.has(entry.gate) &&
+        GATE_RESULTS.has(entry.result) &&
+        typeof entry.stage === "string" &&
+        SKILL_ID_RE.test(entry.stage),
+    )
+    .map((entry) => ({
+      stage: entry.stage,
+      gate: entry.gate,
+      result: entry.result,
+      ...(typeof entry.reason === "string" && entry.reason !== ""
+        ? { reason: entry.reason.slice(0, MAX_GATE_REASON_CHARS) }
+        : {}),
+      ...(Number.isSafeInteger(entry.searches) ? { searches: entry.searches } : {}),
+      ...(Number.isSafeInteger(entry.writes) ? { writes: entry.writes } : {}),
+      ...(Number.isInteger(entry.attempt) ? { attempt: entry.attempt } : {}),
+      ...(typeof entry.at === "string" ? { at: entry.at } : {}),
+    }));
+}
+
+/**
+ * Accumulate a stage close's gate results on the run so `finish-run` can write
+ * them to the durable history and `run-status` can show them. Local only: no
+ * gate result ever reaches a capture event (LIM-3).
+ */
+export function recordWorkflowGates(
+  sessionId,
+  entries,
+  { env = process.env } = {},
+) {
+  const additions = normalizedGateResults(entries);
+  if (additions.length === 0) return null;
+  return withStageStateLock(sessionId, env, () => {
+    const state = readWorkflowRun(sessionId, { env });
+    if (!state || !FINISHABLE_RUN_STATUSES.has(state.status)) return null;
+    const next = {
+      ...state,
+      gates: [
+        ...(Array.isArray(state.gates) ? normalizedGateResults(state.gates) : []),
+        ...additions,
+      ].slice(-MAX_GATE_RESULTS),
+    };
+    atomicWriteJson(statePaths(sessionId, env).state, next);
+    return next;
+  });
+}
+
+export function workflowRunGates(state) {
+  return Array.isArray(state?.gates) ? normalizedGateResults(state.gates) : [];
+}
+
+/** Confirm or set the specification artifact a live run is about. */
+export function setWorkflowRunSpecRef(
+  sessionId,
+  specRef,
+  { env = process.env } = {},
+) {
+  const normalized = normalizedSpecRef(specRef);
+  return withStageStateLock(sessionId, env, () => {
+    const state = readWorkflowRun(sessionId, { env });
+    if (!state || !FINISHABLE_RUN_STATUSES.has(state.status)) return null;
+    if (state.specRef === normalized) return state;
+    const next = { ...state, specRef: normalized };
+    atomicWriteJson(statePaths(sessionId, env).state, next);
+    return next;
+  });
+}
+
+/**
+ * Park a run out of its session slot so the session can route other work while
+ * the run waits for something only the user can give it (BR-5). The run stays
+ * `suspended`; only its address changes, and its capture identity and origin
+ * session are kept so its eventual terminal event is attributed to the session
+ * that started it, which is what the server requires.
+ */
+export function parkWorkflowRun(
+  sessionId,
+  {
+    runId,
+    reason,
+    ttlDays,
+    specRef,
+    capture = {},
+    at = new Date().toISOString(),
+  },
+  { env = process.env, snapshot = gitSnapshot } = {},
+) {
+  if (!hasWorkflowSessionAttribution(sessionId)) return null;
+  return withStageStateLock(sessionId, env, () => {
+    const state = readWorkflowRun(sessionId, { env });
+    if (!state || !LIVE_RUN_STATUSES.has(state.status)) return null;
+    if (runId !== undefined && state.runId !== runId) return null;
+    if (state.projectKey === undefined) {
+      throw new Error(
+        "this run was routed before parking existed; finish it instead of parking it",
+      );
+    }
+    // Re-parking is bookkeeping, not a new wait: a run that is parked again —
+    // by the next route, or after a resumable session exit — keeps the moment
+    // the user was first asked, so its TTL cannot be reset indefinitely.
+    const previous = validStageTimestamp(state.acceptance?.parkedAt)
+      ? state.acceptance.parkedAt
+      : undefined;
+    const parkedAt = previous ?? stageTimestamp(at);
+    const parked = {
+      ...state,
+      status: "suspended",
+      suspendedAt: parkedAt,
+      capture,
+      suspendedEnd: capturedEnd(snapshot(state.repoRoot || process.cwd())),
+      acceptance: {
+        reason: reason ?? state.acceptance?.reason,
+        ttlDays: ttlDays ?? state.acceptance?.ttlDays,
+        parkedAt,
+        originSessionId: state.acceptance?.originSessionId ?? state.sessionId,
+        capture: state.acceptance?.capture ?? capture,
+        ...(specRef === undefined
+          ? state.specRef === undefined
+            ? {}
+            : { specRef: state.specRef }
+          : { specRef: normalizedSpecRef(specRef) }),
+      },
+      ...(specRef === undefined ? {} : { specRef: normalizedSpecRef(specRef) }),
+    };
+    const target = parkedRunDirectory(state.projectKey, state.runId, env);
+    mkdirSync(target, { recursive: true, mode: 0o700 });
+    const from = statePaths(sessionId, env);
+    const to = statePaths(sessionId, {
+      ...env,
+      COREDOC_WORKFLOWS_STATE_DIR: target,
+    });
+    atomicWriteJson(to.state, parked);
+    try {
+      renameSync(from.events, to.events);
+    } catch {
+      // A run with no observations has no events file to move.
+    }
+    rmSync(from.state, { force: true });
+    rmSync(from.events, { force: true });
+    return parked;
+  });
+}
+
+/** Parked runs of this checkout, oldest first. */
+export function listParkedWorkflowRuns({ env = process.env, projectKey } = {}) {
+  if (!SAFE_SEGMENT_RE.test(String(projectKey ?? ""))) return [];
+  const directory = join(stateDirectory(env), projectKey, "runs");
+  let entries;
+  try {
+    entries = readdirSync(directory);
+  } catch {
+    return [];
+  }
+  const parked = [];
+  for (const runId of entries) {
+    if (!RUN_ID_SEGMENT_RE.test(runId)) continue;
+    const state = readParkedRunState(join(directory, runId));
+    if (
+      !state ||
+      state?.schemaVersion !== RUN_STATE_VERSION ||
+      state.runId !== runId ||
+      !state.acceptance ||
+      !validStageTimestamp(state.suspendedAt)
+    ) {
+      continue;
+    }
+    parked.push({
+      runId,
+      sessionId: state.sessionId,
+      originSessionId: state.acceptance.originSessionId ?? state.sessionId,
+      intent: state.intent,
+      workflowId: state.workflowId,
+      reason: state.acceptance.reason,
+      ttlDays: state.acceptance.ttlDays,
+      parkedAt: state.acceptance.parkedAt ?? state.suspendedAt,
+      suspendedAt: state.suspendedAt,
+      ...(state.specRef === undefined ? {} : { specRef: state.specRef }),
+      repoRoot: typeof state.repoRoot === "string" ? state.repoRoot : "",
+    });
+  }
+  return parked.sort((a, b) => a.parkedAt.localeCompare(b.parkedAt));
+}
+
+// A parked directory holds exactly one run, in a file named by the session key
+// of whichever session parked it — the same layout as a session slot, so every
+// ordinary function reads it unchanged once the state directory points here.
+function readParkedRunState(directory) {
+  let files;
+  try {
+    files = readdirSync(directory).filter((entry) => entry.endsWith(".json"));
+  } catch {
+    return null;
+  }
+  if (files.length !== 1) return null;
+  try {
+    const state = JSON.parse(readFileSync(join(directory, files[0]), "utf8"));
+    return hasWorkflowSessionAttribution(state?.sessionId) &&
+      files[0] === `${sessionKey(state.sessionId)}.json`
+      ? state
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Move a parked run back into a session slot and make it active again. The
+ * reactivating session becomes the slot's session — the slot invariant is that
+ * the file is named by its own state's session — while `acceptance` keeps the
+ * origin session the run's capture events must carry.
+ */
+export function reactivateParkedRun(
+  { projectKey, runId, sessionId, at = new Date().toISOString() },
+  { env = process.env } = {},
+) {
+  if (!hasWorkflowSessionAttribution(sessionId)) return null;
+  const directory = parkedRunDirectory(projectKey, runId, env);
+  const parkedEnv = { ...env, COREDOC_WORKFLOWS_STATE_DIR: directory };
+  const seen = readParkedRunState(directory);
+  if (!seen) return null;
+  // The parked run is claimable by an expiry sweep and by any other session's
+  // `spec accept`, so the move happens under the PARKED run's own lock — the
+  // same lock `claimExpiredWorkflowRun` takes — and the state is read again
+  // inside it. Lock order is always parked-run first, session slot second.
+  return withStageStateLock(seen.sessionId, parkedEnv, () =>
+    reactivateLocked({ directory, parkedEnv, runId, sessionId, at }, env),
+  );
+}
+
+function reactivateLocked({ directory, parkedEnv, runId, sessionId, at }, env) {
+  const parked = readParkedRunState(directory);
+  if (
+    !parked ||
+    parked.runId !== runId ||
+    parked.schemaVersion !== RUN_STATE_VERSION ||
+    // `abandoning` is a run an expiry sweep has already claimed: it can be
+    // finished, never taken back.
+    !LIVE_RUN_STATUSES.has(parked.status)
+  ) {
+    return null;
+  }
+  const originSessionId = parked.sessionId;
+  return withStageStateLock(sessionId, env, () => {
+    const current = readWorkflowRun(sessionId, { env });
+    if (current && LIVE_RUN_STATUSES.has(current.status)) {
+      if (current.runId !== runId) {
+        throw new Error(
+          `workflow run ${current.runId} is ${current.status} in this session; finish or abandon it before accepting another run`,
+        );
+      }
+      return current;
+    }
+    const {
+      suspendedAt,
+      capture: _capture,
+      suspendedEnd: _suspendedEnd,
+      ...rest
+    } = parked;
+    const next = {
+      ...rest,
+      status: "active",
+      sessionId,
+      suspendedMs:
+        nonNegativeInteger(rest.suspendedMs) +
+        nonNegativeInteger(Date.parse(at) - Date.parse(suspendedAt)),
+    };
+    const from = statePaths(originSessionId, parkedEnv);
+    const to = statePaths(sessionId, env);
+    atomicWriteJson(to.state, next);
+    try {
+      renameSync(from.events, to.events);
+    } catch {
+      writeFileSync(to.events, "", { encoding: "utf8", mode: 0o600 });
+    }
+    rmSync(directory, { force: true, recursive: true });
+    return next;
+  });
 }

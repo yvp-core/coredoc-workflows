@@ -254,6 +254,20 @@ function emptyReceipt() {
   return { acceptedEventIds: [], duplicateEventIds: [], rejected: [] };
 }
 
+// Delivery state, per event, for whoever wants to reconcile it later. The
+// recorder itself stays free of run history: it reports transitions through the
+// injected callback and never reads or writes anything outside its outbox.
+function transitionsFor(events, state, extra = {}, at) {
+  return events.map((event) => ({
+    eventId: event.eventId,
+    ...(event.runId === undefined ? {} : { runId: event.runId }),
+    kind: event.type,
+    state,
+    lastAttemptAt: at,
+    ...extra,
+  }));
+}
+
 export function createCaptureRecorder({
   directory,
   target = "",
@@ -263,6 +277,7 @@ export function createCaptureRecorder({
   idFactory = randomUUID,
   maxEntries = 100,
   now = () => new Date().toISOString(),
+  onTransition,
 }) {
   const resolvedTarget = captureTarget(target);
   const resolvedHeaders = captureHeaders(headers);
@@ -279,6 +294,16 @@ export function createCaptureRecorder({
     ...(context?.repositoryKey === undefined
       ? {}
       : { repositoryKey: context.repositoryKey }),
+  };
+
+  // Fail-open: a reconciliation sink must never break a delivery attempt.
+  const emit = (entries) => {
+    if (typeof onTransition !== "function" || entries.length === 0) return;
+    try {
+      onTransition(entries);
+    } catch {
+      // Delivery state is diagnostic; losing it never changes the outcome.
+    }
   };
 
   return {
@@ -308,6 +333,14 @@ export function createCaptureRecorder({
         // The enqueue outcome remains visible even when local diagnostics cannot
         // be replaced safely on an already-unwritable filesystem.
       }
+      emit(
+        transitionsFor(
+          [event],
+          queued.status === "overflow" ? "failed" : "queued",
+          queued.status === "overflow" ? { error: "overflow" } : {},
+          now(),
+        ),
+      );
       return queued;
     },
     pending(options) {
@@ -358,6 +391,14 @@ export function createCaptureRecorder({
           },
         );
       } catch (error) {
+        emit(
+          transitionsFor(
+            events,
+            "failed",
+            { error: deliveryFailureCode(error, resolvedTarget) },
+            now(),
+          ),
+        );
         try {
           persistCaptureHealth({
             directory,
@@ -378,6 +419,14 @@ export function createCaptureRecorder({
           events.map(({ eventId }) => eventId),
         );
       } catch (error) {
+        emit(
+          transitionsFor(
+            events,
+            "failed",
+            { error: "TRANSPORT_UNAVAILABLE" },
+            now(),
+          ),
+        );
         try {
           persistCaptureHealth({
             directory,
@@ -391,21 +440,40 @@ export function createCaptureRecorder({
         }
         throw error;
       }
-      const categorized = new Set([
+      const delivered = new Set([
         ...receipt.acceptedEventIds,
         ...receipt.duplicateEventIds,
-        ...receipt.rejected.flatMap(({ eventId }) =>
-          eventId === null ? [] : [eventId],
-        ),
       ]);
-      const unmatched = events.filter(({ eventId }) => !categorized.has(eventId));
-      outbox.acknowledge([
-        ...receipt.acceptedEventIds,
-        ...receipt.duplicateEventIds,
-        ...receipt.rejected.flatMap(({ eventId }) =>
-          eventId === null ? [] : [eventId],
+      const rejections = new Map(
+        receipt.rejected.flatMap(({ eventId, code }) =>
+          eventId === null ? [] : [[eventId, code]],
         ),
+      );
+      const unmatched = events.filter(
+        ({ eventId }) => !delivered.has(eventId) && !rejections.has(eventId),
+      );
+      const at = now();
+      // A rejection is recorded before its payload is dropped: the payload is
+      // never retried, so the state file is the only place it survives.
+      emit([
+        ...transitionsFor(
+          events.filter(({ eventId }) => rejections.has(eventId)),
+          "rejected",
+          {},
+          at,
+        ).map((entry) => ({
+          ...entry,
+          rejectionCode: rejections.get(entry.eventId),
+        })),
+        ...transitionsFor(
+          events.filter(({ eventId }) => delivered.has(eventId)),
+          "delivered",
+          {},
+          at,
+        ),
+        ...transitionsFor(unmatched, "failed", { error: "unmatched" }, at),
       ]);
+      outbox.acknowledge([...delivered.keys(), ...rejections.keys()]);
       const after = outbox.status();
       const unsupportedSchemaVersions = receipt.rejected.filter(
         ({ code }) => code === "UNSUPPORTED_SCHEMA_VERSION",

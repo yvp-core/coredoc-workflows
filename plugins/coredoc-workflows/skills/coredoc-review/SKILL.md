@@ -1,6 +1,6 @@
 ---
 name: coredoc-review
-description: Review a branch, diff, or pull request against its specification and repository standards, including security, data safety, testing, performance, and scope. Use for code review or pre-landing review.
+description: Review a branch, diff, or pull request against its specification and repository standards, including security, data safety, testing, performance, and scope. Use for code review or pre-landing review. A successful close of the review stage requires an observed Coredoc MCP read during review; a run without one needs a signed skip.
 ---
 
 # Code review adapter

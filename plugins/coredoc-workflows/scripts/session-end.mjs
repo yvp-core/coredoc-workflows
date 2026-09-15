@@ -3,10 +3,12 @@
 import { pathToFileURL } from "node:url";
 
 import { createConfiguredCaptureRecorder } from "./capture-client.mjs";
-import { captureIdentityEnv } from "./expired-runs.mjs";
+import { captureIdentityEnv, runCaptureEnv } from "./capture-identity.mjs";
 import { finishWorkflowRun } from "./finish-run.mjs";
+import { recordAbandonedStageGates } from "./workflow-gates.mjs";
 import {
   abandonOpenWorkflowStage,
+  readWorkflowRun,
   suspendWorkflowRun,
 } from "./workflow-run-state.mjs";
 
@@ -62,6 +64,23 @@ export async function finishWorkflowSession(
         : { status: "inactive" },
     };
   }
+  // A run reactivated to accept a parked specification is still recorded under
+  // the session that started it: the server rejects a finish whose session is
+  // not the run's own (BR-5). `finishWorkflowRun` applies the same switch to
+  // the run event; the stage record has to make it here.
+  let acceptance;
+  try {
+    acceptance = readWorkflowRun(sessionId, { env })?.acceptance;
+  } catch {
+    // An unreadable ledger still ends the session.
+  }
+  const stageEnv = acceptance?.capture
+    ? runCaptureEnv(env, acceptance.capture)
+    : env;
+  const stageSessionId = acceptance?.originSessionId ?? sessionId;
+  // AC-7: the stage nobody closed still records what it was missing, before it
+  // is abandoned and before the history line is written.
+  recordAbandonedStageGates(sessionId, { env, at });
   let abandoned = null;
   let stageAbandonFailed = false;
   try {
@@ -72,7 +91,7 @@ export async function finishWorkflowSession(
     stageAbandonFailed = true;
   }
   const stageCapture = abandoned
-    ? queueStage(abandoned.event, { env, sessionId })
+    ? queueStage(abandoned.event, { env: stageEnv, sessionId: stageSessionId })
     : null;
   const run = await finishRun(
     { sessionId, outcome: "abandoned", at },

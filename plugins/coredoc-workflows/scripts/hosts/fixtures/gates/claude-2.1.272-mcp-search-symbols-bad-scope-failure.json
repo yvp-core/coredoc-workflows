@@ -1,0 +1,30 @@
+{
+  "provenance": {
+    "host": "claude",
+    "version": "2.1.272",
+    "capture": "real-cli-structurally-redacted",
+    "scenario": "mcp-search-symbols-bad-scope-failure",
+    "capturedAt": "2026-09-15T01:31:46Z"
+  },
+  "redaction": "session ids -> 11111111-1111-4111-8111-111111111111; workspace id -> 00000000-0000-4000-8000-000000000000; transcript_path -> /redacted/TRANSCRIPT_SENTINEL.jsonl; absolute paths -> /redacted/PATH_SENTINEL; long text fields truncated to 600 chars with a …[truncated] marker. Field names, JSON types, tool_name, hook_event_name, tool_input argument names/values (non-path), and tool_response structure are preserved from the real captured payload.",
+  "payload": {
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "transcript_path": "/redacted/TRANSCRIPT_SENTINEL.jsonl",
+    "cwd": "/redacted/PATH_SENTINEL",
+    "prompt_id": "338959b2-635b-4283-ae7c-c684c5ffc0e0",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PostToolUseFailure",
+    "tool_name": "mcp__coredoc-localserver__search_symbols",
+    "tool_input": {
+      "scope": "no-such-repo-xyz",
+      "query": "anything"
+    },
+    "tool_use_id": "toolu_01QBU9VDxmPeawbNEQFscY72",
+    "error": "Unknown scope \"no-such-repo-xyz\". Available repos (pass one of these as scope): coredoc-parser",
+    "is_interrupt": false,
+    "duration_ms": 16
+  }
+}

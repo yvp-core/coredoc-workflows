@@ -80,6 +80,17 @@ test("run status distinguishes unattributed, inactive, and live runs", () => {
     risk: "normal",
     startedAt: "2026-08-01T10:00:00.000Z",
     openStage: "tdd",
+    openStageAttempt: 1,
+    // BR-7: gate evidence is rebuilt from the observations on disk. This run
+    // has none, and no specification, so nothing is satisfied and the
+    // candidate gate does not apply.
+    gates: {
+      // A stage is open, so the evidence is that attempt's own.
+      scope: "stage",
+      intent: "pending",
+      candidates: "not-applicable",
+      mcp: "pending",
+    },
     stages: [
       { stageId: "spec", status: "success", attempt: 1 },
       { stageId: "tdd", status: "open", attempt: 1 },
@@ -100,6 +111,17 @@ test("run context re-anchors a live run and says nothing otherwise", () => {
   assert.equal(workflowRunContext(workflowRunStatus(SESSION_ID, { env })), "");
   startThreeStageRun(env);
   const context = workflowRunContext(workflowRunStatus(SESSION_ID, { env }));
+  // The block is injected by a hook with no author, so it names its origin and
+  // its standing first: a resumed session must not read it as an untrusted
+  // system-reminder and ignore it.
+  assert.ok(
+    context.startsWith(
+      "Coredoc workflows plugin (SessionStart hook) — this session's own recorded run state, not a new request:",
+    ),
+    context,
+  );
+  assert.ok(context.endsWith("Continue that run from this state."), context);
+  assert.equal(context.includes("\n"), false);
   assert.match(context, new RegExp(`run ${RUN_ID} \\(change:normal\\) is active`));
   assert.match(context, /Open stage: tdd\./);
   assert.match(context, /Closed stages: spec=success\./);

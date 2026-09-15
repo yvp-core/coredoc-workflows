@@ -9,9 +9,22 @@ import {
   preflightCaptureSchemaVersion,
   resolveWorkflowRuntime,
 } from "./capture-client.mjs";
+import {
+  captureIdentityEnv,
+  captureIsBound,
+  captureRepositoryKey,
+} from "./capture-identity.mjs";
+import { captureStateRecorder } from "./capture-state.mjs";
 import { mintRunId, workflowEvent } from "./workflow-events.mjs";
 import { abandonExpiredWorkflowRuns } from "./expired-runs.mjs";
-import { startWorkflowRun } from "./workflow-run-state.mjs";
+import { resolveProjectKey } from "./project-key.mjs";
+import { normalizedSpecPath, specRefFor } from "./spec-artifact.mjs";
+import { lastRunHistory, unresolvedGates } from "./workflow-gates.mjs";
+import {
+  parkWorkflowRun,
+  readWorkflowRun,
+  startWorkflowRun,
+} from "./workflow-run-state.mjs";
 
 const INTENTS = new Set([
   "direct",
@@ -286,7 +299,10 @@ export async function recordRoutedTaskCapture(
       env,
       cwd,
       sessionId: env.COREDOC_WORKFLOWS_SESSION_ID,
-      ...(createRecorder === undefined ? {} : { createRecorder }),
+      createRecorder:
+        createRecorder ??
+        // Issue 05: the run's first event already carries delivery state.
+        captureStateRecorder({ env, cwd }),
     },
   );
   const { durable: _durable, bindingRefused, unreadable, ...result } = delivered;
@@ -439,6 +455,7 @@ function parseArgs(args) {
   const explicit = {};
   let task;
   let taskId;
+  let specPath;
   const workItems = [];
   let currentWorkItem;
 
@@ -501,6 +518,13 @@ function parseArgs(args) {
       }
       currentWorkItem.externalKey = value;
       index += 1;
+    } else if (arg === "--spec-path") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--spec-path requires a value");
+      }
+      specPath = value;
+      index += 1;
     } else if (arg === "--intent" || arg === "--risk" || arg === "--scale") {
       const value = args[index + 1];
       if (!value) {
@@ -532,6 +556,7 @@ function parseArgs(args) {
       ...inferTaskSignals(task),
       ...explicit,
       ...(taskId === undefined ? {} : { taskId }),
+      ...(specPath === undefined ? {} : { specPath }),
       ...relationSignals,
     };
   }
@@ -541,6 +566,7 @@ function parseArgs(args) {
   return {
     ...options,
     ...(taskId === undefined ? {} : { taskId }),
+    ...(specPath === undefined ? {} : { specPath }),
     ...relationSignals,
   };
 }
@@ -558,15 +584,33 @@ export async function executeRoutedTask(
 ) {
   const routed = prepareRoutedTask(signals);
   await preflight(routed.route.workItems === undefined ? 2 : 3, { env });
+  const sessionId = env.COREDOC_WORKFLOWS_SESSION_ID;
+  const projectKey = resolveProjectKey(cwd, env);
+  // A run parked for acceptance must survive the next route: the session slot
+  // is overwritten by the run starting here, so it is moved out first. Parked
+  // runs never block a route (BR-5).
+  const parked = parkPendingAcceptance({ sessionId, at: routed.event.at }, { env });
+  const previousRunGates = unresolvedGates(lastRunHistory(projectKey, { env }));
   const runState = startRun(
     {
-      sessionId: env.COREDOC_WORKFLOWS_SESSION_ID,
+      sessionId,
       runId: routed.route.runId,
       workflowId: routed.route.workflowId,
       intent: routed.route.intent,
       risk: routed.route.risk,
       requiredSkills: routed.route.stages.map(({ skill }) => skill),
       declaredStages: declaredStagesForRoute(routed.route),
+      repositoryKey: captureRepositoryKey(env),
+      bound: captureIsBound(env),
+      projectKey,
+      ...(signals.specPath === undefined
+        ? {}
+        : {
+            specRef: specRefFor(
+              captureRepositoryKey(env),
+              normalizedSpecPath(signals.specPath, cwd),
+            ),
+          }),
       at: routed.event.at,
       cwd,
     },
@@ -579,7 +623,7 @@ export async function executeRoutedTask(
   let expiredRuns;
   try {
     expiredRuns = await expireRuns(
-      { ownSessionId: env.COREDOC_WORKFLOWS_SESSION_ID },
+      { ownSessionId: sessionId, projectKey },
       { env },
     );
   } catch (error) {
@@ -589,8 +633,36 @@ export async function executeRoutedTask(
     ...routed.route,
     runStateStatus: runState.status,
     capture,
+    // What the previous run of this checkout left unresolved, so the agent
+    // sees the skipped and unmet gates before it repeats them (BR-6).
+    ...(previousRunGates.length === 0 ? {} : { previousRunGates }),
+    ...(parked === null ? {} : { parkedRun: parked }),
     ...(expiredRuns.length === 0 ? {} : { expiredRuns }),
   };
+}
+
+function parkPendingAcceptance({ sessionId, at }, { env }) {
+  let current;
+  try {
+    current = readWorkflowRun(sessionId, { env });
+  } catch {
+    return null;
+  }
+  if (current?.status !== "suspended" || !current.acceptance) return null;
+  const moved = parkWorkflowRun(
+    sessionId,
+    {
+      runId: current.runId,
+      reason: current.acceptance.reason,
+      ttlDays: current.acceptance.ttlDays,
+      capture: current.acceptance.capture ?? captureIdentityEnv(env),
+      at,
+    },
+    { env },
+  );
+  return moved === null
+    ? null
+    : { runId: moved.runId, status: "parked", reason: moved.acceptance.reason };
 }
 
 async function main() {

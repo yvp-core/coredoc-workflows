@@ -1,0 +1,34 @@
+{
+  "provenance": {
+    "host": "claude",
+    "version": "2.1.272",
+    "capture": "synthetic-from-server-source",
+    "scenario": "an MCP transport marking the result isError on the object wrapper",
+    "source": "packages/mcp/src/tools/intent/get-intent-context.ts:349,369,531 (local tool answers isError: true); no captured host payload carries isError on either wrapper shape",
+    "note": "No real producer for this answer exists in a local capture today. The hook envelope is the Claude Code 2.1.272 shape proven by the real fixtures in this directory (bare content-block array); the tool_response text is built from the cited server/MCP source.",
+    "repo": "coredoc-parser (main b89dfd52)"
+  },
+  "payload": {
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "transcript_path": "/redacted/TRANSCRIPT_SENTINEL.jsonl",
+    "cwd": "/redacted/PATH_SENTINEL",
+    "permission_mode": "bypassPermissions",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "mcp__coredoc-localserver__get_intent_context",
+    "tool_input": {
+      "task": "gate probe",
+      "domain": 7
+    },
+    "tool_response": {
+      "isError": true,
+      "content": [
+        {
+          "type": "text",
+          "text": "intent domain must be a string; declared domains: workflow"
+        }
+      ]
+    },
+    "tool_use_id": "toolu_synthetic0000000000001",
+    "duration_ms": 4
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "provenance": {
+    "host": "claude",
+    "version": "2.1.272",
+    "capture": "real-cli-structurally-redacted",
+    "scenario": "edit",
+    "capturedAt": "2026-09-15T01:31:47Z"
+  },
+  "redaction": "session ids -> 11111111-1111-4111-8111-111111111111; workspace id -> 00000000-0000-4000-8000-000000000000; transcript_path -> /redacted/TRANSCRIPT_SENTINEL.jsonl; absolute paths -> /redacted/PATH_SENTINEL; long text fields truncated to 600 chars with a …[truncated] marker. Field names, JSON types, tool_name, hook_event_name, tool_input argument names/values (non-path), and tool_response structure are preserved from the real captured payload.",
+  "payload": {
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "transcript_path": "/redacted/TRANSCRIPT_SENTINEL.jsonl",
+    "cwd": "/redacted/PATH_SENTINEL",
+    "prompt_id": "7f969592-962e-41a2-9640-8a5df3704a24",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Edit",
+    "tool_input": {
+      "file_path": "/redacted/PATH_SENTINEL",
+      "old_string": "another line here",
+      "new_string": "edited line here",
+      "replace_all": false
+    },
+    "tool_response": {
+      "filePath": "/redacted/PATH_SENTINEL",
+      "oldString": "another line here",
+      "newString": "edited line here",
+      "originalFile": "finishWorkflowRun is a function used in the coredoc workflow runtime.\nneedle-pattern-for-grep-test\nanother line here\n",
+      "structuredPatch": [
+        {
+          "oldStart": 1,
+          "oldLines": 3,
+          "newStart": 1,
+          "newLines": 3,
+          "lines": [
+            " finishWorkflowRun is a function used in the coredoc workflow runtime.",
+            " needle-pattern-for-grep-test",
+            "-another line here",
+            "+edited line here"
+          ]
+        }
+      ],
+      "userModified": false,
+      "replaceAll": false
+    },
+    "tool_use_id": "toolu_019qYf3YyUNK3kCWzK1fdB6d",
+    "duration_ms": 4
+  }
+}

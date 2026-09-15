@@ -3,9 +3,11 @@
 Apply this only when a Coredoc intent capability is present in this session: the
 workspace (cloud) `get_intent_context` MCP tool, the local `get_intent_context`
 MCP tool, or the `coredoc intent context` CLI. Its absence is the normal case.
-Intent context is optional evidence — it never blocks, gates, or degrades the
-workflow, and a missing capability is never a finding, a stop, or a reason to
-soften any other conclusion. Do not install, configure, or initialize anything to
+On a checkout bound to a Coredoc workspace, a successful spec-stage close
+requires an observed intent context read and an accepted specification requires
+its proposed candidates; a session that cannot make the read signs the skip with
+a reason. On an unbound checkout, proceed from repository evidence and do not
+mention intent context. Do not install, configure, or initialize anything to
 obtain it. When no intent capability is present, proceed from repository evidence
 alone and do not mention intent context in the output.
 

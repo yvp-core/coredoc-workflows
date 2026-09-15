@@ -125,8 +125,14 @@ test("persists a boundary before delivery and returns only bounded status", asyn
         attempt: 1,
       },
     },
-    { env, sessionId: SESSION_ID },
+    {
+      env,
+      sessionId: SESSION_ID,
+      // Issue 05: delivery state is written through an injected recorder.
+      createRecorder: delivered[0][1].createRecorder,
+    },
   ]);
+  assert.equal(typeof delivered[0][1].createRecorder, "function");
   assert.deepEqual(Object.keys(started).sort(), [
     "capture",
     "occurrence",
