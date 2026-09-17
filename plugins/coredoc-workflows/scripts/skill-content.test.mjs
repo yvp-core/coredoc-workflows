@@ -913,15 +913,37 @@ test("spec preserves an observable intent graph without test-per-criterion cerem
   assert.match(body, /acceptance names observable behaviors and predicates, not test counts or\s+invented percentage targets/i);
   assert.match(body, /three or more branches\/states\/interactions/);
   assert.match(body, /Do not duplicate the same flow in bullets and a diagram/);
-  assert.match(body, /every in-scope outcome maps to at least one use case\/rule and observable `AC`/);
   assert.match(
     body,
+    /every product-level outcome maps to at least one use case\/rule and observable\s+`AC`, and no `UC`\/`BR`\/`LIM` row fails the granularity test in §4/,
+  );
+  assert.match(body, /Granularity test: a `UC`\/`BR`\/`LIM` row describes behaviour a product owner\s+would recognise without reading code/);
+  assert.match(body, /For\s+`size: s` the intent model defaults to one or two sentences of prose/);
+  assert.match(body, /Open\s+the reply with a plain-language reviewer brief[\s\S]*then give the spec or its file path/);
+  assert.match(body, /grounding preamble is at most\s+two lines/);
+  assert.match(body, /Every brief line cites the spec IDs it summarises/);
+  assert.match(body, /name no flag provider, scheduler, persistence layer, or other infrastructure\s+anywhere in the spec/);
+  assert.match(body, /A confirmed root cause\s+plus fix in the request is the slice/);
+  assert.match(body, /every `AC` observes an outcome the request asked to change/);
+  // The lifecycle mechanics moved to a document read only inside a routed run;
+  // the body keeps the status rule and the pointer, not the commands.
+  assert.match(
+    body,
+    /Keep `status: draft`\. A standalone draft is the handoff and needs no\s+confirmation round[\s\S]*implementation\s+stage's first write in a routed run, or the acceptance command moves it to\s+`status: accepted`/i,
+  );
+  assert.match(body, /<plugin-root>\/resources\/methodology\/spec-lifecycle\.md/);
+  assert.match(body, /Read\s+it with `Read` only inside a routed run or when the user asks for acceptance/);
+  assert.doesNotMatch(body, /stage-run finish|finish-run --outcome|spec accept --|redact-scan|14 days/);
+  const lifecycle = await readFile(join(METHODOLOGY_ROOT, "spec-lifecycle.md"), "utf8");
+  assert.match(
+    lifecycle,
     /Keep `status: draft` through plan review[\s\S]*fresh\s+affirmative post-review reply[\s\S]*both accepts the reviewed\s+specification and authorizes implementation[\s\S]*read-only preflight and\s+proof-plan announcement[\s\S]*changes a draft frontmatter to\s+`status: accepted` as its first repository write[\s\S]*preserves an unchanged accepted status from a prior session/i,
   );
   assert.match(
-    body,
+    lifecycle,
     /standalone\s+specification\s+delivery[\s\S]*deliver\s+the\s+draft\s+as\s+the\s+handoff[\s\S]*do\s+not\s+add\s+a\s+confirmation\s+round\s+to\s+obtain\s+it/i,
   );
+  assert.match(lifecycle, /stage-run finish --stage-id spec[\s\S]*finish-run --outcome delivered-draft[\s\S]*spec accept --finish[\s\S]*redact-scan <spec-path>/);
   assert.match(
     body,
     /elaboration exposes a new user-owned decision[\s\S]*return to the alignment checkpoint[\s\S]*do not add a generic mid-spec approval/i,
@@ -930,6 +952,21 @@ test("spec preserves an observable intent graph without test-per-criterion cerem
     body,
     /When release or data context requires[\s\S]*Rollout\/rollback:[\s\S]*Otherwise omit it/i,
   );
+});
+
+test("spec runs in three input modes and authors no product intent of its own", async () => {
+  const body = await skill("coredoc-spec");
+
+  const modes = body.indexOf("## Input modes");
+  const method = body.indexOf("## Method");
+  assert.ok(modes >= 0 && modes < method, "input modes are decided before the method");
+  assert.match(body, /\*\*A PRD is available\*\*[\s\S]*verify each `\[unverified\]` claim against the repository[\s\S]*verified, contradicted with evidence, or not verifiable\s+here[\s\S]*answer each `OQ` addressed to Engineering[\s\S]*Candidates for the PRD[\s\S]*proposes nothing to the\s+intent graph; it carries the PRD's `intentIds` through unchanged/);
+  assert.match(body, /\*\*No PRD, and the request is product-shaped or vague\.\*\*[\s\S]*Do not interview the\s+developer about product decisions[\s\S]*Questions for the PRD[\s\S]*Write nothing and stop with\s+`NEEDS_CONTEXT`/);
+  assert.match(body, /\*\*A small technical change, or a bug with a confirmed cause\.\*\*[\s\S]*no product intent model, no ADR, no rollout[\s\S]*cite it; never invent one/);
+  assert.match(body, /Decide `size` first, from three checks[\s\S]*Print it as a fact/);
+  assert.match(body, /Absent infrastructure is a constraint, not a decision[\s\S]*record its consequence as a `LIM-n` and proceed/);
+  assert.match(body, /A product\s+choice is never asked here; it is a PRD row, or a question for the PRD/);
+  assert.match(body, /With a PRD, the product layer is the PRD's rows: cite them and write no `UC` or\s+`BR` that restates one/);
 });
 
 test("spec challenges proposal scope and verifies model contracts before elaboration", async () => {
@@ -947,6 +984,32 @@ test("spec challenges proposal scope and verifies model contracts before elabora
   assert.match(body, /in-scope named consumer needs an executable adoption path in the same slice/i);
   assert.match(body, /workflow merely \*may\* use does not[\s\S]*satisfy an outcome/i);
   assert.match(body, /static prompt,[\s\S]*content assertions may guard structure but cannot alone[\s\S]*prove adoption or behavior/i);
+});
+
+test("prd and spec share the PRD↔spec contract, and prd records unknowns instead of answering", async () => {
+  const [prd, spec, contract] = await Promise.all([
+    skill("coredoc-prd"),
+    skill("coredoc-spec"),
+    readFile(join(METHODOLOGY_ROOT, "prd-spec-contract.md"), "utf8"),
+  ]);
+
+  assert.ok(prd.includes(contract.trim()), "coredoc-prd lost the shared contract partial");
+  assert.ok(spec.includes(contract.trim()), "coredoc-spec lost the shared contract partial");
+
+  for (const id of ["G-n", "D-n", "US-n", "EC-n", "NG-n", "OQ-n"]) {
+    assert.match(contract, new RegExp("`" + id + "`"), id);
+  }
+  assert.match(contract, /never renumbered/);
+  assert.match(contract, /`\[unverified\]`[\s\S]*never on\s+requirements/);
+  assert.match(contract, /`G` → `cap`[\s\S]*`NG` → `lim`/);
+  assert.match(contract, /cites PRD rows by id and\s+does not restate/);
+  assert.match(contract, /matchedFeatureIds/);
+
+  assert.match(prd, /never answers an engineering question on engineering's behalf/);
+  assert.match(prd, /Answer an engineering question on engineering's behalf, or theorise/);
+  assert.match(prd, /## PRD profile/);
+  assert.match(prd, /"looks\s+good so far" is not approval/);
+  assert.doesNotMatch(prd, /coredoc-workflows (finish-run|stage-run|project-key)/);
 });
 
 test("browser workflows retain the bundled macOS ARM fallback", async () => {

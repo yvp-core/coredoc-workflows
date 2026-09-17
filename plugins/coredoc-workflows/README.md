@@ -25,6 +25,7 @@ required.
 - `coredoc-claude` — explicit Claude plan/diff review and resumable consultation from a non-Claude host
 - `coredoc-codex` — explicit Codex plan/diff review and resumable consultation from a non-Codex host
 - `coredoc-spec` — repository-grounded executable specifications
+- `coredoc-prd` — product-side PRD from an interview, with stable row ids the spec cites
 - `coredoc-browse` — bundled browser control for macOS ARM
 - `electron-qa` — reusable loopback CDP control for opted-in Electron development apps
 - `coredoc-desktop` — local Coredoc target and authentication adapter over `electron-qa`
@@ -43,6 +44,14 @@ required.
 `coredoc-devex-review` is invoked directly rather than routed: the router
 classifies a user's engineering task, and a DX audit is usually a deliberate
 self-assessment of a surface you own, not a task the classifier should infer.
+
+`coredoc-prd` is invoked directly too. Its relationship to `coredoc-spec` is
+one-way: the PRD owns product intent (goals, decisions, user stories, edge
+cases, guardrails, and open questions, each with a stable row id), and the spec
+consumes it, citing those rows instead of restating them, verifying the PRD's
+`[unverified]` claims against the repository, and answering its engineering
+questions. The shared contract lives once in
+`resources/methodology/prd-spec-contract.md` and is built into both skills.
 
 Learning and retrospective output stays in the conversation by default. Nothing
 is captured automatically, and persistence requires an explicit target from the
@@ -538,7 +547,7 @@ plugins/coredoc-workflows/bin/coredoc-workflows retro-evidence --since 7d
 
 ## Generated skills
 
-Eleven skills are generated and committed; the rest are hand-written. A skill is
+Twelve skills are generated and committed; the rest are hand-written. A skill is
 generated if and only if a `SKILL.md.tmpl` sits beside its `SKILL.md`, so the
 filesystem is the registry and there is no list to keep in sync.
 
@@ -549,7 +558,7 @@ npm run check:skills  # fail if stale
 
 Edit the template, never the generated `SKILL.md` — the next build overwrites it.
 `--check` runs inside `npm test`, so a template edited without a rebuild fails
-the normal gate, and `.gitattributes` marks the eleven as generated so they read as
+the normal gate, and `.gitattributes` marks the twelve as generated so they read as
 derived output in a diff.
 
 The generated files carry no banner of their own. A "do not edit" comment would

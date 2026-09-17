@@ -270,9 +270,15 @@ This section applies only when a cloud intent WRITE capability is present —
 by construction. The agent NEVER calls `intent_review` — except at the
 specification acceptance or its authorized resumption described below, for
 verbatim items, as the acting
-human's own decision — never records or rolls back a release through
-`intent_release`, and never edits the tree with `intent_tree`; those are the
-maintainer's own actions in their own session. Read
+human's own decision — and never records or rolls back a release through
+`intent_release`; those are the maintainer's own actions in their own session.
+Tree writes are the exception: they are an agent action in the user's session.
+When a proposal, PRD or specification needs a domain or feature the tree does
+not declare, the agent reads the tree first, reuses a node that honestly fits,
+and otherwise creates it with `intent_tree` in the acting user's session before
+proposing into it, naming in its reply what it created and which items it placed
+there. Archive and delete follow an explicit maintainer instruction naming the
+node. A service-token session drafts the layout and stops. Read
 release state only through `effectivity: true` and report what it says. Call
 `intent_anchor add`, `refresh`, or `remove` only on an explicit maintainer
 instruction naming the item and the node; `intent_anchor preview` is a read and
@@ -296,8 +302,10 @@ and propose upserts on it — so `ref` carries the repository key, because two
 repositories in one workspace can both hold `docs/spec.md` with a `BR-1`, and
 an unqualified path would overwrite the other repository's candidate. Keep the
 pair stable across runs and precise per statement. Place each item in the domain or
-feature the working set already showed; when nothing declared honestly fits, park
-it at the closest node and say so — never create tree nodes. Set
+feature the working set already showed; when nothing declared honestly fits,
+create the domain or feature first with `intent_tree` (user session, admin or
+owner role) and say so; in a service-token session park it at the closest node
+and say so. Set
 `proposedSuccessorOfId` only when the specification explicitly replaces a named
 accepted item. If the `intent-capture` skill is available in this session, follow
 its drafting rules; otherwise the field list above is the contract. Report

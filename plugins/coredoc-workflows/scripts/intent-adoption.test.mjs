@@ -25,6 +25,7 @@ const RESOURCE_REF = "<plugin-root>/resources/methodology/intent-context.md";
 
 /** The only skills allowed to mention intent context. */
 const ADAPTERS = [
+  "coredoc-prd",
   "coredoc-spec",
   "coredoc-plan-review",
   "coredoc-implement",
@@ -299,6 +300,7 @@ test("resuming an approved spec completes missing intent work without another ap
 
 test("each consumer adapter carries a conditional intent hook", async () => {
   const expectations = {
+    "coredoc-prd": /matchedFeatureIds/,
     "coredoc-spec": /candidate ideas|unresolved questions/i,
     "coredoc-plan-review": /accepted intent/i,
     "coredoc-implement": /runtime conformance/i,
@@ -359,5 +361,5 @@ test("intent context stays out of the router and every other skill", async () =>
       leaked.push(name);
     }
   }
-  assert.deepEqual(leaked, [], "only the five lifecycle adapters may reference intent context");
+  assert.deepEqual(leaked, [], "only the six lifecycle adapters may reference intent context");
 });
