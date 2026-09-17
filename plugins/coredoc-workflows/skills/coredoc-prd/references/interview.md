@@ -59,8 +59,9 @@ the user was talking about something else.
 
 **Give the user a way out from the second round on.** Say it plainly: they can
 answer these to improve completeness, or say draft it now and the draft goes
-ahead. If they proceed, name the items left open and write each one into Open
-Questions as an `OQ-n` row.
+ahead. If they proceed, name the items left open: the ones that block a story
+or a criterion become `OQ-n` rows, the rest become Assumption rows with a
+one-line reason.
 
 ## Who can settle which claim
 
@@ -78,9 +79,12 @@ voice becomes a requirement nobody checked.
 
 Sorting a statement takes one question: **could the user be factually wrong
 about this, as opposed to changing their mind?** If yes, it is the second kind,
-however confidently it arrived. It carries an inline `[unverified]` marker where
-it appears and one `OQ-n` row addressed to Engineering. A marker with no
-question is a shrug; the question is what gets it answered.
+however confidently it arrived. It carries an inline `[unverified]` marker
+where it appears and one `OQ-n` row addressed to Engineering. A marker with no
+question is a shrug; the question is what gets it answered. A ruling in the
+request, "we decided X" or "we rejected Y", is the first kind: record it as a
+`D-n` row with the decider as `PM` or the requester's role, and never ask who
+decided.
 
 **The marker goes on claims and never on requirements.** A statement of
 behaviour being built is a decision; the only thing that would make it uncertain
@@ -174,8 +178,8 @@ runs.
   reason about the feature; without a profile, the one open cross-cutting
   question has an answer or an `OQ-n` row.
 - Nothing that arrived as "no preference" or "not sure" is in the body.
-- At least three edge cases have a resolution, not just a name, unless the
-  work genuinely has fewer and the PRD says why.
+- Every edge case the requester named, or a supplied decision resolves, has a
+  resolution, not just a name; none is speculative.
 - No contradiction and no vagueness that would block a testable criterion.
 - No design gap that needs a design decision before the work can be specified.
 
@@ -219,7 +223,8 @@ and skip the rest. Without a profile there is no group C.
 
 ### D. Edge cases
 
-Offer candidates drawn from what was read; the user cuts. Typical candidates:
+Offer candidates drawn from what was read; the user cuts. On "draft it now",
+offer them in the reply, outside the PRD. Typical candidates:
 deleting something with active dependencies, a change mid-cycle, an event
 arriving after a boundary closed, zero records, the maximum selection, two
 people acting on the same record at once, a timezone or daylight-saving

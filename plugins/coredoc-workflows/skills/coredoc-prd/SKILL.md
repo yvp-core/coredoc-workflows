@@ -1,13 +1,14 @@
 ---
 name: coredoc-prd
-description: Use whenever the user asks to write, draft, or improve a PRD, product brief, feature brief, or product spec, or to spec a feature from the product side. Interviews the product owner to establish the goal, decisions, user stories, edge cases, non-goals, and open questions with stable row ids and claim provenance; records unknowns instead of answering engineering questions, and writes nothing until the draft is explicitly approved.
+description: Use whenever the user asks to write, draft, or improve a PRD, product brief, feature brief, or product spec, or to spec a feature from the product side. Interviews the product owner to establish the goal, decisions, user stories, edge cases, non-goals, and open questions with stable row ids and claim provenance; records unknowns instead of answering engineering questions, and keeps approval, intent proposals, and external destinations behind an explicit fresh reply.
 ---
 
 # Product requirements document
 
 Interview the product owner, draft the PRD where they can read it, revise it,
-and, only once they approve it with a fresh explicit reply, write it to the
-repository's documented PRD location. This skill establishes intent and records
+and write it as `status: draft` to the path they named or the documented PRD
+location; a fresh explicit reply gates `status: approved`, intent proposals,
+and any external destination. This skill establishes intent and records
 unknowns. It never answers an engineering question on engineering's behalf,
 never theorises a root cause, never states current behaviour as fact, and never
 estimates, sizes, prioritises, or assigns. It is invoked directly, not routed.
@@ -116,8 +117,7 @@ rules bind the two documents.
    candidates (the write stage in `intent-context.md`), the PRD skill proposes
    them in one batch, sourced at the repo-qualified PRD path and row id, and
    records each returned slug beside its row and as `intentIds` in the
-   frontmatter, the way the specification records `proposedIntentIds`. A draft
-   proposes nothing.
+   frontmatter. A draft proposes nothing.
 4. **Handoff to the specification.** The specification cites PRD rows by id and
    does not restate or re-derive product content; its own ids stay technical
    (`AC-n`, `LIM-n` for technical limits, plan steps). On a PRD, the
@@ -132,6 +132,13 @@ rules bind the two documents.
    belongs; never place it silently. When no intent capability exists, or the
    graph is empty, an optional repository profile supplies the vocabulary, and
    the output says nothing about intent.
+6. **Approval gates three things only:** `status: approved` (the
+   specification's `accepted`), proposing intent candidates, and an external
+   destination such as Jira. A `status: draft` file may be written at once to
+   the path the user named or the documented location.
+7. **A ruling in the request is the requester's decision.** "We decided X" or
+   "we rejected Y" records the decider as `PM` or the requester's role, with
+   the alternative named, and never opens an `OQ` asking who decided.
 
 ## PRD profile
 
@@ -168,17 +175,19 @@ evidence alone and do not mention intent context in the output.
 ### 1. Work type and shape
 
 Feature, bug, rule change, or spike: asked if not obvious; it decides what
-else is needed. **The shape the user asked for is the shape they get.** One task or one ticket produces one PRD carrying one story; the epic
-shape only where they asked for an epic. Work splits into more than one story
-only where the parts ship independently, test independently, or carry
-genuinely different rules, and a split inside a one-item request is a question
-for the user, not a call the draft makes.
+else is needed. **The shape the user asked for is the shape they get.** One
+task or one ticket produces one PRD carrying one story; the epic shape only
+where they asked for an epic. Work splits into more than one story only where
+the parts ship independently, test independently, or carry genuinely different
+rules, and a split inside a one-item request is a question for the user, not a
+call the draft makes.
 
 ### 2. State the verification contract
 
 Tell the user how this gets checked before spending their time: the clarity
-check in `references/interview.md` runs before drafting, nothing is written
-anywhere until they approve the draft, and approval is an explicit fresh reply.
+check in `references/interview.md` runs before drafting; the draft is a
+`status: draft` file they can read and revise; and only a fresh explicit reply
+marks it approved, proposes intent, or sends it anywhere external.
 
 ### 3. Interview
 
@@ -193,12 +202,14 @@ Method and question groups in `references/interview.md`; delivery in
   host interaction contract resolves it, with its numbered-text fallback.
 - **Batch coverage, single-thread decisions.** Factual gaps go out in one
   grouped round; each consequential decision comes alone with the alternative
-  and the trade-off. At least one full clarifying round runs before drafting.
-  Never re-ask what was answered. From the second round on, offer the way out:
-  answer to improve completeness, or draft now with the gaps as `OQ-n` rows.
+  and the trade-off. One full clarifying round runs before drafting. Never
+  re-ask what was answered. From the second round on, offer the way out:
+  answer to improve completeness, or draft now.
 - **Sort every claim by who can settle it.** Intent is the user's to decide;
   how the system behaves today is not. A relayed claim carries `[unverified]`
-  and an `OQ-n` for Engineering.
+  and an `OQ-n` for Engineering. A ruling in the request, "we decided X" or
+  "we rejected Y", is a `D-n` row with the decider as `PM` or the requester's
+  role; never open an `OQ` asking who decided.
 - **Current vs desired, and what must not move**, whenever something that
   already ships changes: both sides of the delta, and the guardrail as an
   `NG-n` row.
@@ -219,23 +230,34 @@ check runs again.
 ### 5. Draft, then revise
 
 Follow `templates/prd-template.md` exactly, including the standing disclaimer
-of what was actually read and the bug and spike variants. Draft it where the
-user can read it, as a local Markdown draft in the session's scratch location
-or in conversation, never yet in the repository. Revise in place as many
-rounds as they want, saying what changed.
+of what was actually read and the bug and spike variants. Write the draft as
+`status: draft` to the path the user named or the documented PRD location; if
+neither exists, return the Markdown in conversation and ask before creating a
+convention. Revise in place as many rounds as they want, saying what changed.
 
-### 6. Approve, then write
+Keep the PRD proportional to the brief. No quotas, but:
+
+- **Non-goals** are what the requester excluded plus the guardrail rows for
+  existing behaviour this change touches. A decision is never restated as a
+  non-goal; "not for Employees" appears once.
+- **Open questions** are only gaps that block a story or a criterion. Anything
+  the draft can proceed on is an Assumption row with a one-line reason. On
+  "draft it now", the gaps the interview would have asked about become
+  Assumptions, and only blocking ones stay `OQ`.
+- **Edge cases** are those the requester named plus ones whose resolution is
+  grounded in a supplied decision. Do not generate speculative edge cases on
+  "draft it now"; offer them in the reply, outside the PRD, as candidates the
+  requester can add.
+
+### 6. Approval
 
 Ask for approval explicitly and wait. Silence, a follow-up question, or "looks
-good so far" is not approval; a fresh affirmative reply is. Then write
-atomically to the repository's documented PRD location with `status: draft`,
-and set `status: approved` only when the user says the PRD is approved for
-handoff. If no documented location exists, return the complete Markdown in
-conversation and ask before creating a convention. Remote filing, commits, and
-worktrees require explicit authorization; a Jira or Confluence destination is a
-downstream profile's adapter, not this skill's.
+good so far" is not approval; a fresh affirmative reply is. Only then set
+`status: approved`. Remote filing, commits, and worktrees require explicit
+authorization; a Jira or Confluence destination is a downstream profile's
+adapter, not this skill's, and waits for the same reply.
 
-Before writing, read the draft once for anything that must not travel: a
+Before any write, read the draft once for anything that must not travel: a
 credential, token, connection string, or personal data from a source. Where the
 PRD needs a setting, name the setting, not the value.
 
@@ -251,25 +273,21 @@ returned slug beside its row and as `intentIds` in the frontmatter. A draft
 proposes nothing. When no intent capability is present, proceed from
 repository evidence alone and do not mention intent context in the output.
 
-Then report where the PRD was written, what changed, and what is still open
-and for whom.
+### 8. Reply
+
+Report where the PRD was written and what changed, then close with **What I
+need from you**, at most five lines: the blocking `OQ`s addressed to the
+requester and the one or two assumptions most likely to be wrong. That block
+is what the PM reads; the PRD is what engineering reads.
 
 ## Rules
 
-**Always**
+The template carries the writing rules: every product claim grounded in what
+the user said or a source read, every criterion testable and observable, every
+consequential decision a `D-n` row. **Never**
 
-- Ground every product claim in something the user said or a source read.
-- Keep every criterion testable: one specific sentence, an observable result.
-- State the conditions a computed criterion holds under; never rest on the
-  absence of an error.
-- Record every consequential decision as a `D-n` row with the alternative it
-  beat and who decided.
-- Name what must not move whenever the work changes something that exists.
-- Say what was read and what was not verified.
-
-**Never**
-
-- Write to the repository before the user approves the draft.
+- Mark a PRD approved, propose intent, or send it to an external destination
+  before the user's fresh explicit reply.
 - State how the system behaves today as settled fact, or put `[unverified]` on
   a requirement.
 - Write a non-answer into the body as though it were a decision.
@@ -282,12 +300,3 @@ When the user asks for something this skill does not do — estimate, size,
 prioritise, sequence, assign, decide a rule, answer for engineering — state the
 limit once, offer the legitimate alternative (the `coredoc-spec` skill, or an
 `OQ-n` row), and move on. Do not repeat the reasoning or moralize.
-
-## References
-
-- `templates/prd-template.md`: sections, story shape and split rules, epic and
-  child-issue shape, bug and spike variants.
-- `references/interview.md`: method, claim provenance, clarity check, question
-  groups, worked example.
-- `references/asking.md`: the input tool and its fallback, the envelope,
-  options from evidence, the escape.

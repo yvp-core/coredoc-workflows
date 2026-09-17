@@ -22,8 +22,7 @@ rules bind the two documents.
    candidates (the write stage in `intent-context.md`), the PRD skill proposes
    them in one batch, sourced at the repo-qualified PRD path and row id, and
    records each returned slug beside its row and as `intentIds` in the
-   frontmatter, the way the specification records `proposedIntentIds`. A draft
-   proposes nothing.
+   frontmatter. A draft proposes nothing.
 4. **Handoff to the specification.** The specification cites PRD rows by id and
    does not restate or re-derive product content; its own ids stay technical
    (`AC-n`, `LIM-n` for technical limits, plan steps). On a PRD, the
@@ -38,3 +37,10 @@ rules bind the two documents.
    belongs; never place it silently. When no intent capability exists, or the
    graph is empty, an optional repository profile supplies the vocabulary, and
    the output says nothing about intent.
+6. **Approval gates three things only:** `status: approved` (the
+   specification's `accepted`), proposing intent candidates, and an external
+   destination such as Jira. A `status: draft` file may be written at once to
+   the path the user named or the documented location.
+7. **A ruling in the request is the requester's decision.** "We decided X" or
+   "we rejected Y" records the decider as `PM` or the requester's role, with
+   the alternative named, and never opens an `OQ` asking who decided.

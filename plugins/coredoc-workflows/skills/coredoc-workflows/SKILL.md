@@ -148,6 +148,8 @@ When `coredoc-spec` exposes an unresolved user-owned decision, do not write the
 spec or finish the stage as successful. Return `NEEDS_CONTEXT` and follow the
 blocked-attempt lifecycle above: close that attempt as blocked, ask, stop, and
 restart the spec stage from the updated shared picture after the answer.
+When no PRD exists and the request is product-shaped, the spec stage returns
+questions for the PRD instead of writing a specification.
 A completed interactive frontier still requires confirmation of the assembled
 alignment brief before spec writing; the last design answer is not that
 confirmation.

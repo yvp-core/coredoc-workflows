@@ -5,12 +5,13 @@ expect.*
 
 ## What it does
 
-You talk. It asks. You get a PRD written to your repository's documented PRD
-location, only after you approve the draft.
+You talk. It asks. You get a draft PRD written to your repository's documented
+PRD location, and your fresh explicit reply is what marks it approved.
 
 The skill interviews you about a feature, a bug, a rule change, or a spike;
-drafts the PRD where you can read and correct it; and writes it only when you
-say yes in a fresh reply. It records what it could not verify instead of
+writes the draft where you can read and correct it; and only on your explicit
+approval marks it approved or sends it anywhere external. It records what it
+could not verify instead of
 guessing: anything you tell it about how the system behaves today is marked
 `[unverified]` and becomes a question for engineering. The engineering
 specification that follows (`coredoc-spec`) cites the PRD's rows by id, checks
@@ -19,9 +20,9 @@ those claims against the code, and answers those questions.
 ## What it will not do
 
 Estimate, size, prioritise, sequence, or assign; decide a calculation rule;
-answer an engineering question; state current behaviour as fact; write before
-you approve. Ask for one of these and it says so once, offers the alternative,
-and moves on.
+answer an engineering question; state current behaviour as fact; mark a PRD
+approved or send it externally before you say so. Ask for one of these and it
+says so once, offers the alternative, and moves on.
 
 ## Starting
 

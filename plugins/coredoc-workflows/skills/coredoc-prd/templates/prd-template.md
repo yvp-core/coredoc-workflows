@@ -88,10 +88,12 @@ and never what it was meant to leave alone.
 | NG-1 | [What this deliberately does not do, and who it is explicitly not for] |
 | NG-2 | [Unchanged: the behaviour, value, or population that must survive this change] |
 
-Name the tempting adjacent thing that is out; that is what stops scope drift
-during build. Whenever this changes something that already exists, the current
-behaviour that must survive unchanged is an `NG-n` row: it is the regression
-scope, and without it the build silently drops behaviour nobody wrote down.
+Non-goals are what the requester excluded plus the guardrail rows for existing
+behaviour this change touches, and nothing else. A decision is never restated
+as a non-goal; a population that is out ("not for Employees") appears once.
+Whenever this changes something that already exists, the current behaviour
+that must survive unchanged is an `NG-n` row: it is the regression scope, and
+without it the build silently drops behaviour nobody wrote down.
 
 ## Current vs Desired
 
@@ -115,7 +117,9 @@ must **not**.
 | D-1 | [Mid-period changes recompute the whole period] | [Forward-only from the change date] | PM |
 
 Only decisions where two readings produce materially different builds, the ones
-the interview took one at a time. An entry with no alternative weighed is an
+the interview took one at a time. A ruling in the request ("we decided", "we
+rejected") is a row with the decider as `PM` or the requester's role; never
+open an `OQ` asking who decided. An entry with no alternative weighed is an
 assumption and belongs below. If the interview settled none, say so in one line.
 
 ## Assumptions
@@ -123,6 +127,10 @@ assumption and belongs below. If the interview settled none, say so in one line.
 | # | Assumption | Why it was needed |
 |---|---|---|
 | 1 | [Stated as a claim, not a question: every "use your best judgment"] | [Which story or criterion depends on it] |
+
+Anything the draft can proceed on without an answer is a row here, with a
+one-line reason, not an open question. On "draft it now", the gaps the
+interview would have asked about land here; only blocking ones stay `OQ`.
 
 **External systems this PRD leans on.** Only systems the user named, and only
 what the PRD assumes about each; each also gets an `OQ-n` row for Engineering.
@@ -204,8 +212,9 @@ the table.
 
 ## Edge cases
 
-At least three, each with a resolution reflected in a criterion, unless the
-work genuinely has fewer and the PRD says why.
+Those the requester named, plus ones whose resolution is grounded in a
+supplied decision, each reflected in a criterion. Speculative candidates are
+offered in the reply, outside the PRD, never generated into it.
 
 | ID | Edge case | Resolution | Where it lands |
 |---|---|---|---|
@@ -216,9 +225,10 @@ number exists only inside a child.
 
 ## Open questions
 
-Everything unsettled, in one table. This is the only destination. The
-addressee says who can settle it, which is part of the question rather than an
-assignment.
+Only gaps that block a story or an acceptance criterion, in one table; this is
+the only destination for them. Anything the draft can proceed on is an
+Assumption instead. The addressee says who can settle it, which is part of the
+question rather than an assignment.
 
 | ID | Question | Affects | For |
 |---|---|---|---|
