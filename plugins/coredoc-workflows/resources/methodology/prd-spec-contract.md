@@ -33,8 +33,11 @@ rules bind the two documents.
    `get_intent_context` call with `task` (the request text) and, when known,
    `domain`/`feature` before the interview; use the returned
    `matchedFeatureIds`, rules, and their wording. When `matchedFeatureIds` is
-   empty, propose a `cap`/feature candidate and ask the user where the work
-   belongs; never place it silently. When no intent capability exists, or the
+   empty, propose the feature in the interview — domain, title, one-sentence
+   statement — and, once the PRD is approved, create it with `intent_tree` in
+   the user's session before proposing candidates into it, naming in the reply
+   what it created; a service-token session drafts it and stops. When no intent
+   capability exists, or the
    graph is empty, an optional repository profile supplies the vocabulary, and
    the output says nothing about intent.
 6. **Approval gates three things only:** `status: approved` (the
