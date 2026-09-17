@@ -27,10 +27,10 @@ const builtPath = (skill) => join(SKILLS_ROOT, skill, "SKILL.md");
 
 // The filesystem is the registry: a skill is generated iff it has a template.
 // Pinning the count keeps a template from being added or dropped unnoticed.
-test("eleven skills are generated and each has a committed output", async () => {
+test("twelve skills are generated and each has a committed output", async () => {
   const generated = await templatedSkills();
 
-  assert.equal(generated.length, 11);
+  assert.equal(generated.length, 12);
   for (const skill of generated) {
     assert.ok((await stat(builtPath(skill))).isFile(), `${skill} has no SKILL.md`);
   }

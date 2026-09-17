@@ -959,6 +959,32 @@ test("spec challenges proposal scope and verifies model contracts before elabora
   assert.match(body, /static prompt,[\s\S]*content assertions may guard structure but cannot alone[\s\S]*prove adoption or behavior/i);
 });
 
+test("prd and spec share the PRD↔spec contract, and prd records unknowns instead of answering", async () => {
+  const [prd, spec, contract] = await Promise.all([
+    skill("coredoc-prd"),
+    skill("coredoc-spec"),
+    readFile(join(METHODOLOGY_ROOT, "prd-spec-contract.md"), "utf8"),
+  ]);
+
+  assert.ok(prd.includes(contract.trim()), "coredoc-prd lost the shared contract partial");
+  assert.ok(spec.includes(contract.trim()), "coredoc-spec lost the shared contract partial");
+
+  for (const id of ["G-n", "D-n", "US-n", "EC-n", "NG-n", "OQ-n"]) {
+    assert.match(contract, new RegExp("`" + id + "`"), id);
+  }
+  assert.match(contract, /never renumbered/);
+  assert.match(contract, /`\[unverified\]`[\s\S]*never on\s+requirements/);
+  assert.match(contract, /`G` → `cap`[\s\S]*`NG` → `lim`/);
+  assert.match(contract, /cites PRD rows by id and\s+does not restate/);
+  assert.match(contract, /matchedFeatureIds/);
+
+  assert.match(prd, /never answers an engineering question on engineering's behalf/);
+  assert.match(prd, /Answer an engineering question on engineering's behalf, or theorise/);
+  assert.match(prd, /## PRD profile/);
+  assert.match(prd, /"looks\s+good so far" is not approval/);
+  assert.doesNotMatch(prd, /coredoc-workflows (finish-run|stage-run|project-key)/);
+});
+
 test("browser workflows retain the bundled macOS ARM fallback", async () => {
   for (const name of [
     "coredoc-runtime-qa",
