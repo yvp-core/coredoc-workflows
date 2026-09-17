@@ -218,8 +218,9 @@ configuration instead, and who decides?
 
 ### C. Domain-specific questions
 
-Supplied by the active PRD profile. Ask the subset that applies to this work
-and skip the rest. Without a profile there is no group C.
+Supplied by the active PRD profile's `## Question groups`, batched with the
+groups here. Ask the subset that applies to this work and skip the rest.
+Without a profile there is no group C.
 
 ### D. Edge cases
 

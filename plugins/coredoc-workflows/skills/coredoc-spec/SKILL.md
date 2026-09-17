@@ -159,8 +159,11 @@ intent graph; it carries the PRD's `intentIds` through unchanged.
 developer about product decisions. Ground what the repository can answer, then
 return **Questions for the PRD**: the alignment brief reframed as input for
 `coredoc-prd`, the outcome, actors, rules, and non-goals the PRD must settle,
-as questions its owner can answer. Write nothing and stop with
-`NEEDS_CONTEXT`.
+as questions its owner can answer. A choice that determines actors, ownership,
+or what an entity is (who a tenant is, whether a user belongs to several, who
+is served) is a PRD question, listed there without options or a recommendation;
+only a choice with no product content (stack, data store, deployment shape) may
+be asked of the developer. Write nothing and stop with `NEEDS_CONTEXT`.
 
 **A small technical change, or a bug with a confirmed cause.** A ticket sized to
 the change: no product intent model, no ADR, no rollout. When the intent context

@@ -21,10 +21,15 @@ estimates, sizes, prioritises, or assigns. It is invoked directly, not routed.
 
 A repository may declare a PRD profile under the exact heading `## PRD profile`
 in its normal agent instructions, naming a file: a repo-local path, or a
-downstream plugin's `resources/prd-profiles/<name>.md`. The profile may add
-domain vocabulary, question groups, cross-cutting concerns, sign-off zones, and
-a destination adapter name. Read it before the interview and ask about whatever
-it lists. No profile is the normal case: then the vocabulary comes from the
+downstream plugin's `resources/prd-profiles/<name>.md`, or inlined into a
+downstream skill at build time. Its sections are fixed: `## Vocabulary`,
+`## Question groups` (batched like the others), `## Cross-cutting concerns`
+(label and the question it asks), `## Sign-off zones`, `## Destination` (the
+adapter, what it reads before the interview and writes after approval), and
+`## Template additions` (appended after Open questions). It never changes row
+ids, claim provenance, the approval gate, or the intent mapping. Read it before
+the interview and ask about whatever it lists. No profile is the normal case:
+then the vocabulary comes from the
 intent graph or the repository's product docs, the interview asks one open
 question about cross-cutting effects and records the answer, and the guardrail
 question is the one sign-off zone.

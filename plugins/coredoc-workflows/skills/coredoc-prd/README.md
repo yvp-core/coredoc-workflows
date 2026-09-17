@@ -40,10 +40,27 @@ include. Everything you give up front is something it does not have to ask.
 
 A repository can tailor the interview by naming a profile under a
 `## PRD profile` heading in its agent instructions. No profile is the normal
-case. A profile is a Markdown file such as:
+case. A profile is a Markdown file made of these sections and no others, each
+under its fixed heading; any section may be left out.
+
+| Heading | What it supplies |
+|---|---|
+| `## Vocabulary` | The product's terms, and the generic words they replace. The PRD is written in them. |
+| `## Question groups` | Interview groups added to the batched round, asked and dropped like the built-in groups; each a `### ` heading with its questions. |
+| `## Cross-cutting concerns` | One row per concern: its label and the question it asks. The PRD's concerns table carries exactly these rows. |
+| `## Sign-off zones` | Zones the user rules on rather than getting a filled-in guess. The guardrail (what must not move) is always one of them. |
+| `## Destination` | The adapter's name, what it does before the interview (what it reads), and what it does after approval (where it writes). The adapter is the downstream plugin's, not this skill's, and waits for the fresh explicit reply. |
+| `## Template additions` | Extra PRD sections with their rules, appended after Open questions in the profile's order. An addition covering release or communication stands in for the template's Release and communication notes. |
+
+A profile never changes the row ids, the claim provenance (`[unverified]` with
+an `OQ-n` for Engineering), the approval gate, or the mapping of rows to intent
+kinds: those are the PRD and specification contract, and the profile sits
+beside it. A downstream plugin may inline a profile into its generated skill at
+build time instead of naming a file; the sections and their meaning are the
+same.
 
 ```markdown
-<!-- resources/prd-profiles/example.md — everything below is optional -->
+<!-- resources/prd-profiles/example.md — every section is optional -->
 # PRD profile: example product
 
 ## Vocabulary
@@ -55,11 +72,21 @@ Use "punch", "pay policy", "worked hours"; never "record" or "settings".
 - Which period does it operate on, and what happens after close?
 
 ## Cross-cutting concerns
-Reports & dashboards · Exports · Mobile · Permissions · Performance
+| Concern | The question it asks |
+|---|---|
+| Reports & dashboards | Which report or dashboard shows a value this changes? |
+| Exports | Does an export carry a field whose meaning changes? |
+| Permissions | Which roles see the entry point, and what do the others see? |
 
 ## Sign-off zones
-Anything touching computed hours or pay-policy behaviour.
+Computed hours · Pay-policy behaviour · The guardrail: what must not move
 
 ## Destination
-adapter: jira   # handled by a downstream plugin, not by coredoc-prd
+adapter: jira
+Before the interview: read the ticket, its links and comments.
+After approval: write the PRD into the issue description; read it back.
+
+## Template additions
+### Entry point
+Where the user reaches this, and which role sees it.
 ```

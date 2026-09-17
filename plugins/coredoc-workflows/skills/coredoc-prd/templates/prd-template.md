@@ -247,6 +247,15 @@ reason where there is one or none; rollback and who decides; what must be true
 before release; dates and whether a deadline is hard. Which teams need to know
 and why, whether a demo or documentation is needed and who produces it.
 
+## Profile additions
+
+When the active PRD profile carries `## Template additions`, its sections are
+appended here, after Open questions and in the profile's order, each with the
+rules the profile gives it. An addition covering release or communication
+stands in for Release and communication notes. Additions never carry row ids
+of their own; they cite `US-n`, `EC-n`, `OQ-n` rows like every other section.
+Without a profile there are none, and nothing is written here.
+
 ---
 
 ## Epic shape
