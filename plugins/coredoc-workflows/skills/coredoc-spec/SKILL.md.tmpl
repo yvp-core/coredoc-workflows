@@ -1,70 +1,54 @@
 ---
 name: coredoc-spec
-description: Turn vague product or engineering intent into a precise executable specification with scope, acceptance criteria, testing, rollout, and rollback. Use when asked to write a spec, ticket, issue, or backlog item. Closing the spec stage successfully requires an observed intent context read; when the specification becomes accepted, run the `intent-capture` skill so the candidates it introduces exist before the implement stage (or `spec accept`) closes.
+description: Use whenever the user asks to write, draft, or update a spec, specification, ticket, issue, epic, or backlog item, or to "spec out" a change, whether the request is vague or already fully detailed. Produces a compact executable specification (scope, use cases, acceptance criteria, implementation plan) grounded in repository evidence, sized to the change, and stops to ask before writing when a high-blast-radius decision is unresolved.
 ---
 
 # Specification adapter
 
 Produce the smallest executable specification grounded in current repository
-evidence. Default to repository-local Markdown in the project's documented spec
-location. A remote issue, worktree, commit, or implementation requires explicit user authorization. Never persist the original prompt or secrets.
+evidence. Default to repository-local Markdown in the documented spec location.
+A remote issue, commit, worktree, archival, or spawned implementation
+requires explicit user authorization. Never persist the original prompt or secrets.
 
 {{PREAMBLE}}
 
 ## Method
 
-```mermaid
-flowchart LR
-  G[Ground current state] --> I[Resolve material intent]
-  I --> A[Align domain and solution]
-  A -->|open owner decision| Q[Ask current frontier and wait]
-  Q --> A
-  A -->|interactive frontier empty| C[Confirm shared picture]
-  C -->|revise| A
-  C -->|confirmed| M[Model rules and flows]
-  A -->|mature input| M
-  M --> V[Verify scope and observability]
-  V --> D[Deliver final spec]
-```
-
 ### 1. Ground current state
 
 Read repository rules and the smallest relevant runtime path before asking
 technical questions. Search local spec/issue locations for a likely duplicate.
-Record verified behavior and current consumers with file references; if evidence
-does not exist, label the feature greenfield or the fact unknown. Never ask the
-user for facts available in code.
+Record verified behavior and current consumers with file references; without
+evidence, label the feature greenfield or the fact unknown. Never ask the user
+for facts available in code.
 
 Treat every supplied design, however detailed, as proposal input until repository
 evidence or an explicit owner decision supports it. Classify each material premise
 as verified current fact, accepted requirement/decision, reversible assumption,
 or deferred proposal. Citations inside a proposal are leads, not evidence; correct
-them when the current runtime contract disagrees.
+them when the runtime contract disagrees.
 
 If this session has a Coredoc code-graph capability — `search_symbols`,
 `explain`, `find_dependents`, `analyze_change_impact` — ground current consumers
-and the runtime path through it before grepping, cite the node ids it returns
-beside the file references, and hand scouts the graph facts you already hold.
-Its coverage is a lower bound; verify critical consumers against source. When no
-graph capability is present, proceed from repository evidence alone and do not
-mention it in the output.
+and the runtime path through it before grepping, cite its node ids beside the
+file references. Its coverage is a lower bound; verify critical consumers
+against source. When no graph capability is present, proceed from repository
+evidence alone and do not mention it in the output.
 
 If this session has a Coredoc intent capability — the `get_intent_context` MCP
 tool or the `coredoc intent context` CLI — read
 `<plugin-root>/resources/methodology/intent-context.md` and follow its fetch and
 PRD/spec stage contracts. Reuse exact IDs and their `intentVersions` from a
-routed PRD or task; otherwise perform only the bounded orientation/discovery the
+routed PRD or task; otherwise do only the bounded orientation/discovery the
 methodology permits. Cite accepted intent beside the outcomes it supports, keep
 candidate ideas and missing/changed IDs as unresolved questions, and carry
-`intentIds` plus `intentVersions` into the final specification — only the ids
-the body actually cites next to a claim; an id you read but did not use is not
-part of the working set. When no
-intent capability is present, proceed from repository evidence alone and do not
-mention intent context in the output.
+`intentIds` plus `intentVersions` into the final specification: only the ids
+the body cites beside a claim. When no intent capability is present, proceed
+from repository evidence alone and do not mention intent context in the output.
 
 Capture only release facts that can change the design: supported paths/users,
-deployment shape, realistic load, retained data/cutover constraints,
-deprecations, and accepted risks. Unknown context is not an enterprise default.
+deployment shape, realistic load, retained data/cutover constraints, deprecations,
+accepted risks. Unknown context is not an enterprise default.
 
 ### 2. Resolve material intent
 
@@ -78,11 +62,10 @@ Proceed when the request plus repository evidence answers these questions:
 | Risk | Reachable failures, trust/data boundaries, rollout and rollback? |
 | Ownership | Which public/cross-cutting decisions belong to the user? |
 
-Use the table to identify missing facts and decisions, not to begin a separate
-interview. Resolve repository-verifiable facts yourself. Label routine,
-low-impact implementation details as reversible assumptions; carry every
-material user-owned choice into the alignment checkpoint below instead of
-defaulting it. That checkpoint owns the question order and compact format.
+Use the table to find missing facts and decisions, not to start an interview.
+Resolve repository-verifiable facts yourself, label routine low-impact details
+as reversible assumptions, and carry every material user-owned choice into the
+alignment checkpoint below, which owns the question order and format.
 
 Challenge scope before modeling it. Preserve explicitly accepted outcomes and
 decisions without silently widening them. For raw ideas and unaccepted proposals,
@@ -90,14 +73,20 @@ select the smallest reversible slice that can prove value. A new store, service,
 shared schema, public API, synchronization path, automatic lifecycle, or workflow
 integration needs a current consumer and observable requirement in this slice;
 otherwise defer it. Leave owner-controlled distribution, authority, and contract
-choices unresolved when selecting one would materially expand the result.
+choices unresolved when selecting one would materially expand the result. An
+unresolved decision must rest on a supplied fact or repository evidence. A
+supplied fact such as "nothing else references it" closes that failure class:
+name no flag provider, scheduler, persistence layer, or other infrastructure
+anywhere in the spec, not even as a non-goal or a hedge. A confirmed root cause
+plus fix in the request is the slice: hardening the failure class (validation,
+fail-fast, warnings, `0`/empty/non-numeric handling) is a one-line non-goal or
+follow-up, never an AC, remedy step, or decision, unless the user asked for it.
 
 {{PRE_SPEC_ALIGNMENT}}
 
 ### 4. Model intent, not implementation noise
 
-Use stable IDs within the document so the intent can later form a graph beside
-the code graph:
+Use stable IDs so the intent can later form a graph beside the code graph:
 
 - `UC-n`: actor use case or externally visible flow.
 - `BR-n`: business rule mapping a reachable condition to an outcome.
@@ -106,23 +95,34 @@ the code graph:
 - `ADR-n`: decision with context, alternatives, consequences, and status.
 
 These semantic kinds are tools, not quotas. Omit an inapplicable kind instead of
-inventing a row to make the document look complete. Create an ADR only when the
-choice would be costly to change later, its rationale would not be obvious from
-the resulting code, and credible alternatives were actually evaluated; otherwise
-keep the accepted choice in ordinary scope or contract prose. Keep the persisted
-specification to its coarse `size` field; do not add question-time effort detail.
+inventing a row. Two layers: ID kinds are product intent and enter the intent
+graph; the technical contract carries no ID and lives in scope/contracts, plan,
+and validation.
+
+Granularity test: a `UC`/`BR`/`LIM` row describes behaviour a product owner
+would recognise without reading code. If stating it needs a function name,
+environment variable, type, parser behaviour, or a value such as `0`/`NaN`/`null`,
+it is an implementation note: put it under the implementation plan or
+validation, without an ID. A code-level fact that constrains the design is a
+**Verified current state** bullet, not a rule.
+
+Create an ADR only when the choice would be costly to change later, its
+rationale would not be obvious from the resulting code, and
+credible alternatives were actually evaluated; otherwise keep the accepted
+choice in ordinary scope or contract prose. Keep the specification to its
+coarse `size` field; do not add question-time effort detail.
 
 Connect them explicitly (`UC-1 -> BR-2 -> AC-3`). A rule needs a current source
-or decision owner and a named observer; do not turn a code detail into a business
-rule. A limitation needs a concrete reason and affected flow. Acceptance criteria
+or decision owner and a named observer. A limitation needs a concrete reason and
+affected flow. Acceptance criteria
 are outcomes, not an automatic request for one new test each.
 
 Give every requested semantic kind and user flow a durable representation or an
-explicit deferral; a label or trace link is not a substitute for missing payload.
+explicit deferral.
 Merge synonymous labels only when their payload, authority, lifecycle, and
 consumers are equivalent. If a term could distinguish proposed possibility from
 accepted capability, preserve both meanings or leave an owner decision; do not
-silently discard one while normalizing the vocabulary.
+silently discard one.
 When intent links to current code or graph concepts, enumerate supported target
 kinds and fields from source. Treat an unsupported field or node kind as unknown
 or a limitation—never infer a contract from neighboring node types.
@@ -130,31 +130,29 @@ or a limitation—never infer a contract from neighboring node types.
 An in-scope named consumer needs an executable adoption path in the same slice;
 publishing a schema, document, or tool that a workflow merely *may* use does not
 satisfy an outcome that says the workflow uses it. If adoption is deferred, mark
-that outcome undelivered and require the decision owner to accept the narrower
-slice rather than claiming full coverage.
+that outcome undelivered and have the decision owner accept the narrower slice.
 
 Use one Mermaid `flowchart`, `sequenceDiagram`, or `stateDiagram-v2` only when
-three or more branches/states/interactions are materially clearer than prose.
-Label nodes with the IDs above and add prose only for semantics the diagram
-cannot encode. Do not duplicate the same flow in bullets and a diagram.
+three or more branches/states/interactions are materially clearer than prose;
+label nodes with the IDs above and add prose only for what the diagram cannot
+encode. Do not duplicate the same flow in bullets and a diagram.
 
 ### 5. Verify the draft
 
 Before delivery, check:
 
-- every in-scope outcome maps to at least one use case/rule and observable `AC`;
-- every current-contract claim and referenced field is source-backed rather than
+- every product-level outcome maps to at least one use case/rule and observable
+  `AC`, and no `UC`/`BR`/`LIM` row fails the granularity test in §4;
+- every current-contract claim and referenced field is source-backed, not
   inherited from a proposal;
-- every requested semantic kind/flow is representable or explicitly out of scope;
-- every planned change maps back to an accepted outcome;
-- every new mechanism has a current consumer and observable need in this slice;
-- non-goals exclude considered but deferred machinery;
-- public contracts and current consumers are explicit;
+- every planned change maps to an accepted outcome;
+- non-goals record deferred machinery; contracts and consumers are explicit;
 - failure handling covers reachable cases, not hypothetical states;
 - acceptance names observable behaviors and predicates, not test counts or
   invented percentage targets; preserve only binding numeric or compliance gates;
-- validation uses the smallest meaningful existing layer, adding tests only for
-  changed observable behavior or an unobserved realistic regression;
+- every `AC` observes an outcome the request asked to change;
+- validation uses the smallest existing layer, adding tests only for changed
+  observable behavior or an unobserved realistic regression;
 - each named consumer is exercised on a representative outcome; static prompt,
   schema, wiring, or content assertions may guard structure but cannot alone
   prove adoption or behavior;
@@ -162,68 +160,63 @@ Before delivery, check:
 - no unresolved user-owned decision is silently defaulted.
 
 For a bug, record the evidence-backed root cause before the remedy. For external
-schemas/APIs, probe the real shape before finalizing a dependent contract. For a
-measured threshold, record the method so it is reproducible. `L`/`XL` work must
+schemas/APIs, probe the real shape before finalizing a dependent contract.
+Record the method behind any measured threshold. `L`/`XL` work must
 also state how each critical acceptance check could pass while behavior is
 broken; repair any self-satisfying check.
 
-Pre-spec alignment avoids a second generic confirmation round, but it does not
-authorize silently choosing material detail discovered while elaborating the
-specification. If elaboration exposes a new user-owned decision or materially
+Pre-spec alignment does not authorize silently choosing material detail found
+while elaborating. If elaboration exposes a new user-owned decision or materially
 changes the aligned picture, return to the alignment checkpoint and resolve it;
 do not add a generic mid-spec approval round.
 
 Keep `status: draft` through plan review. In a gated routed workflow, the fresh
-affirmative post-review reply defined by the router both accepts the reviewed
+affirmative post-review reply both accepts the reviewed
 specification and authorizes implementation. After its read-only preflight and
 proof-plan announcement, the implementation stage changes a draft frontmatter to
-`status: accepted` as its first repository write, before any code or test edit;
-it preserves an unchanged accepted status from a prior session. A requested
+`status: accepted` as its first repository write; it
+preserves an unchanged accepted status from a prior session. A requested
 revision returns to specification and review instead. For standalone
-specification delivery without an implementation stage, deliver the draft as
-the handoff and set `status: accepted` only when the user explicitly approves
-the completed draft; do not add a confirmation round to obtain it. Alignment
-approval or a review verdict alone never accepts the specification.
+specification delivery, deliver the draft as the handoff and set
+`status: accepted` only when the user explicitly approves the completed draft;
+do not add a confirmation round to obtain it. Alignment approval or a review
+verdict alone never accepts the specification.
 
-Tell the coordinator which artifact you wrote, so the run records it: the
-specification stage is closed with `stage-run finish --stage-id spec --outcome
-success --spec-path <repo-relative spec path>`, and a standalone delivery is
-closed with the router's `finish-run --outcome delivered-draft --spec-path
-<repo-relative spec path>` instead of an ordinary finish. Those two are the
-coordinator's commands; never run them yourself.
+Tell the coordinator which artifact you wrote so the run records it: it closes
+the specification stage with `stage-run finish --stage-id spec --outcome
+success --spec-path <path>`, or a standalone delivery with
+`finish-run --outcome delivered-draft --spec-path <path>`. Never run those two
+yourself.
 
-`delivered-draft` parks the run for the approval rather than finishing it, for
-up to 14 days, and the draft carries `run: <runId>` back to it. The approval
-usually arrives in a later session. Do not edit `status:` by hand there: reopen
-the parked run, propose the candidate intent as below, and let the acceptance
-command make the transition. These two are yours to run:
+`delivered-draft` parks the run for up to 14 days awaiting approval, and the
+draft carries `run: <runId>` back to it. When approval arrives, do not edit
+`status:` by hand: reopen the parked run, propose the candidate intent as below,
+and let the acceptance command transition it. These two are yours to run:
 
 ```text
 <plugin-root>/bin/coredoc-workflows spec accept --path <repo-relative spec path>
 <plugin-root>/bin/coredoc-workflows spec accept --finish
 ```
 
-`--finish` writes `status: accepted` itself, and refuses while no candidate
-batch citing this specification was observed; pass `--skip-intent "<reason>"`
-only when there is a real reason there can be none. If the user drops the draft
-instead, run `spec abandon --reason "<text>"`.
+`--finish` writes `status: accepted` itself and refuses until a candidate batch
+citing this specification was observed; pass `--skip-intent "<reason>"` only
+when there genuinely can be none. If the user drops the draft, run
+`spec abandon --reason "<text>"`.
 
 If the specification has reached `status: accepted` and this session has a cloud
 Coredoc intent write capability — `intent_propose` is visible — run the "After
 specification acceptance" write stage of
 `<plugin-root>/resources/methodology/intent-context.md`: propose the product
-intent the accepted specification introduces or changes as candidates in one
-batch, sourced at the repo-qualified spec path and the stable section id, and
-report each
+intent it introduces or changes as one candidate batch,
+sourced at the repo-qualified spec path and stable section id, and report each
 `itemId`, `outcome`, and `version` as `proposedIntentIds` beside `intentIds` and
-`intentVersions`. Proposals are candidates and anchoring or recording is never
-yours; the single exception is that write stage's single-approval clause — when
-the acting human accepts the specification in this session, accept the items
-whose whole content is verbatim from the accepted section and leave every
-paraphrased one, and every autonomous or service-token run, a candidate. A draft
-specification proposes nothing. When no intent
-capability is present, proceed from repository evidence alone and do not mention
-intent context in the output.
+`intentVersions`. Proposals are candidates; anchoring or recording is never
+yours. The single exception is that write stage's single-approval clause: when
+the acting human accepts the specification in this session, accept only items
+whose whole content is verbatim from the accepted section; every paraphrased
+item, and every autonomous or service-token run, stays a candidate. A draft
+specification proposes nothing. When no intent capability is present, proceed
+from repository evidence alone and do not mention intent context in the output.
 
 Run the privacy gate over the exact final file:
 
@@ -236,7 +229,12 @@ Do not write on a HIGH finding. Never echo an unmasked finding.
 ## Default specification shape
 
 Follow a repository convention when it contains the same semantics. Otherwise
-use this compact shape and omit inapplicable rows, never required meaning:
+use this compact shape and omit inapplicable rows, never required meaning. For
+`size: s` the intent model defaults to one or two sentences of prose naming the
+single product outcome and, only if one exists, one product rule: no UC/BR/LIM
+tables, no ADR, and no Rollout/rollback block for a config-only or single-file
+change. A default, not a quota: a genuinely multi-flow small change may still
+use a table. Tables are the default from `m`.
 
 ````markdown
 ---
@@ -260,10 +258,8 @@ status: draft | accepted
 | --- | --- | --- | --- | --- |
 | UC-1 | ... | ... | ... | ... |
 
-[Optional single Mermaid diagram using UC/BR/LIM IDs]
-
-[Add `BR-*` business rules or `LIM-*` limitations only when a concrete rule or
-constraint needs its own traceable identity. Omit empty headings and tables.]
+[Add `BR-*` rules or `LIM-*` limitations only when a concrete rule or constraint
+needs its own traceable identity. Omit empty headings and tables.]
 
 ## Scope
 
@@ -275,7 +271,7 @@ constraint needs its own traceable identity. Omit empty headings and tables.]
 
 | ID | Pass/fail outcome | Observer / validation | Traces to |
 | --- | --- | --- | --- |
-| AC-1 | ... | existing check, new focused test, build, runtime proof, etc. | UC/BR/LIM |
+| AC-1 | ... | existing check, focused test, build, runtime proof | UC/BR/LIM |
 
 ## Implementation plan
 
@@ -299,16 +295,30 @@ and consequences. Otherwise omit it entirely.]
 ````
 
 For an epic, add a child-issue table and a Mermaid dependency graph; explain
-only the ordering constraints not obvious from the graph. For a family-wide
-audit, add the verified in-scope inventory and a “do not touch” list. Do not
-inflate an ordinary change into an epic or audit.
+only ordering constraints the graph does not show. For a family-wide audit, add
+the verified in-scope inventory and a “do not touch” list. Do not inflate an
+ordinary change into an epic or audit.
 
 ## Deliver the specification
 
-Write atomically to the documented local location. If none exists, return the
+Write atomically to the documented local location; if none exists, return the
 complete Markdown in conversation and ask before creating a new convention. When
 intent context was used, the handoff carries `intentIds`, `intentVersions`, and
-any `proposedIntentIds` from the acceptance write stage.
-Remote filing, commits, worktrees, spawned implementation, and archival require
-explicit user authorization. The final spec is the handoff; mention plan review
-only for material architectural risk, and implementation only when requested.
+any `proposedIntentIds`. Mention plan review only for material architectural
+risk, and implementation only when requested.
+
+The spec serves implementation and intent capture, not the human reader. End
+the reply with a plain-language reviewer brief a developer can review without
+opening it:
+
+- **What changes:** modules/files and the behaviour that changes, one line each.
+- **Expected result:** what an observer sees afterwards, in the spec's outcomes.
+- **What could break:** reachable failures and affected consumers only.
+- **Decisions you must make:** unresolved user-owned decisions, or "none".
+- One Mermaid diagram only under the §4 rule; otherwise none.
+
+Every brief line cites the spec IDs it summarises (`UC-1`, `BR-2`, `AC-3`). A
+line with nothing to cite means the spec lacks that outcome or rule: fix the
+spec, do not pad the brief. A spec ID no brief line needs is a removal candidate
+under the §4 granularity test. Keep the brief under roughly fifteen lines; if it
+cannot be, the spec is too large for its `size`.

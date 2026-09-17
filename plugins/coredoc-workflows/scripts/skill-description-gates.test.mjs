@@ -1,9 +1,9 @@
 /**
  * DEC-4 — a description that promises a check the CLI does not perform is a
  * lie the agent reads in every session. One test per sentence: the skill says
- * it (for the four skills that live here) and the CLI does it.
+ * it (for the three skills that live here) and the CLI does it.
  *
- * Two of the six sentences belong to skills shipped from coredoc-parser
+ * Two of the five sentences belong to skills shipped from coredoc-parser
  * (`coredoc-mcp`, `intent-capture`). Their text is pinned here as a constant
  * anyway, because the behaviour they promise is this plugin's: the gates that
  * count reads and the candidate precondition of the acceptance transition.
@@ -32,8 +32,7 @@ import {
 
 /** The sentence each skill's description ends with, verbatim (issue 04). */
 const SENTENCES = Object.freeze({
-  "coredoc-spec":
-    "Closing the spec stage successfully requires an observed intent context read; when the specification becomes accepted, run the `intent-capture` skill so the candidates it introduces exist before the implement stage (or `spec accept`) closes.",
+  // `coredoc-spec` carries no gate sentence since 2026-09-17: with it appended the skill fired 0/9 on explicit "write a spec" eval prompts, without it 12/18 overall; the spec gate stays in its body and in the `coredoc-workflows` sentence below.
   "coredoc-implement":
     "A successful close of the implement stage requires an observed Coredoc MCP read during implementation and, for an accepted specification, its proposed candidates; a run without them needs a signed skip.",
   "coredoc-review":
@@ -48,7 +47,7 @@ const SENTENCES = Object.freeze({
 });
 
 /** The skills whose SKILL.md is in this repository. */
-const LOCAL_SKILLS = ["coredoc-spec", "coredoc-implement", "coredoc-review", "coredoc-workflows"];
+const LOCAL_SKILLS = ["coredoc-implement", "coredoc-review", "coredoc-workflows"];
 
 function description(name) {
   const body = readFileSync(join(SKILLS_ROOT, name, "SKILL.md"), "utf8");

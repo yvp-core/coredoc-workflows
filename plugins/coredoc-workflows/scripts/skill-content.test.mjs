@@ -913,7 +913,17 @@ test("spec preserves an observable intent graph without test-per-criterion cerem
   assert.match(body, /acceptance names observable behaviors and predicates, not test counts or\s+invented percentage targets/i);
   assert.match(body, /three or more branches\/states\/interactions/);
   assert.match(body, /Do not duplicate the same flow in bullets and a diagram/);
-  assert.match(body, /every in-scope outcome maps to at least one use case\/rule and observable `AC`/);
+  assert.match(
+    body,
+    /every product-level outcome maps to at least one use case\/rule and observable\s+`AC`, and no `UC`\/`BR`\/`LIM` row fails the granularity test in §4/,
+  );
+  assert.match(body, /Granularity test: a `UC`\/`BR`\/`LIM` row describes behaviour a product owner\s+would recognise without reading code/);
+  assert.match(body, /For\s+`size: s` the intent model defaults to one or two sentences of prose/);
+  assert.match(body, /End\s+the reply with a plain-language reviewer brief/);
+  assert.match(body, /Every brief line cites the spec IDs it summarises/);
+  assert.match(body, /name no flag provider, scheduler, persistence layer, or other infrastructure\s+anywhere in the spec/);
+  assert.match(body, /A confirmed root cause\s+plus fix in the request is the slice/);
+  assert.match(body, /every `AC` observes an outcome the request asked to change/);
   assert.match(
     body,
     /Keep `status: draft` through plan review[\s\S]*fresh\s+affirmative post-review reply[\s\S]*both accepts the reviewed\s+specification and authorizes implementation[\s\S]*read-only preflight and\s+proof-plan announcement[\s\S]*changes a draft frontmatter to\s+`status: accepted` as its first repository write[\s\S]*preserves an unchanged accepted status from a prior session/i,
