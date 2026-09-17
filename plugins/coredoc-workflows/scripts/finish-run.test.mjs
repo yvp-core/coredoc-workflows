@@ -608,7 +608,9 @@ test("CLI finishes the active run for the native Codex session", () => {
       intent: "direct",
       risk: "normal",
       declaredStages: [],
-      at: "2026-08-18T10:00:00.000Z",
+      // Relative: the CLI measures duration against the real clock, and a fixed
+      // date trips the 30-day bound once the calendar moves past it.
+      at: new Date(Date.now() - 60_000).toISOString(),
     },
     {
       env,
