@@ -257,7 +257,7 @@ async function resolveTrustedBinary(name, { env, forbiddenRoot }) {
       error.code = "REPOSITORY_EXECUTABLE";
       throw error;
     }
-    return resolved;
+    return { path: resolved, binDir: entry };
   }
   fail(`${name} executable was not found in an absolute PATH entry`);
 }
@@ -268,7 +268,7 @@ export async function resolveProviderBinary(provider, { cwd = process.cwd(), env
   return resolveTrustedBinary(provider, { env, forbiddenRoot: root });
 }
 
-export function providerEnvironment(provider, environment = process.env, binaryPath) {
+export function providerEnvironment(provider, environment = process.env, binaryPath, foundInDir) {
   const providerNames = PROVIDER_ENV[provider];
   if (!providerNames) fail(`Unsupported provider: ${provider}`);
   if (!isAbsolute(binaryPath ?? "")) fail("Provider binary path must be absolute");
@@ -283,9 +283,9 @@ export function providerEnvironment(provider, environment = process.env, binaryP
   for (const [name, value] of Object.entries(environment)) {
     if (value !== undefined && (COMMON_ENV.has(name) || providerNames.has(name))) result[name] = value;
   }
-  result.PATH = [...new Set([dirname(binaryPath), dirname(process.execPath), "/usr/bin", "/bin"])].join(
-    delimiter,
-  );
+  const pathEntries = [dirname(binaryPath), dirname(process.execPath), "/usr/bin", "/bin"];
+  if (foundInDir) pathEntries.unshift(foundInDir);
+  result.PATH = [...new Set(pathEntries)].join(delimiter);
   return result;
 }
 
@@ -576,7 +576,7 @@ function gitEnvironment(environment, binaryPath) {
 }
 
 async function gitDiff(cwd, baseRef, environment) {
-  const binary = await resolveTrustedBinary("git", { env: environment, forbiddenRoot: cwd });
+  const { path: binary } = await resolveTrustedBinary("git", { env: environment, forbiddenRoot: cwd });
   const env = gitEnvironment(environment, binary);
   try {
     await execFileAsync(binary, ["rev-parse", "--verify", "--end-of-options", `${baseRef}^{commit}`], {
@@ -727,8 +727,8 @@ export function runProcess({ command, args, input, cwd, env, timeoutMs, maxOutpu
 }
 
 export async function checkProvider(provider, { cwd = process.cwd(), env = process.env } = {}) {
-  const binary = await resolveProviderBinary(provider, { cwd, env });
-  const childEnv = providerEnvironment(provider, env, binary);
+  const { path: binary, binDir } = await resolveProviderBinary(provider, { cwd, env });
+  const childEnv = providerEnvironment(provider, env, binary, binDir);
   const contracts =
     provider === "claude"
       ? [
@@ -809,7 +809,7 @@ export async function checkProvider(provider, { cwd = process.cwd(), env = proce
       );
     }
   }
-  return { provider, binary, compatible: true, version: version.stdout.trim() };
+  return { provider, binary, binDir, compatible: true, version: version.stdout.trim() };
 }
 
 function publicSession(session) {
@@ -899,7 +899,7 @@ export async function runBridge({
     }
 
     const preflight = await checkProvider(provider, { cwd: root, env });
-    const childEnv = providerEnvironment(provider, env, preflight.binary);
+    const childEnv = providerEnvironment(provider, env, preflight.binary, preflight.binDir);
     scratch = await mkdtemp(join(tmpdir(), "coredoc-peer-"));
     const call = invocation({
       action: options.action,

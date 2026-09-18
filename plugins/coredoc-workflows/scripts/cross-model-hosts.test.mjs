@@ -163,12 +163,12 @@ test("provider executable resolution ignores relative PATH entries and rejects r
   await chmod(outsideBinary, 0o755);
   await chmod(insideBinary, 0o755);
 
-  assert.equal(
+  assert.deepEqual(
     await resolveProviderBinary("claude", {
       cwd: repository,
       env: { PATH: `relative:${outside}` },
     }),
-    await realpath(outsideBinary),
+    { path: await realpath(outsideBinary), binDir: outside },
   );
   await assert.rejects(
     resolveProviderBinary("claude", { cwd: repository, env: { PATH: inside } }),
@@ -215,6 +215,23 @@ test("provider environment is an exact allowlist", () => {
       ),
     /backends are not supported/,
   );
+});
+
+test("provider environment PATH leads with the shim's found directory for npm-installed node shims", async () => {
+  const nvmBin = await mkdtemp(join(tmpdir(), "coredoc-peer-nvmbin-"));
+  const nvmLib = await mkdtemp(join(tmpdir(), "coredoc-peer-nvmlib-"));
+  const realCodex = join(nvmLib, "codex.js");
+  await writeFile(realCodex, "#!/usr/bin/env node\n");
+  const shim = join(nvmBin, "codex");
+  await symlink(realCodex, shim);
+
+  const env = providerEnvironment(
+    "codex",
+    { PATH: "/usr/bin:/bin", OPENAI_API_KEY: "x" },
+    realCodex,
+    nvmBin,
+  );
+  assert.equal(env.PATH.split(delimiter)[0], nvmBin);
 });
 
 test("bounded text reads reject symlinks, hard links, invalid UTF-8, and oversized input", async () => {
