@@ -37,7 +37,7 @@ Every case runs three times with the plugin and three times without. The headlin
 
 ## History
 
-Baseline on 0.12.1: mean Δ 0.07, skill fired 6 of 18 runs. After the description and body
+Baseline on 0.12.2: mean Δ 0.07, skill fired 6 of 18 runs. After the description and body
 revisions on this branch (commits 35d1fe4, 7ca3ad5, 7e8b979): with-plugin scores of 0.82–1.00
 on fired runs for the explicit cases and Δ between +0.13 and +0.70. Case 05 (webhook retries)
 remains the weakest because the skill fires there least often.

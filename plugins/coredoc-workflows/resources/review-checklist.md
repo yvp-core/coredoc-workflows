@@ -40,6 +40,29 @@ because of line count. Do not spawn an extra reviewer solely for this lens.
 Tests, security checks, input validation, error paths, and accessibility are not
 deletion targets. If no useful simplification exists, say nothing about it.
 
+Each observation names one category, and the category carries the claim:
+
+- `delete` — dead code, unused flexibility, or a speculative feature. Nothing
+  replaces it.
+- `stdlib` — a hand-rolled thing the standard library already ships. Name the
+  function.
+- `native` — code or a dependency doing what the platform already does. Name the
+  feature.
+- `speculative` — an abstraction with one implementation, configuration nobody
+  sets, or a layer with one caller.
+- `shrink` — the same logic in fewer lines, and only when the reduction is at
+  least five lines. Below that the advice is noise, not a smaller implementation.
+
+Give the location, what is removed, and what replaces it in one line, plus the
+lines removed if the advice is applied, so the reader can weigh it against the
+risk of touching working code.
+
+Useful: `lib/email.ts:12 (stdlib) — 27-line validator class; an '@' check covers
+it and the confirmation mail is the real validation. Replace with one line, -26.`
+
+Not useful: "this validator class might be more complex than necessary — have you
+considered whether all of these rules are needed at this stage?"
+
 ## Suppressions
 
 - Do not flag style preferences already enforced by repository tooling.
@@ -50,6 +73,8 @@ deletion targets. If no useful simplification exists, say nothing about it.
 - Do not treat missing tests as proof of broken behavior.
 - Do not treat tests, examples, or comments as production paths unless they are
   executed or imported by production code.
+- Do not report anything the reviewed diff already addresses; read the full diff
+  before reporting.
 
 ## Finding format
 
