@@ -73,6 +73,7 @@ case "$command_name" in
   ensure-managed-relay) target=scripts/ensure-managed-relay.mjs ;;
   finish-run) target=scripts/finish-run.mjs ;;
   git-delivery-preflight) target=scripts/git-delivery-preflight.mjs ;;
+  investigation) target=scripts/investigation.mjs ;;
   managed-relay) target=scripts/managed-otel-relay.mjs ;;
   native-otel-sanitize) target=scripts/native-otel-sanitizer.mjs ;;
   project-key) target=scripts/project-key.mjs ;;

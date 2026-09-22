@@ -14,6 +14,7 @@
     "list_file_symbols",
     "list_service_dependencies",
     "run_cypher_query",
+    "search_literal",
     "search_symbols",
     "semantic_search",
     "trace_cross_repo_call"

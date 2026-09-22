@@ -20,6 +20,8 @@ required.
   behavior, refactors, deletions, config, generated output, and documentation
 - `coredoc-tdd` — explicit-only strict red/green/refactor with the repository
   test runner
+- `coredoc-design` — explore architecture options before a plan exists
+- `coredoc-verify` — non-browser verification without code edits
 - `coredoc-plan-review` — architecture and implementation-plan review
 - `coredoc-review` — read-only pre-landing code review
 - `coredoc-claude` — explicit Claude plan/diff review and resumable consultation from a non-Claude host
@@ -624,3 +626,8 @@ not change their finish measurements.
 Large scale changes only the change/review routes. Other intents keep their
 standard route and return `scaleReason` explaining that choice. Measured
 findings errors list all missing counts together.
+
+Investigation evidence can be saved locally and explicitly adopted by a later
+bug-fix route. See [reuse and invalidation](resources/methodology/investigation-reuse.md).
+`route-task --intent design|plan-review|verify` selects exploration, existing-plan
+review, or verification without edits; capture retains the coarse design/review categories.

@@ -1233,3 +1233,27 @@ test("explains a large scale request on a single-stage route", () => {
   assert.match(route.scaleReason, /large.*change.*review/);
   assert.equal(routeTask({ intent: "change", scale: "large" }).scaleReason, undefined);
 });
+
+
+test("separates exploration, plan review and non-browser verification", () => {
+  assert.equal(routeTask({ intent: "design" }).stages[0].skill, "coredoc-design");
+  const plan = prepareRoutedTask({ intent: "plan-review" });
+  assert.equal(plan.route.stages[0].skill, "coredoc-plan-review");
+  assert.equal(plan.route.intent, "design");
+  const verify = prepareRoutedTask({ intent: "verify" });
+  assert.equal(verify.route.stages[0].skill, "coredoc-verify");
+  assert.equal(verify.route.intent, "review");
+  assert.equal(verify.event.intent, "review");
+  assert.equal(verify.route.workflowId, "verify:normal");
+  assert.equal(verify.route.contextProviders.some(({ id }) => id === "ui-control"), false);
+  assert.equal(routeTask({ intent: "change", scale: "large" }).stages[1].skill, "coredoc-plan-review");
+});
+
+test("infers verification and plan review without treating them as browser QA or implementation", () => {
+  for (const task of ["Run the existing tests, do not fix failures", "Verify the CLI output", "перевір тести без виправлень"]) {
+    assert.equal(inferTaskSignals(task).intent, "verify", task);
+  }
+  assert.equal(inferTaskSignals("Review the implementation plan").intent, "plan-review");
+  assert.equal(inferTaskSignals("Explore architecture options for a new feature").intent, "design");
+  assert.equal(inferTaskSignals("протестуй сайт, але не виправляй").intent, "qa-report");
+});

@@ -331,6 +331,7 @@ export function startWorkflowRun(
     bound,
     projectKey,
     specRef,
+    investigationReuse,
     at = new Date().toISOString(),
     cwd = process.cwd(),
   },
@@ -368,6 +369,7 @@ export function startWorkflowRun(
     ...(bound === undefined ? {} : { bound: bound === true }),
     ...(projectKey === undefined ? {} : { projectKey }),
     ...(specRef === undefined ? {} : { specRef: normalizedSpecRef(specRef) }),
+    ...(investigationReuse === undefined ? {} : { investigationReuse }),
     ...(normalizedDeclaredStages === undefined
       ? {}
       : {

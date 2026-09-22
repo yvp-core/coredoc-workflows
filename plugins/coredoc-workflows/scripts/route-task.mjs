@@ -2,6 +2,8 @@
 
 import { pathToFileURL } from "node:url";
 
+import { checkInvestigation } from "./investigation.mjs";
+
 import { canonicalTaskId } from "../runtime/artifacts/contract.mjs";
 import { workflowWorkItemsV3 } from "../runtime/capture/contract.mjs";
 import {
@@ -30,6 +32,8 @@ const INTENTS = new Set([
   "direct",
   "diagnose",
   "design",
+  "plan-review",
+  "verify",
   "change",
   "review",
   "spec",
@@ -52,6 +56,10 @@ const CAPABILITIES = {
   design: {
     provider: "coredoc-workflows",
     skill: "coredoc-plan-review",
+  },
+  verify: {
+    provider: "coredoc-workflows",
+    skill: "coredoc-verify",
   },
   implement: {
     provider: "coredoc-workflows",
@@ -213,6 +221,10 @@ export function routeTask({
     if (effectiveScale === "large" || risk === "high") {
       stages.push(stage("review", ["implement"]));
     }
+  } else if (intent === "design") {
+    stages.push({ ...stage("design"), skill: "coredoc-design" });
+  } else if (intent === "plan-review") {
+    stages.push(stage("design"));
   } else {
     stages.push(stage(intent));
   }
@@ -226,7 +238,7 @@ export function routeTask({
     ]
       .filter(Boolean)
       .join(":"),
-    intent,
+    intent: intent === "verify" ? "review" : intent === "plan-review" ? "design" : intent,
     risk,
     scale: effectiveScale,
     ...scaleExplanation,
@@ -371,6 +383,16 @@ export function inferTaskSignals(task) {
   ) {
     intent = "benchmark";
   } else if (
+    has(/\b(verify|verification|run (?:the )?(?:existing )?(?:tests|checks|typecheck)|test (?:the )?(?:cli|api))\b|перевір.*(?:тести|тестів|cli|api)/) &&
+    !has(/\b(browser|site|desktop|website)\b|сайт|браузер|десктоп/) &&
+    (!asksForChange || has(/do (?:not|n't) fix|without (?:fixes|changes)|без виправ|не виправ/))
+  ) {
+    intent = "verify";
+  } else if (
+    has(/\b(review|assess|check)\b.{0,30}\b((?:implementation )?plan|design)\b|(?:перевір|рев['’]?ю).*(?:план|дизайн|архітект)/)
+  ) {
+    intent = "plan-review";
+  } else if (
     has(
       /\b(qa.only|report.only qa|bug report only|test but don.t fix)\b|qa.?звіт|тільки звіт|не виправляй|без виправл/,
     )
@@ -461,6 +483,9 @@ function parseArgs(args) {
   let task;
   let taskId;
   let specPath;
+  let reuseInvestigation;
+  let investigationKey;
+  const investigationScope = [];
   const workItems = [];
   let currentWorkItem;
 
@@ -523,6 +548,13 @@ function parseArgs(args) {
       }
       currentWorkItem.externalKey = value;
       index += 1;
+    } else if (["--reuse-investigation", "--investigation-key", "--investigation-scope"].includes(arg)) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) throw new Error(`${arg} requires a value`);
+      if (arg === "--reuse-investigation") reuseInvestigation = value;
+      else if (arg === "--investigation-key") investigationKey = value;
+      else investigationScope.push(value);
+      index += 1;
     } else if (arg === "--spec-path") {
       const value = args[index + 1];
       if (!value) {
@@ -553,6 +585,8 @@ function parseArgs(args) {
   }
   finishWorkItem();
 
+  if (!reuseInvestigation && (investigationKey !== undefined || investigationScope.length)) throw new Error("investigation identity requires --reuse-investigation");
+  const investigationSignals = reuseInvestigation === undefined ? {} : { reuseInvestigation, investigationKey, investigationScope };
   const relationSignals =
     workItems.length === 0 ? {} : { workItems: workflowWorkItemsV3(workItems) };
 
@@ -563,6 +597,7 @@ function parseArgs(args) {
       ...(taskId === undefined ? {} : { taskId }),
       ...(specPath === undefined ? {} : { specPath }),
       ...relationSignals,
+      ...investigationSignals,
     };
   }
   if (!options.intent) {
@@ -573,6 +608,7 @@ function parseArgs(args) {
     ...(taskId === undefined ? {} : { taskId }),
     ...(specPath === undefined ? {} : { specPath }),
     ...relationSignals,
+    ...investigationSignals,
   };
 }
 
@@ -587,7 +623,12 @@ export async function executeRoutedTask(
     expireRuns = abandonExpiredWorkflowRuns,
   } = {},
 ) {
-  const routed = prepareRoutedTask(signals);
+  let investigationReuse;
+  if (signals.reuseInvestigation !== undefined) {
+    if (signals.intent !== "change" || !signals.bugLike) throw new Error("Investigation reuse requires a bug-like change route");
+    investigationReuse = checkInvestigation({ record: signals.reuseInvestigation, key: signals.investigationKey, scope: signals.investigationScope }, { cwd });
+  }
+  const routed = prepareRoutedTask(investigationReuse ? { ...signals, bugLike: false } : signals);
   await preflight(routed.route.workItems === undefined ? 2 : 3, { env });
   const sessionId = env.COREDOC_WORKFLOWS_SESSION_ID;
   const projectKey = resolveProjectKey(cwd, env);
@@ -599,6 +640,7 @@ export async function executeRoutedTask(
   const runState = startRun(
     {
       sessionId,
+      ...(investigationReuse === undefined ? {} : { investigationReuse }),
       runId: routed.route.runId,
       workflowId: routed.route.workflowId,
       intent: routed.route.intent,
@@ -637,6 +679,7 @@ export async function executeRoutedTask(
   return {
     ...routed.route,
     runStateStatus: runState.status,
+    ...(investigationReuse === undefined ? {} : { investigationReuse }),
     capture,
     // What the previous run of this checkout left unresolved, so the agent
     // sees the skipped and unmet gates before it repeats them (BR-6).

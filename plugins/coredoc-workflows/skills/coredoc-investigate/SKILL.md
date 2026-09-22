@@ -210,6 +210,11 @@ Before writing ANY fix, verify your hypothesis.
 
 ---
 
+For diagnosis-only authorization, stop after confirming the cause and write the
+local evidence report. After the investigate stage closes successfully, follow
+`<plugin-root>/resources/methodology/investigation-reuse.md` to save it for a later
+authorized fix. A diagnosis request alone does not authorize Phase 4 edits.
+
 ## Phase 4: Implementation
 
 Once root cause is confirmed:

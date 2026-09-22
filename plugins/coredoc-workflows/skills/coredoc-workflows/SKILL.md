@@ -11,7 +11,7 @@ extra authority or implicit dependencies.
 
 ## Route once
 
-Classify intent as `direct`, `diagnose`, `design`, `change`, `review`, `spec`,
+Classify intent as `direct`, `diagnose`, `design`, `plan-review`, `verify`, `change`, `review`, `spec`,
 `qa`, `qa-report`, `benchmark`, `security`, `browse`, `learn`, or `retro`; risk
 as `low|normal|high`; and scale as `large` only when creating a component or
 subsystem, changing a shared/cross-package contract, or requiring multiple test
@@ -68,6 +68,16 @@ manually verify critical consumers.
 For `scale: large` or a multi-stage route, inspect available non-plugin skills,
 show up to three relevant candidates, and ask once whether to add them as
 context. Invoke and later require only explicitly approved skills.
+
+`design` explores options with coredoc-design; `plan-review` assesses an existing
+plan. `verify` runs non-browser checks without edits. These specialized routes
+retain the existing design/review capture categories; workflow and stage IDs
+identify the specialization. Large change routes still review their spec with
+coredoc-plan-review.
+
+When the same task already has a completed investigation, read
+`<plugin-root>/resources/methodology/investigation-reuse.md` before routing.
+Use explicit reuse only after its task, scope and revision checks pass.
 
 ## Execute the returned DAG
 
