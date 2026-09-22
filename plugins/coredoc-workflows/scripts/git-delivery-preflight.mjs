@@ -1165,6 +1165,7 @@ export function verifyCreatedCommit({
   cwd = process.cwd(),
   commit,
   expectedParent,
+  expectedBranch = null,
   expectedIndexFingerprint,
   expectedMessageFingerprint,
 }) {
@@ -1186,6 +1187,7 @@ export function verifyCreatedCommit({
     push: null,
   };
   if (
+    (expectedBranch !== null && !validBranchName(cwd, expectedBranch)) ||
     !/^[0-9a-f]{40,64}$/.test(commit ?? "") ||
     !/^[0-9a-f]{40,64}$/.test(expectedParent ?? "") ||
     !/^sha256:[0-9a-f]{64}$/.test(expectedIndexFingerprint ?? "") ||
@@ -1202,6 +1204,11 @@ export function verifyCreatedCommit({
   }
   if (currentHead !== commit) {
     result.reason = "head-changed-after-commit";
+    return result;
+  }
+  if (expectedBranch !== null &&
+      oneLine(runGit(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"])) !== expectedBranch) {
+    result.reason = "branch-drift";
     return result;
   }
   const parents = oneLine(runGit(cwd, ["rev-list", "--parents", "-n", "1", commit]))
@@ -1257,6 +1264,7 @@ export function preflightDelivery({
   cwd = process.cwd(),
   operation,
   base = null,
+  expectedBranch = null,
   message = null,
   messageFile = null,
 }) {
@@ -1267,6 +1275,9 @@ export function preflightDelivery({
     throw new TypeError("commit messages apply only to the commit operation");
   }
   const repo = inspectRepository(cwd, base);
+  if (expectedBranch !== null && (!validBranchName(cwd, expectedBranch) || repo.branch !== expectedBranch)) {
+    return sanitizeDeliveryResult({ ...baseResult(operation, repo), reason: "branch-drift" });
+  }
   const commitMessage = operation === "commit"
     ? loadCommitMessage(cwd, message, messageFile)
     : null;
@@ -1284,6 +1295,7 @@ function parseArgs(argv) {
   let messageFile = null;
   let verifyCommit = null;
   let expectedParent = null;
+  let expectedBranch = null;
   let expectedIndexFingerprint = null;
   let expectedMessageFingerprint = null;
   for (let i = 0; i < argv.length; i++) {
@@ -1292,6 +1304,10 @@ function parseArgs(argv) {
     else if (argv[i] === "--message-file") messageFile = argv[++i] ?? null;
     else if (argv[i] === "--verify-created") verifyCommit = argv[++i] ?? null;
     else if (argv[i] === "--expected-parent") expectedParent = argv[++i] ?? null;
+    else if (argv[i] === "--expected-branch") {
+      expectedBranch = argv[++i];
+      if (!expectedBranch || expectedBranch.startsWith("--")) throw new TypeError("--expected-branch requires a branch");
+    }
     else if (argv[i] === "--expected-index") {
       expectedIndexFingerprint = argv[++i] ?? null;
     }
@@ -1311,6 +1327,7 @@ function parseArgs(argv) {
       mode: "verify",
       commit: verifyCommit,
       expectedParent,
+      expectedBranch,
       expectedIndexFingerprint,
       expectedMessageFingerprint,
     };
@@ -1319,7 +1336,7 @@ function parseArgs(argv) {
   if (operation !== "commit" && messageFile !== null) {
     throw new TypeError("--message-file applies only to commit");
   }
-  return { mode: "preflight", operation, base, messageFile };
+  return { mode: "preflight", operation, base, messageFile, expectedBranch };
 }
 
 async function main(argv) {
@@ -1331,7 +1348,7 @@ async function main(argv) {
       "git-delivery-preflight: use --operation commit --message-file <path>, " +
       "--operation push|pr [--base <branch>], or --verify-created <sha> " +
       "--expected-parent <sha> --expected-index <fingerprint> " +
-      "--expected-message <fingerprint>\n",
+      "--expected-message <fingerprint> [--expected-branch <branch>]\n",
     );
     return 64;
   }

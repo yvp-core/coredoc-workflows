@@ -23,24 +23,29 @@ requires explicit user authorization. Never persist the original prompt or secre
 - Do not persist reports by default, and never into a repository-local workflow
   history tree. When the user asks for a saved report, write it where they say.
 
+For graph applicability and cross-repository contract claims, read
+`<plugin-root>/resources/methodology/evidence-applicability.md`.
+
 ## Host interaction contract
 
 `AskUserQuestion` in the method below is a **semantic alias**, not a literal tool
 name. Resolve it against the host you are running on:
 
 - **Claude Code** — the `AskUserQuestion` tool.
-- **Codex plan mode** — the `request_user_input` tool.
+- **Codex** — `request_user_input_async` when available; otherwise, in plan mode,
+  `request_user_input`. With asynchronous input, continue independent work while
+  required answers remain pending; elapsed time never supplies approval.
 - **Neither available** — present the same options as text, in the same order,
   then stop and wait for the answer. A typed reply is the decision. Never
   auto-decide because the structured tool was missing, and never write the
   decision into an artifact as a substitute for asking.
 
-The hosts do not agree on how many options a call accepts, so the portable
-contract is the narrower one: **at most three options, exactly one decision per
-call**. Four or more real options get split or batched rather than trimmed, and a
-question that is open-ended rather than a choice among known alternatives is
-asked in prose instead. Everything else the method says about that tool — one
-issue per call, the decision-brief format — applies to whichever form you use.
+Use at most three options per decision. When the host supports multiple
+questions, batch up to three independent decisions in one call; otherwise ask
+one at a time. Ask a prerequisite alone when its answer changes another
+question's options. Keep every decision explicit and wait for each required
+answer. Open-ended questions use prose or the host's free-text input. The
+decision-brief format applies to each decision, not to each tool call.
 
 ## Confusion protocol
 
@@ -54,6 +59,12 @@ when the irreversible question arrives. The trigger is blast radius, not
 uncertainty: being unsure how to name a variable is not high-stakes ambiguity.
 
 ## Completion status
+
+Before completion, resolve applicable intent work, validation and signed skips.
+At final task delivery, apply `<plugin-root>/resources/methodology/workflow-feedback.md`
+if MCP was used, `feedbackOwed`, or tooling/workflow problems occurred. During tool
+calls and intermediate stages only collect observations. Respect prior Skip/review;
+pending submission never blocks completion.
 
 End with an explicit status, so the user never has to infer one from prose:
 
@@ -253,6 +264,11 @@ picture. Run two lenses over one shared working model:
   and repository documentation.
 
 These are concurrent lenses, not separate interviews or competing artifacts.
+Reuse the existing task brief, accepted specification and answered decisions.
+Refresh only facts affected by the new scope or changed code; do not restart a
+settled interview. Verify runtime pins and configuration conventions in manifests,
+lockfiles and neighbouring integrations before asking for a version preference.
+
 Resolve repository-verifiable facts yourself. Ask the user only for decisions
 that materially change the outcome, boundary, public contract, data ownership/lifecycle,
 migration, consistency or performance posture, security/retention, compatibility,
@@ -280,7 +296,7 @@ the choices that are answerable now. Ask the smallest useful round, with no more
 than three independent decisions. If one answer changes another question's
 options, ask the prerequisite alone, wait, then recompute the answerable set. Use
 concrete scenarios to make fuzzy domain boundaries observable. For each known
-choice, use the host's structured input tool with one decision, 2–3 real options,
+choice, use the host's structured input tool with 2–3 real options,
 one recommended option with a concrete reason, and the trade-off that could
 change the answer. This compact contract overrides any generic decision-brief
 format elsewhere in the plugin for pre-spec alignment. Do not add ELI10 sections,
@@ -311,10 +327,11 @@ review, or begin implementation. When the host cannot collect the answer in the
 current turn, a standalone invocation returns `NEEDS_CONTEXT`. A routed workflow
 always returns `NEEDS_CONTEXT` before asking, closes the current spec attempt as
 blocked, and restarts the same stage after the answer, including when a
-structured input tool resumes the host turn. Each question—including every
-decision in a round and the final confirmation below—is its own blocked attempt:
-close the attempt as `blocked`, ask exactly one question, stop, and restart the
-same stage after the answer before exposing another question.
+structured input tool resumes the host turn. One independent question round
+uses one blocked attempt: close it as `blocked`, ask the independent decisions
+together when the host supports batching, and restart the same stage after all
+required answers arrive. Ask dependent decisions in later rounds. The final
+confirmation remains its own round; batching never supplies a missing answer.
 
 When no interactive decisions remain, present the complete updated brief
 and ask one final **Proceed with this understanding / Revise it** decision, with

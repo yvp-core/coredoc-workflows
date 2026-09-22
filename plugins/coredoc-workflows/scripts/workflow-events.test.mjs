@@ -202,3 +202,15 @@ test("rejects inconsistent or open-ended finished summaries", () => {
     /at most 190 entries/,
   );
 });
+
+
+test("reports all absent measured findings counts in one error", () => {
+  const summary = { ...FINISHED_SUMMARY };
+  delete summary.findingsInitial;
+  delete summary.findingsRemaining;
+  assert.throws(() => workflowEvent({
+    at: "2026-07-30T10:00:12.000Z", runId: RUN_ID,
+    workflowId: "change:normal", type: "workflow.finished",
+    intent: "change", risk: "normal", summary,
+  }), /findingsInitial.*findingsRemaining/);
+});

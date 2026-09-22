@@ -177,6 +177,9 @@ export function routeTask({
   };
   assertRouteInput(input);
   const effectiveScale = ["change", "review"].includes(intent) ? scale : "normal";
+  const scaleExplanation = scale === effectiveScale ? {} : {
+    scaleReason: `Scale large expands change and review routes only; ${intent} keeps its standard route.`,
+  };
 
   if (intent === "direct") {
     return {
@@ -184,6 +187,7 @@ export function routeTask({
       intent,
       risk,
       scale: effectiveScale,
+      ...scaleExplanation,
       stages: [],
       contextProviders: [],
     };
@@ -225,6 +229,7 @@ export function routeTask({
     intent,
     risk,
     scale: effectiveScale,
+    ...scaleExplanation,
     stages,
     contextProviders: contextProvidersFor(input),
   };

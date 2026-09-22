@@ -81,6 +81,7 @@ case "$command_name" in
   retro-evidence) target=scripts/retro-evidence.mjs ;;
   route-task) target=scripts/route-task.mjs ;;
   run-status) target=scripts/run-status.mjs ;;
+  track-repo) target=scripts/track-repo.mjs ;;
   session-end) target=scripts/session-end.mjs ;;
   session-env) target=scripts/session-env.mjs ;;
   session-start) target=scripts/session-start.mjs ;;

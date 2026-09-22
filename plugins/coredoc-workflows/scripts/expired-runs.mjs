@@ -103,7 +103,7 @@ export async function abandonExpiredWorkflowRuns(
           complete: (sessionId, options) =>
             completeWorkflowRun(sessionId, {
               ...options,
-              ...(state.suspendedEnd ? { snapshot: () => state.suspendedEnd } : {}),
+              ...(state.suspendedEnd ? { useSuspendedSnapshots: true } : {}),
             }),
           // Artifacts belong to the run's own repository, never to the one that
           // happens to route next; without a known root nothing is checkpointed.
@@ -178,7 +178,7 @@ async function abandonExpiredParkedRuns(
           complete: (sessionId, options) =>
             completeWorkflowRun(sessionId, {
               ...options,
-              ...(state.suspendedEnd ? { snapshot: () => state.suspendedEnd } : {}),
+              ...(state.suspendedEnd ? { useSuspendedSnapshots: true } : {}),
             }),
           ...(state.repoRoot
             ? { cwd: state.repoRoot }

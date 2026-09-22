@@ -1,9 +1,15 @@
-# Optional session feedback
+# Proactive session feedback
 
-`finish-run` reports `feedbackOwed` when a completed run has enough evidence for
-feedback, with `feedbackScope: session` or `graph+session`. This is availability,
-not authorization to send data or a required end-of-task question. Continue only
-when the user requested feedback; otherwise finish the task without prompting.
+When `finish-run` reports `feedbackOwed`, assess and draft session feedback at the
+final task delivery. Do not wait for the user to request it. The same applies
+after Coredoc MCP use or concrete tooling, workflow, or host problems; also honor
+an explicit feedback request. `feedbackScope: session` or `graph+session` describes
+the evidence. Preparation is required; submission still needs authorization.
+Respect an explicit Skip or no-feedback instruction and an already completed
+feedback review. During work only collect observations. A first or subsequent MCP
+call, intermediate stage, commit, or repository completion never triggers drafting,
+a review question, or submission. `feedbackOwed` from an intermediate run waits
+until the entire task's final delivery, unless the user requests feedback now.
 
 Assess the run using observed routing, skill instructions, task context, agent
 behavior, host environment, capture, and transport problems. Include graph-tool
@@ -19,9 +25,10 @@ tool, `sessionIssues.area` uses its closed vocabulary (`workflow-routing`,
 where the tool accepts them. An unavailable or incompatible tool leaves a local
 draft; do not install anything or send the record elsewhere.
 
-Show the exact draft before sending. Asking to review feedback alone does not
-authorize submission: ask once only when the requested outcome needs that write.
-Existing authorization for the shown operation needs no repeated confirmation.
+Show the exact redacted draft at completion. In an interactive session, offer
+Submit as is / Add or correct / Skip once when authorization is missing. A draft-only
+request needs no submission question. Existing authorization needs no repeated
+confirmation. Automatic activation never authorizes submission.
 Record the user's rating or corrected notes only when they actually provided
 them, and redact sensitive details before sending. Never send source, diffs,
 prompts, command text, absolute paths, secrets, or tool responses.

@@ -520,10 +520,11 @@ test("change skills sync the base branch before the first edit", async () => {
   assert.doesNotMatch(branchStart, /--force|rebase -i|git stash/);
 });
 
-test("session feedback is optional and never treats completion or silence as consent", async () => {
+test("session feedback is proactive and never treats completion or silence as submission consent", async () => {
   const feedback = await readFile(join(METHODOLOGY_ROOT, "workflow-feedback.md"), "utf8");
-  assert.match(feedback, /not authorization to send data or a required end-of-task question/);
-  assert.match(feedback, /only\s+when the user requested feedback/);
+  // Maintainer requested automatic preparation; external submission still needs consent.
+  assert.match(feedback, /Do not wait for the user to request it/);
+  assert.match(feedback, /Preparation is required; submission still needs authorization/);
   assert.match(feedback, /Use only supported fields/);
   assert.match(feedback, /A new task, silence, unattended execution, or a subagent context never authorizes\s+submission/);
   assert.match(feedback, /worker returns its draft to the parent/);
@@ -833,9 +834,10 @@ test("spec aligns one grounded domain and solution model before elaboration", as
   assert.match(alignment, /Resolve repository-verifiable facts yourself/i);
   assert.match(alignment, /choices that can be\s+answered from the evidence and decisions already settled/i);
   assert.match(alignment, /recompute the answerable set/i);
+  // Independent decisions now share a round; each keeps explicit options.
   assert.match(
     alignment,
-    /one decision, 2–3 real options[\s\S]*recommended option with a concrete reason[\s\S]*trade-off that could\s+change the answer/i,
+    /2–3 real options[\s\S]*recommended option with a concrete reason[\s\S]*trade-off that could\s+change the answer/i,
   );
   assert.match(
     alignment,
@@ -870,7 +872,7 @@ test("spec aligns one grounded domain and solution model before elaboration", as
   );
   assert.match(
     alignment,
-    /Each question—including every\s+decision in a round and the final confirmation below—is its own blocked attempt[\s\S]*ask exactly one question, stop, and restart the\s+same stage after the answer/i,
+    /One independent question round\s+uses one blocked attempt[\s\S]*supports batching[\s\S]*after all\s+required answers arrive/i,
   );
   assert.match(
     alignment,

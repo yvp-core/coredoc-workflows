@@ -482,6 +482,8 @@ export async function finishWorkflowRun(
     env,
     at,
     requiredSkills: requiredSkillIds,
+    // Measurement failures must not strand failed, blocked or abandoned runs.
+    allowUnavailableRepositories: outcome !== "success",
   });
   if (!finished) {
     if (!hasWorkflowSessionAttribution(sessionId)) {
@@ -662,6 +664,7 @@ export async function finishWorkflowRun(
   }
   return {
     status: "finished",
+    ...(finished.repositoryMeasurement ? { repositoryMeasurement: finished.repositoryMeasurement } : {}),
     ...(captureNotice === "" ? {} : { captureNotice }),
     event,
     capture,

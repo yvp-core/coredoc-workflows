@@ -15,15 +15,19 @@ git diff <base>...HEAD --name-only
 
 A failure is **in-branch** when the failing test file was modified here, when the
 test output references code changed here, or when you can trace it to something
-in the diff. It is **pre-existing** when neither the test nor the code under test
-was touched here and you cannot connect it to any change.
+in the diff. Call it **pre-existing** only after the same check fails on the
+merge base under equivalent dependencies and configuration, or after inspecting
+existing CI evidence that proves that exact baseline failure. Use an isolated
+worktree for the comparison and preserve the active checkout. An untouched test
+or source file does not prove ownership: changed consumers and type-level
+exhaustiveness checks can still make it fail. Without baseline evidence, report
+**ownership unresolved**, with the failure and the missing comparison.
 
-**When it is ambiguous, call it in-branch.** Stopping the user costs minutes;
-letting a real regression through costs the next person a debugging session with
-a false premise. Only call it pre-existing when you are confident.
+Treat unresolved ownership as a validation gap: investigate it before declaring
+the change verified. Do not turn uncertainty into a claim about either branch.
 
-This is a judgment call read off the diff and the failure output, not a
-dependency graph. Say which it is and why, so the user can overrule you.
+Report the baseline revision, check and result that support ownership. Never
+accept an unverified worker claim that a failure was already present.
 
 ### 2. In-branch failures — stop
 

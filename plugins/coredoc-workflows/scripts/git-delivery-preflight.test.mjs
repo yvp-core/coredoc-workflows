@@ -242,6 +242,8 @@ test("post-commit verification accepts the exact scanned tree and message", asyn
       "git-delivery-preflight",
       "--verify-created",
       created,
+      "--expected-branch",
+      "feat/verified-commit",
       "--expected-parent",
       before.commit.expectedParent,
       "--expected-index",
@@ -673,4 +675,36 @@ test("delivery skill keeps commit, push, and PR authority separate", async () =>
   assert.match(body, /push\.configureUpstream/);
   assert.match(body, /branch --set-upstream-to=origin\/<branch> <branch>/);
   assert.doesNotMatch(body, /REST fallback|create_pr\.py/i);
+});
+
+
+test("commit preflight refuses a same-HEAD switch to another branch", async (t) => {
+  const { repo } = await fixture(t);
+  await git(repo, "switch", "-c", "feat/intended");
+  await writeFile(join(repo, "safe.txt"), "safe content\n");
+  await git(repo, "add", "safe.txt");
+  const before = await commitPreflight(repo);
+  await git(repo, "switch", "-c", "feat/other");
+  const after = preflightDelivery({ cwd: repo, operation: "commit",
+    message: "safe test commit\n", expectedBranch: before.repo.branch });
+  assert.equal(after.repo.head, before.repo.head);
+  assert.equal(after.verdict, "blocked");
+  assert.equal(after.reason, "branch-drift");
+});
+
+test("created commit verification refuses the wrong branch even with matching tree and parent", async (t) => {
+  const { repo } = await fixture(t);
+  await git(repo, "switch", "-c", "feat/intended");
+  await writeFile(join(repo, "safe.txt"), "safe content\n");
+  await git(repo, "add", "safe.txt");
+  const before = await commitPreflight(repo, "safe feature");
+  await git(repo, "switch", "-c", "feat/other");
+  await git(repo, "commit", "-m", "safe feature");
+  const commit = (await git(repo, "rev-parse", "HEAD")).stdout.trim();
+  const result = verifyCreatedCommit({ cwd: repo, commit,
+    expectedBranch: before.repo.branch, expectedParent: before.repo.head,
+    expectedIndexFingerprint: before.commit.indexFingerprint,
+    expectedMessageFingerprint: before.commit.messageFingerprint });
+  assert.equal(result.verdict, "blocked");
+  assert.equal(result.reason, "branch-drift");
 });
