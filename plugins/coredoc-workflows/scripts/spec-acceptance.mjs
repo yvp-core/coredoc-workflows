@@ -331,7 +331,7 @@ export async function abandonSpecification(
             complete: (id, options) =>
               completeWorkflowRun(id, {
                 ...options,
-                snapshot: () => state.suspendedEnd,
+                useSuspendedSnapshots: true,
               }),
           }
         : {}),

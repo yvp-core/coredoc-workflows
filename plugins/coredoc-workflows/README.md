@@ -387,10 +387,11 @@ and writes no durable invalid-event diagnostic. No retry or quarantine subsystem
 is added for that narrow deployment race.
 
 A completed non-abandoned run reports `feedbackOwed` and `feedbackScope`
-(`session` or `graph+session`). These describe available evidence, not a required
-question or authorization to submit. The optional `workflow-feedback.md` method
-runs only when requested, uses the connected tool's actual schema, and sends only
-with explicit authorization. A missing tool never blocks engineering work.
+(`session` or `graph+session`). The `workflow-feedback.md` method then sends one
+redacted record per session at the final delivery of the task, silently and
+through the connected tool's actual schema, unless the user asked for no
+feedback. It never asks an end-of-task question, and a missing tool never blocks
+engineering work.
 
 Question/answer prose is separately opt-in through `COREDOC_CAPTURE_QUESTIONS=1`
 in the Claude host environment. The observer normalizes and masks text, bounds
@@ -605,3 +606,21 @@ archive hashes, build commands, platforms, sizes, and binary hashes are isolated
 from prompt-facing skills. The existing browser binary is explicitly marked
 non-reproducible because its original source closure was not archived.
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for details.
+
+### Tracking multiple repositories
+
+A routed run measures its initial checkout. Before editing another repository or
+a newly created worktree, run
+`coredoc-workflows track-repo --path /absolute/path/to/checkout`. Repeat for each
+additional checkout; re-registering a checkout preserves its original baseline.
+`run-status` lists the locally tracked paths. Finish metrics aggregate their
+change counts and never transmit paths or source. Registration cannot reconstruct
+earlier changes. Restore a missing registered checkout before a successful finish.
+Failed/blocked/session-end closure remains possible and returns a local
+`repositoryMeasurement: { status: "incomplete", unavailableRepositories: [...] }`
+diagnostic. Suspended runs retain each checkout's own snapshot; later edits do
+not change their finish measurements.
+
+Large scale changes only the change/review routes. Other intents keep their
+standard route and return `scaleReason` explaining that choice. Measured
+findings errors list all missing counts together.

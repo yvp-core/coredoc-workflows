@@ -48,18 +48,20 @@ when persistent browser state is unnecessary.
 name. Resolve it against the host you are running on:
 
 - **Claude Code** — the `AskUserQuestion` tool.
-- **Codex plan mode** — the `request_user_input` tool.
+- **Codex** — `request_user_input_async` when available; otherwise, in plan mode,
+  `request_user_input`. Elapsed time never supplies an answer.
 - **Neither available** — present the same options as text, in the same order,
   then stop and wait for the answer. A typed reply is the decision. Never
   auto-decide because the structured tool was missing, and never write the
   decision into an artifact as a substitute for asking.
 
-The hosts do not agree on how many options a call accepts, so the portable
-contract is the narrower one: **at most three options, exactly one decision per
-call**. Four or more real options get split or batched rather than trimmed, and a
-question that is open-ended rather than a choice among known alternatives is
-asked in prose instead. Everything else the method says about that tool — one
-issue per call, the decision-brief format — applies to whichever form you use.
+Use at most three options per decision; four or more real options get split
+across decisions rather than trimmed. When the host supports multiple questions,
+batch up to three independent decisions in one call; otherwise ask one at a
+time. Ask a prerequisite alone when its answer changes another question's
+options. Wait for each required answer. Open-ended questions use prose or the
+host's free-text input. The decision-brief format applies to each decision, not
+to each tool call.
 
 ## Confusion protocol
 
@@ -73,6 +75,11 @@ when the irreversible question arrives. The trigger is blast radius, not
 uncertainty: being unsure how to name a variable is not high-stakes ambiguity.
 
 ## Completion status
+
+Before completion, resolve applicable intent work, validation and signed skips.
+At the final delivery of the whole task, when `finish-run` reported `feedbackOwed`,
+apply `<plugin-root>/resources/methodology/workflow-feedback.md`; it never asks a
+question and never blocks completion.
 
 End with an explicit status, so the user never has to infer one from prose:
 

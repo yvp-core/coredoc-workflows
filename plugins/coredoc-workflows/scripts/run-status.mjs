@@ -135,6 +135,7 @@ export function workflowRunStatus(
     intent: state.intent,
     risk: state.risk,
     startedAt: state.startedAt,
+    ...(state.repositories?.length ? { trackedRepositories: [state.repoRoot, ...state.repositories.map((repo) => repo.repoRoot)] } : {}),
     ...(state.suspendedAt === undefined ? {} : { suspendedAt: state.suspendedAt }),
     ...(open === undefined
       ? {}

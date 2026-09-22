@@ -13,6 +13,11 @@ picture. Run two lenses over one shared working model:
   and repository documentation.
 
 These are concurrent lenses, not separate interviews or competing artifacts.
+Reuse the existing task brief, accepted specification and answered decisions.
+Refresh only facts affected by the new scope or changed code; do not restart a
+settled interview. Verify runtime pins and configuration conventions in manifests,
+lockfiles and neighbouring integrations before asking for a version preference.
+
 Resolve repository-verifiable facts yourself. Ask the user only for decisions
 that materially change the outcome, boundary, public contract, data ownership/lifecycle,
 migration, consistency or performance posture, security/retention, compatibility,
@@ -40,7 +45,7 @@ the choices that are answerable now. Ask the smallest useful round, with no more
 than three independent decisions. If one answer changes another question's
 options, ask the prerequisite alone, wait, then recompute the answerable set. Use
 concrete scenarios to make fuzzy domain boundaries observable. For each known
-choice, use the host's structured input tool with one decision, 2–3 real options,
+choice, use the host's structured input tool with 2–3 real options,
 one recommended option with a concrete reason, and the trade-off that could
 change the answer. This compact contract overrides any generic decision-brief
 format elsewhere in the plugin for pre-spec alignment. Do not add ELI10 sections,
@@ -71,10 +76,11 @@ review, or begin implementation. When the host cannot collect the answer in the
 current turn, a standalone invocation returns `NEEDS_CONTEXT`. A routed workflow
 always returns `NEEDS_CONTEXT` before asking, closes the current spec attempt as
 blocked, and restarts the same stage after the answer, including when a
-structured input tool resumes the host turn. Each question—including every
-decision in a round and the final confirmation below—is its own blocked attempt:
-close the attempt as `blocked`, ask exactly one question, stop, and restart the
-same stage after the answer before exposing another question.
+structured input tool resumes the host turn. One independent question round
+uses one blocked attempt: close it as `blocked`, ask the independent decisions
+together when the host supports batching, and restart the same stage after all
+required answers arrive. Ask dependent decisions in later rounds. The final
+confirmation remains its own round; batching never supplies a missing answer.
 
 When no interactive decisions remain, present the complete updated brief
 and ask one final **Proceed with this understanding / Revise it** decision, with

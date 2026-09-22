@@ -65,15 +65,18 @@ threshold.
 
 Use only the currently staged set. If nothing is staged, report the unstaged or
 untracked state and ask which paths the user wants staged; do not choose or run
-`git add` yourself. Before committing, preview the staged paths, summary,
+`git add` yourself. Concurrent writers use separate worktrees; a shared checkout
+can switch branches between checks. Before committing, preview the staged paths, summary,
 proposed message, and relevant validation already run. Run any missing
 repository-required check that applies to the staged behavior. An unresolved
 index is blocking even when Git reports staged entries.
 
-Record `repo.head` as the expected parent, `commit.indexFingerprint` as the
-scanned tree, and `commit.messageFingerprint` as the exact proposed message.
-Immediately before committing, rerun the commit preflight against the same
-message file and require all three values to be unchanged. After a `ready`
+Record `repo.branch` as the intended branch, `repo.head` as the expected parent,
+`commit.indexFingerprint` as the scanned tree, and `commit.messageFingerprint`
+as the exact proposed message. Immediately before committing, rerun the commit
+preflight against the same message file with `--expected-branch <scanned-branch>`
+and require the branch, parent, tree and message to be unchanged. A branch
+switch is drift even when both branches point to the same SHA. After a `ready`
 result and explicit commit authorization, create one non-interactive commit
 using `git commit --cleanup=verbatim --file <temporary-message-file>`. Do not
 bypass repository hooks.
@@ -84,6 +87,7 @@ success:
 ```text
 <plugin-root>/bin/coredoc-workflows git-delivery-preflight
   --verify-created <created-commit-sha>
+  --expected-branch <scanned-branch>
   --expected-parent <scanned-parent-sha>
   --expected-index <scanned-index-fingerprint>
   --expected-message <scanned-message-fingerprint>

@@ -47,7 +47,9 @@ Use the host's actual completion mechanism:
   Claude-only flags. A wait timeout means still running, never `NO FINDINGS`.
 
 Wait in bounded intervals so the parent can communicate progress. Merge only
-completed, valid results. Report empty, malformed, failed, or missing results as
+completed, valid results. Source-check decisive file/line and API claims against
+the current checkout; repeat the relevant check when a delegated result controls
+a change or completion verdict. A worker's confident summary is not evidence. Report empty, malformed, failed, or missing results as
 unavailable coverage, not a successful review. Return a worker's `NEEDS_CONTEXT`
 to the user without repeatedly dispatching the same unanswered question.
 

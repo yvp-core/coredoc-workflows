@@ -189,6 +189,10 @@ function normalizedFindings(summary) {
     return Object.fromEntries(keys.map((key) => [key, null]));
   }
 
+  const missing = keys.filter((key) => summary[key] === undefined || summary[key] === null);
+  if (missing.length > 0) {
+    throw new Error(`measured findings require: ${missing.join(", ")}`);
+  }
   const values = Object.fromEntries(
     keys.map((key) => [key, requireInteger(key, summary[key])]),
   );

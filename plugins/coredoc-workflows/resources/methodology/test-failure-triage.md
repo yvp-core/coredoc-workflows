@@ -20,7 +20,10 @@ was touched here and you cannot connect it to any change.
 
 **When it is ambiguous, call it in-branch.** Stopping the user costs minutes;
 letting a real regression through costs the next person a debugging session with
-a false premise. Only call it pre-existing when you are confident.
+a false premise. Call it pre-existing only when you are confident, and say what
+that confidence rests on: the same check failing on the merge base, or existing
+CI evidence of that exact failure. A worker's claim that a failure was already
+present is not evidence on its own.
 
 This is a judgment call read off the diff and the failure output, not a
 dependency graph. Say which it is and why, so the user can overrule you.

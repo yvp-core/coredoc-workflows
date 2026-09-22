@@ -40,3 +40,10 @@ This is the one automatic remote read-and-integrate step, and the merge commit
 it may create is the only commit it produces. It does not authorize commit,
 push, or pull-request creation; those stay with `coredoc-git-delivery`. Review
 and diagnosis workflows are read-only and do not apply it.
+
+For concurrent branches or client forks, use separate worktrees before editing.
+Keep the user's dirty checkout and staging intact. For a run spanning repositories,
+call `coredoc-workflows track-repo --path <checkout>` before the first edit in each
+additional checkout, including a worktree created after routing. Registration
+records a local baseline; it cannot reconstruct changes made before registration.
+Repository paths remain local and only aggregate change counts enter capture.

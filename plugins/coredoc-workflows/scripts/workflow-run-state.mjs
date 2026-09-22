@@ -390,6 +390,32 @@ export function startWorkflowRun(
   return { status: "started", state };
 }
 
+export function registerWorkflowRepository(
+  sessionId,
+  cwd,
+  { env = process.env, snapshot = gitSnapshot, at = new Date().toISOString() } = {},
+) {
+  if (!hasWorkflowSessionAttribution(sessionId)) throw new Error("No attributed workflow session");
+  return withStageStateLock(sessionId, env, () => {
+    const state = readWorkflowRun(sessionId, { env });
+    if (state?.status !== "active") throw new Error("No active workflow run; resume it before tracking a repository");
+    const start = snapshot(cwd);
+    if (!start.available || !start.repoRoot) throw new Error("Repository path must resolve to an accessible Git checkout");
+    const repositories = state.repositories ?? [];
+    if (state.repoRoot === start.repoRoot || repositories.some((repo) => repo.repoRoot === start.repoRoot)) {
+      return { status: "already-tracked", runId: state.runId, repoRoot: start.repoRoot };
+    }
+    if (repositories.length >= 15) throw new Error("A workflow can track at most 16 repository checkouts");
+    const repository = {
+      repoRoot: start.repoRoot,
+      registeredAt: at,
+      start: { available: start.available, head: start.head, fingerprint: start.fingerprint },
+    };
+    atomicWriteJson(statePaths(sessionId, env).state, { ...state, repositories: [...repositories, repository] });
+    return { status: "tracked", runId: state.runId, repoRoot: start.repoRoot };
+  });
+}
+
 function stageTimestamp(value) {
   if (!validStageTimestamp(value)) {
     throw new Error("stage boundary time must be an ISO-8601 timestamp");
@@ -418,6 +444,7 @@ function resumeLocked(sessionId, state, env, now) {
     suspendedAt,
     capture: _capture,
     suspendedEnd: _suspendedEnd,
+    suspendedRepositories: _suspendedRepositories,
     ...rest
   } = state;
   const next = {
@@ -500,6 +527,11 @@ export function suspendWorkflowRun(
       suspendedAt: stageTimestamp(at),
       capture,
       suspendedEnd: capturedEnd(snapshot(state.repoRoot || process.cwd())),
+      ...(state.repositories?.length ? {
+        suspendedRepositories: state.repositories.map(({ repoRoot }) => ({
+          repoRoot, end: capturedEnd(snapshot(repoRoot)),
+        })),
+      } : {}),
     };
     atomicWriteJson(statePaths(sessionId, env).state, next);
     return next;
@@ -1110,12 +1142,37 @@ export function completeWorkflowRun(
     at = new Date().toISOString(),
     snapshot = gitSnapshot,
     requiredSkills = [],
+    allowUnavailableRepositories = false,
+    useSuspendedSnapshots = false,
   } = {},
 ) {
   const state = readWorkflowRun(sessionId, { env });
   if (!state || !FINISHABLE_RUN_STATUSES.has(state.status)) return null;
 
-  const end = snapshot(state.repoRoot || process.cwd());
+  // Expiry measures the session's own checkout snapshots, never later edits
+  // or the primary checkout reused as a substitute for every repository.
+  const unavailableEnd = {
+    available: false, head: "", fingerprint: "", filesChanged: 0,
+    trackedLinesAdded: 0, trackedLinesRemoved: 0,
+  };
+  const unavailableRepositories = [];
+  const checkouts = [
+    { start: state.start, end: useSuspendedSnapshots
+      ? state.suspendedEnd ?? unavailableEnd
+      : snapshot(state.repoRoot || process.cwd()) },
+    ...(state.repositories ?? []).map((repository) => {
+      const end = useSuspendedSnapshots
+        ? state.suspendedRepositories?.find(({ repoRoot }) => repoRoot === repository.repoRoot)?.end ?? unavailableEnd
+        : snapshot(repository.repoRoot);
+      if (!end.available) {
+        if (!allowUnavailableRepositories) {
+          throw new Error(`Tracked repository is unavailable: ${repository.repoRoot}`);
+        }
+        unavailableRepositories.push(repository.repoRoot);
+      }
+      return { start: repository.start, end };
+    }),
+  ];
   const observations = summarizeWorkflowObservations(
     readWorkflowObservations(sessionId, { env }),
     {
@@ -1136,20 +1193,19 @@ export function completeWorkflowRun(
 
   return {
     state,
+    // Local diagnostic only: never add paths to the event or capture summary.
+    ...(unavailableRepositories.length ? {
+      repositoryMeasurement: { status: "incomplete", unavailableRepositories },
+    } : {}),
     summary: {
       durationMs,
-      changed:
-        state.start.available &&
-        end.available &&
-        (state.start.fingerprint !== end.fingerprint ||
-          state.start.head !== end.head),
-      headChanged:
-        state.start.available &&
-        end.available &&
-        state.start.head !== end.head,
-      filesChangedAtFinish: end.filesChanged,
-      trackedLinesAddedAtFinish: end.trackedLinesAdded,
-      trackedLinesRemovedAtFinish: end.trackedLinesRemoved,
+      changed: checkouts.some(({ start, end }) =>
+        start.available && end.available && (start.fingerprint !== end.fingerprint || start.head !== end.head)),
+      headChanged: checkouts.some(({ start, end }) =>
+        start.available && end.available && start.head !== end.head),
+      filesChangedAtFinish: checkouts.reduce((total, { end }) => total + end.filesChanged, 0),
+      trackedLinesAddedAtFinish: checkouts.reduce((total, { end }) => total + end.trackedLinesAdded, 0),
+      trackedLinesRemovedAtFinish: checkouts.reduce((total, { end }) => total + end.trackedLinesRemoved, 0),
       ...observations,
     },
   };
@@ -1320,6 +1376,11 @@ export function parkWorkflowRun(
       suspendedAt: parkedAt,
       capture,
       suspendedEnd: capturedEnd(snapshot(state.repoRoot || process.cwd())),
+      ...(state.repositories?.length ? {
+        suspendedRepositories: state.repositories.map(({ repoRoot }) => ({
+          repoRoot, end: capturedEnd(snapshot(repoRoot)),
+        })),
+      } : {}),
       acceptance: {
         reason: reason ?? state.acceptance?.reason,
         ttlDays: ttlDays ?? state.acceptance?.ttlDays,
@@ -1466,6 +1527,7 @@ function reactivateLocked({ directory, parkedEnv, runId, sessionId, at }, env) {
       suspendedAt,
       capture: _capture,
       suspendedEnd: _suspendedEnd,
+      suspendedRepositories: _suspendedRepositories,
       ...rest
     } = parked;
     const next = {

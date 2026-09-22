@@ -945,11 +945,11 @@ test("preserves explicit large scale for review routes", () => {
   );
 });
 
-test("keeps scale inert for routes without large-scale behavior", () => {
-  assert.deepEqual(
-    routeTask({ intent: "diagnose", scale: "large" }),
-    routeTask({ intent: "diagnose" }),
-  );
+test("keeps stages stable but explains unsupported large scale", () => {
+  // Scale now carries an explanation; the executable route stays unchanged.
+  const { scaleReason, ...route } = routeTask({ intent: "diagnose", scale: "large" });
+  assert.deepEqual(route, routeTask({ intent: "diagnose" }));
+  assert.match(scaleReason, /diagnose/);
 });
 
 test("routes a bug fix through investigation and adaptive implementation", () => {
@@ -1224,4 +1224,12 @@ test("the router reports expired suspended runs it abandoned and never fails on 
     { ...deps, expireRuns: async () => [] },
   );
   assert.equal(Object.hasOwn(clean, "expiredRuns"), false);
+});
+
+
+test("explains a large scale request on a single-stage route", () => {
+  const route = routeTask({ intent: "spec", scale: "large" });
+  assert.equal(route.scale, "normal");
+  assert.match(route.scaleReason, /large.*change.*review/);
+  assert.equal(routeTask({ intent: "change", scale: "large" }).scaleReason, undefined);
 });

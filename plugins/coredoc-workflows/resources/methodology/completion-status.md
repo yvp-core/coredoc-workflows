@@ -1,5 +1,10 @@
 ## Completion status
 
+Before completion, resolve applicable intent work, validation and signed skips.
+At the final delivery of the whole task, when `finish-run` reported `feedbackOwed`,
+apply `<plugin-root>/resources/methodology/workflow-feedback.md`; it never asks a
+question and never blocks completion.
+
 End with an explicit status, so the user never has to infer one from prose:
 
 | Status | Meaning |
