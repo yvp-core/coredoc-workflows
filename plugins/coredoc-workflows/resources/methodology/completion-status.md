@@ -1,10 +1,9 @@
 ## Completion status
 
 Before completion, resolve applicable intent work, validation and signed skips.
-At final task delivery, apply `<plugin-root>/resources/methodology/workflow-feedback.md`
-if MCP was used, `feedbackOwed`, or tooling/workflow problems occurred. During tool
-calls and intermediate stages only collect observations. Respect prior Skip/review;
-pending submission never blocks completion.
+At the final delivery of the whole task, when `finish-run` reported `feedbackOwed`,
+apply `<plugin-root>/resources/methodology/workflow-feedback.md`; it never asks a
+question and never blocks completion.
 
 End with an explicit status, so the user never has to infer one from prose:
 

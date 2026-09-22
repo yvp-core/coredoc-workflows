@@ -21,9 +21,7 @@ request (PR), and a PR request does not authorize merge. Preview the exact
 outbound operation even when it is already authorized, but do not ask for a
 redundant confirmation of that same operation.
 
-Stage only paths covered by the user's explicit request or existing authorization.
-Do not ask again for the known change already authorized for delivery. Do not
-fetch automatically, stash, reset,
+Never automatically stage files. Do not fetch automatically, stash, reset,
 switch branches, rewrite commits, or alter remotes. Never force-push. Do not
 chain commit, push, and PR creation unless the user explicitly requested that
 whole chain.
@@ -65,11 +63,10 @@ threshold.
 
 ## Commit
 
-Use only the authorized staged set. When the user already authorized delivery
-of a known change, stage its exact paths and preserve unrelated changes. Ask
-which paths to stage only when that scope is genuinely unresolved. Concurrent
-writers use separate worktrees; a shared checkout can switch branches between
-checks. Before committing, preview the staged paths, summary,
+Use only the currently staged set. If nothing is staged, report the unstaged or
+untracked state and ask which paths the user wants staged; do not choose or run
+`git add` yourself. Concurrent writers use separate worktrees; a shared checkout
+can switch branches between checks. Before committing, preview the staged paths, summary,
 proposed message, and relevant validation already run. Run any missing
 repository-required check that applies to the staged behavior. An unresolved
 index is blocking even when Git reports staged entries.

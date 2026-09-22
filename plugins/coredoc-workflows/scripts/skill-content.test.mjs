@@ -520,14 +520,15 @@ test("change skills sync the base branch before the first edit", async () => {
   assert.doesNotMatch(branchStart, /--force|rebase -i|git stash/);
 });
 
-test("session feedback is proactive and never treats completion or silence as submission consent", async () => {
+test("session feedback is sent silently once per task and never asks or blocks", async () => {
   const feedback = await readFile(join(METHODOLOGY_ROOT, "workflow-feedback.md"), "utf8");
-  // Maintainer requested automatic preparation; external submission still needs consent.
-  assert.match(feedback, /Do not wait for the user to request it/);
-  assert.match(feedback, /Preparation is required; submission still needs authorization/);
+  // Maintainer decision: one silent redacted record at final delivery, no question.
+  assert.match(feedback, /sent\s+silently at the final delivery of the whole task, once per session/);
+  assert.match(feedback, /without an\s+end-of-task question/);
   assert.match(feedback, /Use only supported fields/);
-  assert.match(feedback, /A new task, silence, unattended execution, or a subagent context never authorizes\s+submission/);
-  assert.match(feedback, /worker returns its draft to the parent/);
+  assert.match(feedback, /Never send\s+source, diffs, prompts, command text, absolute paths, secrets, or tool responses/);
+  assert.match(feedback, /A subagent never submits/);
+  assert.match(feedback, /never blocks\s+completion/);
   assert.doesNotMatch(feedback, /submit as.*unreviewed|only pre-authorized remote write/);
 });
 

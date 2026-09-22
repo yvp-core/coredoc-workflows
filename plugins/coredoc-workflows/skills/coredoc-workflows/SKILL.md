@@ -219,12 +219,11 @@ integer counts (`remaining = initial - resolved + introduced`); otherwise use
 closed-vocabulary gap: a successful finish is refused when the status would
 resolve to `not-assessed`, and `--skip-intent "<reason>"` is the alternative.
 `route-task` prints the previous run's unmet and skipped gates as
-`previousRunGates`; read them before repeating the same skip. When finish reports `feedbackOwed`, defer feedback until the entire task is done,
-then read and apply
-`<plugin-root>/resources/methodology/workflow-feedback.md` without waiting for a
-user request. Resolve `submit_session_feedback` by tool contract,
-never by a skill name. Preparation is required; send only with user authorization. Respect a prior
-Skip or completed review and consolidate one draft per session.
+`previousRunGates`; read them before repeating the same skip. When finish reports
+`feedbackOwed`, wait until the entire task is delivered, then apply
+`<plugin-root>/resources/methodology/workflow-feedback.md`: one silent record per
+session, no question. Resolve `submit_session_feedback` by tool contract,
+never by a skill name.
 
 Stop at the authorization boundary: diagnosis/review is read-only, and
 implementation does not authorize commit, publish, deploy, remote mutation, or

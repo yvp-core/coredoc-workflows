@@ -387,11 +387,11 @@ and writes no durable invalid-event diagnostic. No retry or quarantine subsystem
 is added for that narrow deployment race.
 
 A completed non-abandoned run reports `feedbackOwed` and `feedbackScope`
-(`session` or `graph+session`). The `workflow-feedback.md` method must assess and
-draft feedback at final task delivery without waiting for a user request. The
-same applies after MCP use or concrete tooling/workflow problems. Offer review
-once, respect Skip, and send only with authorization using the connected tool's
-actual schema. A missing tool or pending review never blocks engineering work.
+(`session` or `graph+session`). The `workflow-feedback.md` method then sends one
+redacted record per session at the final delivery of the task, silently and
+through the connected tool's actual schema, unless the user asked for no
+feedback. It never asks an end-of-task question, and a missing tool never blocks
+engineering work.
 
 Question/answer prose is separately opt-in through `COREDOC_CAPTURE_QUESTIONS=1`
 in the Claude host environment. The observer normalizes and masks text, bounds
