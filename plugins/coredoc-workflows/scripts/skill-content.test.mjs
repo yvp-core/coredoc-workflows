@@ -1064,3 +1064,27 @@ test("browser snapshot guidance preserves ref semantics and invalidation", async
   assert.match(body, /References are invalidated by navigation/);
   assert.match(body, /snapshot -D/);
 });
+
+test("AC-9/AC-10: intent is accepted at document approval; implementation only hands off or proposes a successor", async () => {
+  const [router, implementation, spec, prd, context, lifecycle, review] = await Promise.all([
+    skill("coredoc-workflows"),
+    skill("coredoc-implement"),
+    skill("coredoc-spec"),
+    skill("coredoc-prd"),
+    readFile(join(METHODOLOGY_ROOT, "intent-context.md"), "utf8"),
+    readFile(join(METHODOLOGY_ROOT, "spec-lifecycle.md"), "utf8"),
+    readFile(join(METHODOLOGY_ROOT, "review-policy.md"), "utf8"),
+  ]);
+  for (const body of [router, implementation, context, lifecycle]) {
+    assert.doesNotMatch(body, /candidate batch|intentChanges: none|admin or\s+owner|admin\/owner/i);
+  }
+  assert.match(implementation, /Implementation never proposes or accepts intent[\s\S]*no\s+`intent_propose` or `intent_review` call[\s\S]*must contradict accepted intent, propose a successor candidate[\s\S]*accepted item stays in force at its\s+version/);
+  assert.match(context, /\*\*Implementation never accepts\.\*\*[\s\S]*`intent_handoff`[\s\S]*no `intent_propose` or\s+`intent_review` call[\s\S]*successor candidate/);
+  assert.match(context, /That approval\s+is the acceptance; nobody is asked a second time/);
+  assert.match(context, /A specification derived from an\s+approved PRD proposes and accepts nothing/);
+  assert.match(router, /That reply is also the acceptance of a PRD-less\s+specification's own intent[\s\S]*before opening the implementation stage[\s\S]*PRD-derived specification accepts nothing/);
+  assert.match(spec, /that approval is the acceptance of its intent[\s\S]*without asking again/);
+  assert.match(prd, /that approval is the acceptance of\s+its intent[\s\S]*without asking again/);
+  assert.match(lifecycle, /It checks for no candidates and blocks nothing/);
+  assert.match(review, /contradicts accepted product intent[\s\S]*successor candidate[\s\S]*review never proposes, accepts, or supersedes intent itself/);
+});

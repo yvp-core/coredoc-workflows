@@ -289,7 +289,7 @@ test("AC-4: another task routes and finishes without touching the parked run", a
   assert.equal(readRunHistory(PROJECT_KEY, { env }).length, 2);
 });
 
-test("AC-4: acceptance reactivates the run, refuses without the propose, and emits one success", async () => {
+test("AC-9: acceptance reactivates the run, instructs the verbatim accept, and emits one success", async () => {
   const { env, repoRoot, specFile } = await parkedFixture();
   const { delivered, deliver } = recorder();
   await deliverDraft({ env, repoRoot, deliver });
@@ -300,7 +300,14 @@ test("AC-4: acceptance reactivates the run, refuses without the propose, and emi
   );
   assert.equal(reactivated.status, "reactivated");
   assert.equal(reactivated.runId, RUN_A);
-  // Back in the session slot, so the observer records the agent's propose.
+  assert.equal(reactivated.acceptIntentBefore, "coredoc-workflows spec accept --finish");
+  assert.match(
+    reactivated.intent,
+    /do not ask again[\s\S]*verbatim[\s\S]*intent_propose[\s\S]*intent_review under that single approval/,
+  );
+  assert.match(reactivated.intent, /A PRD-derived specification accepts nothing/);
+  assert.ok(reactivated.intent.includes(SPEC_REF), reactivated.intent);
+  // Back in the session slot, so the observer records the agent's intent calls.
   assert.equal(readWorkflowRun(SESSION_A, { env }).status, "active");
   assert.ok(!existsSync(parkedRunDirectory(PROJECT_KEY, RUN_A, env)));
 
@@ -310,25 +317,13 @@ test("AC-4: acceptance reactivates the run, refuses without the propose, and emi
       deliver,
       checkpointArtifacts: NO_ARTIFACTS,
     });
-  await assert.rejects(
-    () =>
-      finishAcceptedSpecification(
-        { sessionId: SESSION_A, at: "2026-09-16T09:05:00.000Z" },
-        { env, cwd: repoRoot, finishRun },
-      ),
-    new RegExp(`no candidate batch[\\s\\S]*${SPEC_REF}`),
-  );
-  // Nothing was written: the document is still a draft and no event went out.
-  assert.equal(readSpecArtifact(specFile).status, "draft");
-  assert.deepEqual(delivered, []);
-  assert.equal(readWorkflowRun(SESSION_A, { env }).runId, RUN_A);
-
-  observePropose(env, SESSION_A, "2026-09-16T09:06:00.000Z");
+  // No candidates precondition: with no propose observed, --finish accepts.
   const accepted = await finishAcceptedSpecification(
     { sessionId: SESSION_A, at: "2026-09-16T09:07:00.000Z" },
     { env, cwd: repoRoot, finishRun },
   );
   assert.equal(accepted.status, "accepted");
+  assert.deepEqual(accepted.gates, []);
   assert.equal(accepted.terminated, "terminated");
   assert.equal(readSpecArtifact(specFile).status, "accepted");
   assert.equal(delivered.length, 1);
@@ -344,27 +339,6 @@ test("AC-4: acceptance reactivates the run, refuses without the propose, and emi
   );
   assert.equal(readWorkflowRun(SESSION_A, { env }), null);
   assert.equal(lastRunHistory(PROJECT_KEY, { env }).outcome, "success");
-});
-
-test("AC-4: a propose citing another repository's identical path does not accept the spec", async () => {
-  const { env, repoRoot, specFile } = await parkedFixture();
-  const { delivered, deliver } = recorder();
-  await deliverDraft({ env, repoRoot, deliver });
-  acceptSpecification(
-    { sessionId: SESSION_A, path: SPEC_PATH, at: "2026-09-16T09:00:00.000Z" },
-    { env, cwd: repoRoot },
-  );
-  observePropose(env, SESSION_A, "2026-09-16T09:01:00.000Z", { specMatch: false });
-  await assert.rejects(
-    () =>
-      finishAcceptedSpecification(
-        { sessionId: SESSION_A, at: "2026-09-16T09:02:00.000Z" },
-        { env, cwd: repoRoot, finishRun: finishWorkflowRun },
-      ),
-    /other\/repo:docs\/spec\.md/,
-  );
-  assert.equal(readSpecArtifact(specFile).status, "draft");
-  assert.deepEqual(delivered, []);
 });
 
 test("AC-4: spec abandon emits exactly one abandoned event and removes both ledgers", async () => {
@@ -787,7 +761,7 @@ test("a signed skip accepts the specification and records the reason", async () 
   assert.deepEqual(accepted.gates, [
     {
       stage: "accept",
-      gate: "candidates",
+      gate: "intent",
       result: "skipped",
       reason: "workspace has no intent capability",
     },
@@ -798,14 +772,14 @@ test("a signed skip accepts the specification and records the reason", async () 
   assert.ok(
     history.gates.some(
       (gate) =>
-        gate.gate === "candidates" &&
+        gate.gate === "intent" &&
         gate.reason === "workspace has no intent capability",
     ),
     JSON.stringify(history.gates),
   );
 });
 
-test("warn mode accepts the specification and records the gate it would have refused", async () => {
+test("LIM-2: acceptance with no intent call accepts without a warning or a recorded gate", async () => {
   const { env, repoRoot, specFile } = await parkedFixture({ gates: "warn" });
   const { delivered, deliver } = recorder();
   await deliverDraft({ env, repoRoot, deliver });
@@ -835,12 +809,9 @@ test("warn mode accepts the specification and records the gate it would have ref
     process.stderr.write = stderr;
   }
   assert.equal(accepted.status, "accepted");
-  assert.equal(accepted.gatesWarned, true);
-  assert.deepEqual(accepted.gates, [
-    { stage: "accept", gate: "candidates", result: "unmet" },
-  ]);
-  assert.equal(printed.length, 1);
-  assert.match(printed[0], /no candidate batch/);
+  assert.equal(accepted.gatesWarned, undefined);
+  assert.deepEqual(accepted.gates, []);
+  assert.deepEqual(printed, []);
   assert.equal(readSpecArtifact(specFile).status, "accepted");
   assert.equal(delivered.length, 1);
 });

@@ -69,8 +69,8 @@ export const CALLER_OUTCOMES = Object.freeze([
 export const ACCEPTANCE_TTL_DAYS = 14;
 
 // BR-5 — a run awaiting acceptance has exactly two successful ends, and this
-// command is neither: `spec accept --finish` applies the candidate check that
-// the draft -> accepted transition is conditioned on. Finishing it here would
+// command is neither: `spec accept --finish` writes the draft -> accepted
+// transition once the specification's own intent is accepted. Finishing it here would
 // close the run, delete its state and leave the specification a draft pointing
 // at a run that no longer exists. Not a gate: no mode relaxes it, because it is
 // the wrong terminal path rather than missing evidence.
@@ -464,8 +464,8 @@ export async function finishWorkflowRun(
     historyEnv = env,
     historyOutcome,
     historyReason,
-    // BR-3 belongs to `finish-run`; BR-5's acceptance finish is gated on its
-    // candidate batch instead and passes false.
+    // BR-3 belongs to `finish-run`; BR-5's acceptance finish is the
+    // acceptance itself and passes false.
     assessCoredocStatus = true,
     // Set only by `spec-acceptance.mjs`, the one caller allowed to end a run
     // that is awaiting acceptance.

@@ -120,11 +120,12 @@ rules bind the two documents.
    carrying the alternative weighed and who decided; `US` → `uc` or `flow`; an
    `EC` resolution → `br`; `NG` → `lim`. `[unverified]` claims and `OQ` rows
    never enter the graph: they are verification debt for the specification.
-   After a PRD is `approved`, and only when the session can propose intent
-   candidates (the write stage in `intent-context.md`), the PRD skill proposes
-   them in one batch, sourced at the repo-qualified PRD path and row id, and
-   records each returned slug beside its row and as `intentIds` in the
-   frontmatter. A draft proposes nothing.
+   When the owner approves a PRD, and only when the session can propose intent
+   (the write stage in `intent-context.md`), the PRD skill proposes its rows in
+   one batch, sourced at the repo-qualified PRD path and row id, accepts the
+   verbatim ones under that single approval without asking again, and records
+   each returned slug beside its row and as `intentIds` in the frontmatter. A
+   draft proposes nothing.
 4. **Handoff to the specification.** The specification cites PRD rows by id and
    does not restate or re-derive product content; its own ids stay technical
    (`AC-n`, `LIM-n` for technical limits, plan steps). On a PRD, the
@@ -137,13 +138,13 @@ rules bind the two documents.
    `matchedFeatureIds`, rules, and their wording. When `matchedFeatureIds` is
    empty, propose the feature in the interview — domain, title, one-sentence
    statement — and, once the PRD is approved, create it with `intent_tree` in
-   the user's session before proposing candidates into it, naming in the reply
+   the user's session before proposing into it, naming in the reply
    what it created; a service-token session drafts it and stops. When no intent
    capability exists, or the
    graph is empty, an optional repository profile supplies the vocabulary, and
    the output says nothing about intent.
 6. **Approval gates three things only:** `status: approved` (the
-   specification's `accepted`), proposing intent candidates, and an external
+   specification's `accepted`), proposing and accepting its intent, and an external
    destination such as Jira. A `status: draft` file may be written at once to
    the path the user named or the documented location.
 7. **A ruling in the request is the requester's decision.** "We decided X" or
@@ -278,14 +279,14 @@ PRD needs a setting, name the setting, not the value.
 
 ### 7. After approval
 
-If the PRD is `approved` and this session has a cloud Coredoc intent write
-capability — `intent_propose` is visible — run the "After specification
-acceptance" write stage of
+If the owner approves the PRD and this session has a cloud Coredoc intent write
+capability — `intent_propose` is visible — that approval is the acceptance of
+its intent: run the "At document approval" write stage of
 `<plugin-root>/resources/methodology/intent-context.md` for the PRD: propose the
-rows the contract maps (`G`, `D`, `US`, `EC` resolutions, `NG`) as one candidate
-batch, sourced at the repo-qualified PRD path and row id, and record each
-returned slug beside its row and as `intentIds` in the frontmatter. A draft
-proposes nothing. When no intent capability is present, proceed from
+rows the contract maps (`G`, `D`, `US`, `EC` resolutions, `NG`) as one batch,
+sourced at the repo-qualified PRD path and row id, accept the verbatim ones
+under that single approval without asking again, and record each returned slug
+beside its row and as `intentIds` in the frontmatter. A draft proposes nothing. When no intent capability is present, proceed from
 repository evidence alone and do not mention intent context in the output.
 
 ### 8. Reply

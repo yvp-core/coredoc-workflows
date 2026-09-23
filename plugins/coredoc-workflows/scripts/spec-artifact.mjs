@@ -1,6 +1,6 @@
 /**
  * The specification artifact a run is about: how its path is stored, and the
- * three frontmatter keys the gates read (`status`, `intentChanges`, `run`).
+ * two frontmatter keys the gates read (`status`, `run`).
  *
  * Deliberately not a YAML parser: only those keys, only from the leading
  * frontmatter block, only as trimmed scalars. Anything else in the document is
@@ -14,7 +14,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 // not the same as a document without frontmatter, so the body is optional.
 const FRONTMATTER = /^(---(\r?\n))((?:[\s\S]*?\r?\n)?)(---(?:\r?\n|$))/;
 const SCALAR_LINE = /^([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$/;
-const READ_KEYS = new Set(["status", "intentChanges", "run"]);
+const READ_KEYS = new Set(["status", "run"]);
 
 /**
  * The leading frontmatter split into its parts, preserving the document's own

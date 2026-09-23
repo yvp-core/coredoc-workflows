@@ -6,7 +6,7 @@
  * Two of the five sentences belong to skills shipped from coredoc-parser
  * (`coredoc-mcp`, `intent-capture`). Their text is pinned here as a constant
  * anyway, because the behaviour they promise is this plugin's: the gates that
- * count reads and the candidate precondition of the acceptance transition.
+ * count reads and the acceptance transition that checks for no candidates.
  */
 
 import assert from "node:assert/strict";
@@ -34,16 +34,16 @@ import {
 const SENTENCES = Object.freeze({
   // `coredoc-spec` carries no gate sentence since 2026-09-17: with it appended the skill fired 0/9 on explicit "write a spec" eval prompts, without it 12/18 overall; the spec gate stays in its body and in the `coredoc-workflows` sentence below.
   "coredoc-implement":
-    "A successful close of the implement stage requires an observed Coredoc MCP read during implementation and, for an accepted specification, its proposed candidates; a run without them needs a signed skip.",
+    "A successful close of the implement stage requires an observed Coredoc MCP read during implementation; a run without one needs a signed skip.",
   "coredoc-review":
     "A successful close of the review stage requires an observed Coredoc MCP read during review; a run without one needs a signed skip.",
   "coredoc-workflows":
-    "On a checkout bound to a Coredoc workspace, stages close on observed evidence, not on the agent's report: intent reads, candidates and Coredoc MCP reads are checked, and skips are signed with a reason that the next route shows.",
+    "On a checkout bound to a Coredoc workspace, stages close on observed evidence, not on the agent's report: intent reads and Coredoc MCP reads are checked, and skips are signed with a reason that the next route shows.",
   // Shipped from coredoc-parser (`skills/`, mirrored into `plugins/coredoc`).
   "coredoc-mcp":
     "Grep, Glob and Read do not satisfy a code question this workspace's MCP can answer; the implement and review stage closes count Coredoc reads, not writes.",
   "intent-capture":
-    "Invoked by `coredoc-spec` when a specification becomes accepted (the implement stage's first write, or `spec accept` for a standalone spec); run it standalone only for an already-accepted document.",
+    "Invoked by `coredoc-prd` or `coredoc-spec` when a person approves the PRD, the PRD-less specification or the ADR (`spec accept` for a standalone spec); run it standalone only for an already-approved document.",
 });
 
 /** The skills whose SKILL.md is in this repository. */
@@ -179,29 +179,22 @@ test("coredoc-spec: the spec stage refuses a successful close with no intent rea
   assert.deepEqual(closed.gates, [{ stage: "spec", gate: "intent", result: "passed" }]);
 });
 
-test("coredoc-implement: the implement stage refuses without a read, and without candidates", async () => {
+test("coredoc-implement: the implement stage refuses without a read, never for missing candidates", async () => {
   const noRead = harness();
   await assert.rejects(
     () => closeWith(noRead.env, "implement", [search("Grep", "2026-09-15T11:01:00.000Z")]),
     /0 Coredoc reads in stage implement/,
   );
 
-  // An accepted specification with a read but no candidate batch is refused too.
+  // An accepted specification with a read and no propose closes: intent was
+  // accepted at the document's approval, not at implementation.
   const accepted = harness({ status: "accepted" });
-  await assert.rejects(
-    () => closeWith(accepted.env, "implement", [mcpRead("2026-09-15T11:01:00.000Z")]),
-    new RegExp(`accepted specification ${SPEC_REF} has no candidate batch`),
-  );
   const closed = await closeWith(accepted.env, "implement", [
     mcpRead("2026-09-15T11:02:00.000Z"),
-    propose("2026-09-15T11:03:00.000Z"),
   ]);
   assert.deepEqual(
     closed.gates.map(({ gate, result }) => [gate, result]),
-    [
-      ["candidates", "passed"],
-      ["mcp", "passed"],
-    ],
+    [["mcp", "passed"]],
   );
 
   // "a signed skip" — the run without them closes only with a reason on record.
@@ -312,7 +305,7 @@ test("coredoc-mcp: searches and writes do not satisfy the implement gate; one re
   });
 });
 
-test("intent-capture: the candidate batch is the precondition of `spec accept --finish`", async () => {
+test("intent-capture: `spec accept` instructs the verbatim acceptance and `--finish` accepts", async () => {
   const { env, repoRoot, specFile } = harness({ intent: "spec", stages: ["spec"] });
   await closeWith(env, "spec", [intentRead("2026-09-15T11:01:00.000Z")]);
   const delivered = [];
@@ -329,23 +322,13 @@ test("intent-capture: the candidate batch is the precondition of `spec accept --
     { sessionId: SESSION_ID, outcome: "delivered-draft", specPath: SPEC_PATH, at: "2026-09-15T12:00:00.000Z" },
     { env, cwd: repoRoot },
   );
-  acceptSpecification(
+  const reactivated = acceptSpecification(
     { sessionId: SESSION_ID, path: SPEC_PATH, at: "2026-09-16T09:00:00.000Z" },
     { env, cwd: repoRoot },
   );
+  assert.match(reactivated.intent, /intent_propose[\s\S]*intent_review under that single approval/);
 
-  // Without the candidates the acceptance does not happen at all.
-  await assert.rejects(
-    () =>
-      finishAcceptedSpecification(
-        { sessionId: SESSION_ID, at: "2026-09-16T09:01:00.000Z" },
-        { env, cwd: repoRoot, finishRun },
-      ),
-    new RegExp(`no candidate batch[\\s\\S]*${SPEC_REF}`),
-  );
-  assert.equal(readSpecArtifact(specFile).status, "draft");
-
-  observe(env, propose("2026-09-16T09:02:00.000Z"));
+  // No candidates precondition: the approval is the acceptance.
   const accepted = await finishAcceptedSpecification(
     { sessionId: SESSION_ID, at: "2026-09-16T09:03:00.000Z" },
     { env, cwd: repoRoot, finishRun },

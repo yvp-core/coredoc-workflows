@@ -11,7 +11,6 @@ import {
   readCaptureState,
 } from "./capture-state.mjs";
 import { resolveProjectKey } from "./project-key.mjs";
-import { readSpecArtifact, specAbsolutePath } from "./spec-artifact.mjs";
 import { gateEvidence, lastRunHistory } from "./workflow-gates.mjs";
 import {
   hasWorkflowSessionAttribution,
@@ -150,17 +149,7 @@ export function workflowRunStatus(
       // in an earlier stage must not read as the next close's verdict: that
       // close is judged on its own attempt only (LIM-1).
       scope: openStage === undefined ? "run" : "stage",
-      ...gateEvidence(observations, {
-        spec:
-          state.specRef === undefined
-            ? undefined
-            : readSpecArtifact(
-                specAbsolutePath(state.specRef, {
-                  repoRoot: state.repoRoot,
-                  cwd,
-                }),
-              ),
-      }),
+      ...gateEvidence(observations),
     },
     stages,
     ...checkoutContext(state, { env, cwd }),
@@ -207,7 +196,7 @@ export function workflowRunContext(status) {
     status.specRef === undefined ? "" : `Specification: ${status.specRef}.`,
     status.gates === undefined
       ? ""
-      : `Gate evidence ${status.gates.scope === "run" ? "across the run so far (no stage is open, so the next close is judged on its own attempt)" : "in the open attempt"}: intent: ${status.gates.intent}, candidates: ${status.gates.candidates}, mcp: ${status.gates.mcp}.`,
+      : `Gate evidence ${status.gates.scope === "run" ? "across the run so far (no stage is open, so the next close is judged on its own attempt)" : "in the open attempt"}: intent: ${status.gates.intent}, mcp: ${status.gates.mcp}.`,
     status.lastRun === undefined
       ? ""
       : `Previous run ${status.lastRun.runId} finished ${status.lastRun.outcome}.`,
@@ -217,7 +206,7 @@ export function workflowRunContext(status) {
     // refuses the close and, before that refusal existed, destroyed the run.
     status.awaitingAcceptanceSince === undefined
       ? "Do not run route-task again; continue with coredoc-workflows stage-run and finish-run. Run `coredoc-workflows run-status` whenever unsure."
-      : 'Do not run route-task again and do not finish this run with finish-run: it is a standalone specification awaiting acceptance, so close it with `coredoc-workflows spec accept --finish` (after the intent_propose) or `coredoc-workflows spec abandon --reason "<text>"`. Run `coredoc-workflows run-status` whenever unsure.',
+      : 'Do not run route-task again and do not finish this run with finish-run: it is a standalone specification awaiting acceptance, so close it with `coredoc-workflows spec accept --finish` (after its verbatim intent is proposed and accepted) or `coredoc-workflows spec abandon --reason "<text>"`. Run `coredoc-workflows run-status` whenever unsure.',
     CONTEXT_CLOSING,
   ]
     .filter(Boolean)

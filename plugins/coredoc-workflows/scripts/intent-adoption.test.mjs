@@ -215,7 +215,7 @@ test("methodology bounds the write surface to proposals and previews", async () 
   // The single-approval exception is scoped inline; everything else stays never.
   assert.match(
     body,
-    /NEVER calls `intent_review`[\s\S]{0,200}never records or rolls\s+back a release/,
+    /calls `intent_review` only at\s+that\s+approval[\s\S]{0,200}never records or rolls\s+back a release/,
   );
   assert.match(body, phrase("single approval"));
   assert.match(body, /`intent_review accept`/);
@@ -276,21 +276,23 @@ test("review and delivery carry the structured handoff without a PR-body protoco
   assert.match(body, /Mapping and delivery are independent/);
 });
 
-// The spec-acceptance moment is the one place an adapter may accept, and only
-// for verbatim items in the acting human's own session.
-test("spec and implement carry the single-approval clause", async () => {
-  for (const name of ["coredoc-spec", "coredoc-implement"]) {
-    const body = await skill(name);
-    assert.match(body, phrase("single-approval clause"), name);
-    assert.match(body, /verbatim/i, name);
-    assert.match(body, /autonomous|service[- ]token/i, name);
-  }
+// The document's approval is the one place an adapter may accept, and only for
+// verbatim items in the acting human's own session; implementation never does.
+test("spec carries the single-approval clause and implement never accepts", async () => {
+  const spec = await skill("coredoc-spec");
+  assert.match(spec, /verbatim/i);
+  assert.match(spec, /autonomous|service[- ]token/i);
+  assert.match(spec, phrase("without asking again"));
+  const router = await skill("coredoc-workflows");
+  assert.match(router, phrase("single-approval clause"));
+  const implement = await skill("coredoc-implement");
+  assert.match(implement, phrase("Implementation never proposes or accepts intent"));
+  assert.doesNotMatch(implement, phrase("single-approval clause"));
 });
 
 test("resuming an approved spec completes missing intent work without another approval", async () => {
   const implement = await skill("coredoc-implement");
-  assert.match(implement, phrase("both after a new status write and on resumption"));
-  assert.match(implement, phrase("complete only missing work"));
+  assert.doesNotMatch(implement, phrase("both after a new status write and on resumption"));
   assert.doesNotMatch(implement, phrase("fresh post-review approval is still required"));
   const body = await readFile(METHODOLOGY_PATH, "utf8");
   assert.match(body, phrase("already accepted matching item needs no write"));

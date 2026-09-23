@@ -64,6 +64,10 @@ Read these six policy dimensions. A repository may set any or all of them:
   exactly one concrete question that would resolve it. Do not demote a
   source-proven defect to `HYPOTHESIS` because repository policy or release
   context is undocumented.
+- A diff that contradicts accepted product intent is a finding citing the
+  accepted id, unless a successor candidate for it was proposed and named. The
+  accepted item stays in force at its version until a person accepts the
+  successor; review never proposes, accepts, or supersedes intent itself.
 
 `HYPOTHESIS` is reserved for uncertainty about factual evidence, reachability, or
 the observable wrong outcome. It is not a substitute for missing policy.

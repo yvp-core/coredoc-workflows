@@ -8,7 +8,7 @@ import { finishWorkflowRun } from "./finish-run.mjs";
 import { finishWorkflowSession } from "./session-end.mjs";
 import { parseStageArgs, runWorkflowStage } from "./stage-run.mjs";
 import { lastRunHistory } from "./workflow-gates.mjs";
-import { readSpecArtifact, writeSpecArtifactKey } from "./spec-artifact.mjs";
+import { writeSpecArtifactKey } from "./spec-artifact.mjs";
 import {
   appendWorkflowObservation,
   readWorkflowRun,
@@ -389,7 +389,7 @@ test("--spec-path records the artifact on the run at the spec close", async () =
   assert.ok(!readWorkflowRun(SESSION_ID, { env }).specRef.includes(repoRoot));
 });
 
-test("AC-3: the change-large lifecycle gates the implement close on the candidate batch", async () => {
+test("AC-9: an accepted spec's implement closes on the read alone, with a handoff and no propose", async () => {
   const { env, specFile } = harness();
   await openSpecStage(env);
   observe(env, intentRead("2026-09-15T10:00:02.000Z"));
@@ -400,181 +400,24 @@ test("AC-3: the change-large lifecycle gates the implement close on the candidat
     at: "2026-09-15T10:00:03.000Z",
   });
   await stage("start", "design", { env, at: "2026-09-15T10:01:00.000Z" });
-  // The specification is reviewed as a draft: BR-2 does not apply yet.
-  const design = await stage("finish", "design", {
+  await stage("finish", "design", {
     env,
     outcome: "success",
     at: "2026-09-15T10:02:00.000Z",
   });
-  assert.equal(design.status, "finished");
-
   await stage("start", "implement", { env, at: "2026-09-15T10:03:00.000Z" });
-  // The implementation stage's first repository write is the acceptance.
+  // The approval already accepted the intent; implement proposes nothing.
   writeSpecArtifactKey(specFile, "status", "accepted");
-  assert.equal(readSpecArtifact(specFile).status, "accepted");
   observe(env, grep("2026-09-15T10:03:30.000Z"));
-  await assert.rejects(
-    () =>
-      stage("finish", "implement", {
-        env,
-        outcome: "success",
-        at: "2026-09-15T10:04:00.000Z",
-      }),
-    new RegExp(`accepted specification ${SPEC_REF} has no candidate batch`),
-  );
-
-  observe(env, propose("2026-09-15T10:04:30.000Z"));
-  observe(env, mcpRead("2026-09-15T10:04:40.000Z"));
-  const closed = await stage("finish", "implement", {
-    env,
-    outcome: "success",
-    at: "2026-09-15T10:05:00.000Z",
-  });
-  assert.equal(closed.status, "finished");
-  assert.deepEqual(
-    closed.gates.map(({ gate, result }) => [gate, result]),
-    [
-      ["candidates", "passed"],
-      ["mcp", "passed"],
-    ],
-  );
-  assert.deepEqual(
-    workflowRunGates(readWorkflowRun(SESSION_ID, { env })).map(
-      ({ stage: stageId, gate, result }) => [stageId, gate, result],
-    ),
-    [
-      ["spec", "intent", "passed"],
-      ["implement", "candidates", "passed"],
-      ["implement", "mcp", "passed"],
-    ],
-  );
-});
-
-test("AC-3: intentChanges none passes and a propose citing another repository does not", async () => {
-  const declared = harness({ status: "accepted" });
-  writeSpecArtifactKey(declared.specFile, "intentChanges", "none");
-  await openSpecStage(declared.env);
-  observe(declared.env, intentRead("2026-09-15T10:00:02.000Z"));
-  await stage("finish", "spec", {
-    env: declared.env,
-    outcome: "success",
-    at: "2026-09-15T10:00:03.000Z",
-  });
-  await stage("start", "design", { env: declared.env, at: "2026-09-15T10:01:00.000Z" });
-  await stage("finish", "design", {
-    env: declared.env,
-    outcome: "success",
-    at: "2026-09-15T10:02:00.000Z",
-  });
-  await stage("start", "implement", { env: declared.env, at: "2026-09-15T10:03:00.000Z" });
-  observe(declared.env, mcpRead("2026-09-15T10:03:30.000Z"));
-  const closed = await stage("finish", "implement", {
-    env: declared.env,
-    outcome: "success",
-    at: "2026-09-15T10:04:00.000Z",
-  });
-  assert.equal(closed.gates[0].result, "passed");
-  assert.equal(closed.gates[0].reason, "frontmatter declares intentChanges: none");
-
-  const foreign = harness({ status: "accepted" });
-  await openSpecStage(foreign.env);
-  observe(foreign.env, intentRead("2026-09-15T10:00:02.000Z"));
-  await stage("finish", "spec", {
-    env: foreign.env,
-    outcome: "success",
-    at: "2026-09-15T10:00:03.000Z",
-  });
-  await stage("start", "design", { env: foreign.env, at: "2026-09-15T10:01:00.000Z" });
-  await stage("finish", "design", {
-    env: foreign.env,
-    outcome: "success",
-    at: "2026-09-15T10:02:00.000Z",
-  });
-  await stage("start", "implement", { env: foreign.env, at: "2026-09-15T10:03:00.000Z" });
-  observe(
-    foreign.env,
-    propose("2026-09-15T10:03:30.000Z", {
-      specMatch: false,
-      refs: [`other/repo:${SPEC_PATH}`],
-    }),
-  );
-  await assert.rejects(
-    () =>
-      stage("finish", "implement", {
-        env: foreign.env,
-        outcome: "success",
-        at: "2026-09-15T10:04:00.000Z",
-      }),
-    new RegExp(`cited other/repo:${SPEC_PATH}, not ${SPEC_REF}`),
-  );
-});
-
-test("an unmapped repository cannot satisfy BR-2 and needs a declaration or a signed skip", async () => {
-  const { env } = harness({
-    repositoryKey: "unmapped",
-    specRef: `unmapped:${SPEC_PATH}`,
-    status: "accepted",
-  });
-  await openSpecStage(env);
-  observe(env, intentRead("2026-09-15T10:00:02.000Z"));
-  await stage("finish", "spec", {
-    env,
-    outcome: "success",
-    at: "2026-09-15T10:00:03.000Z",
-  });
-  await stage("start", "design", { env, at: "2026-09-15T10:01:00.000Z" });
-  await stage("finish", "design", {
-    env,
-    outcome: "success",
-    at: "2026-09-15T10:02:00.000Z",
-  });
-  await stage("start", "implement", { env, at: "2026-09-15T10:03:00.000Z" });
-  // The observer cannot bind a bare cited path to an unknown repository, so the
-  // propose never matches and the refusal stands.
-  observe(env, propose("2026-09-15T10:03:30.000Z", { specMatch: false, refs: [SPEC_PATH] }));
   observe(env, mcpRead("2026-09-15T10:03:40.000Z"));
-  await assert.rejects(
-    () =>
-      stage("finish", "implement", {
-        env,
-        outcome: "success",
-        at: "2026-09-15T10:04:00.000Z",
-      }),
-    /has no candidate batch/,
-  );
-  const signed = await stage("finish", "implement", {
-    env,
-    outcome: "success",
-    skipIntentReason: "repository is not mapped to a workspace repository",
-    at: "2026-09-15T10:05:00.000Z",
+  observe(env, {
+    type: "coredoc",
+    at: "2026-09-15T10:03:50.000Z",
+    success: true,
+    tool: "intent_handoff",
+    access: "write",
+    result: "ok",
   });
-  assert.equal(signed.gates[0].result, "skipped");
-});
-
-test("BR-2 counts a propose made at any point from the specification stage onward", async () => {
-  const { env, specFile } = harness();
-  await openSpecStage(env);
-  observe(env, intentRead("2026-09-15T10:00:02.000Z"));
-  await stage("finish", "spec", {
-    env,
-    outcome: "success",
-    specPath: SPEC_PATH,
-    at: "2026-09-15T10:00:03.000Z",
-  });
-  await stage("start", "design", { env, at: "2026-09-15T10:01:00.000Z" });
-  // The user accepts during design; the candidate batch goes out there.
-  writeSpecArtifactKey(specFile, "status", "accepted");
-  observe(env, propose("2026-09-15T10:01:30.000Z"));
-  await stage("finish", "design", {
-    env,
-    outcome: "success",
-    at: "2026-09-15T10:02:00.000Z",
-  });
-  await stage("start", "implement", { env, at: "2026-09-15T10:03:00.000Z" });
-  observe(env, grep("2026-09-15T10:03:30.000Z"));
-  // BR-4's read is judged on this attempt alone, so the implement stage needs
-  // its own; BR-2's propose from the design stage still counts.
-  observe(env, mcpRead("2026-09-15T10:03:40.000Z"));
   const closed = await stage("finish", "implement", {
     env,
     outcome: "success",
@@ -582,9 +425,44 @@ test("BR-2 counts a propose made at any point from the specification stage onwar
   });
   assert.equal(closed.status, "finished");
   assert.deepEqual(closed.gates, [
-    { stage: "implement", gate: "candidates", result: "passed" },
-    { stage: "implement", gate: "mcp", result: "passed", searches: 1, writes: 0 },
+    { stage: "implement", gate: "mcp", result: "passed", searches: 1, writes: 1 },
   ]);
+  assert.ok(
+    !workflowRunGates(readWorkflowRun(SESSION_ID, { env })).some(
+      ({ gate }) => gate === "candidates",
+    ),
+  );
+});
+
+test("AC-10: a successor propose on contradiction neither gates nor blocks the implement close", async () => {
+  const { env, specFile } = harness();
+  await openSpecStage(env);
+  observe(env, intentRead("2026-09-15T10:00:02.000Z"));
+  await stage("finish", "spec", {
+    env,
+    outcome: "success",
+    specPath: SPEC_PATH,
+    at: "2026-09-15T10:00:03.000Z",
+  });
+  await stage("start", "design", { env, at: "2026-09-15T10:01:00.000Z" });
+  await stage("finish", "design", {
+    env,
+    outcome: "success",
+    at: "2026-09-15T10:02:00.000Z",
+  });
+  await stage("start", "implement", { env, at: "2026-09-15T10:03:00.000Z" });
+  writeSpecArtifactKey(specFile, "status", "accepted");
+  observe(env, mcpRead("2026-09-15T10:03:30.000Z"));
+  observe(env, propose("2026-09-15T10:03:40.000Z", { specMatch: false }));
+  const closed = await stage("finish", "implement", {
+    env,
+    outcome: "success",
+    at: "2026-09-15T10:04:00.000Z",
+  });
+  assert.deepEqual(
+    closed.gates.map(({ gate, result }) => [gate, result]),
+    [["mcp", "passed"]],
+  );
 });
 
 test("a --skip-intent on a stage with no intent gate is still recorded", async () => {
@@ -637,10 +515,7 @@ test("a signed --skip-mcp is recorded today so issue 03 only adds the evaluation
   });
   assert.deepEqual(
     closed.gates.map(({ gate, result, reason }) => [gate, result, reason]),
-    [
-      ["candidates", "not-applicable", "specification is draft, not accepted"],
-      ["mcp", "skipped", "graph not indexed for this repository"],
-    ],
+    [["mcp", "skipped", "graph not indexed for this repository"]],
   );
 });
 
@@ -726,7 +601,6 @@ test("AC-7: a non-success finish records the open stage's gates as unmet", async
       ["spec", "intent", "passed"],
       // The abandoned implement occurrence, judged and never refused: the Grep
       // it did instead of a Coredoc read is recorded as unmet too (BR-4).
-      ["implement", "candidates", "unmet"],
       ["implement", "mcp", "unmet"],
       ["finish", "intent", "unmet"],
     ],

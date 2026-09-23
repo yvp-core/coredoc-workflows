@@ -21,7 +21,6 @@ import {
 import {
   appendRunHistory,
   applyGates,
-  evaluateCandidatesGate,
   evaluateFinishGate,
   evaluateIntentGate,
   evaluateStageGates,
@@ -142,114 +141,6 @@ test("BR-1 records not-bound on an unenrolled checkout and skipped with a reason
   assert.equal(skipped.reason, "overlay not provisioned yet");
 });
 
-test("BR-2 checks an accepted specification and leaves a draft alone", () => {
-  const context = { bound: true, stage: "implement", specRef: SPEC_REF };
-  assert.equal(
-    evaluateCandidatesGate([], { ...context, spec: { status: "draft" } }).result,
-    "not-applicable",
-  );
-  assert.equal(
-    evaluateCandidatesGate([], {
-      ...context,
-      spec: { status: "accepted", intentChanges: "none" },
-    }).result,
-    "passed",
-  );
-  const missing = evaluateCandidatesGate([SEARCH], {
-    ...context,
-    spec: { status: "accepted" },
-  });
-  assert.equal(missing.result, "unmet");
-  assert.match(missing.message, new RegExp(SPEC_REF.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.equal(
-    evaluateCandidatesGate([], { ...context, spec: { status: "accepted" } })
-      .result,
-    "not-observed",
-  );
-});
-
-test("BR-2 passes on a propose that cited this spec and created a candidate", () => {
-  const context = {
-    bound: true,
-    stage: "implement",
-    specRef: SPEC_REF,
-    spec: { status: "accepted" },
-  };
-  assert.equal(
-    evaluateCandidatesGate(
-      [coredoc("intent_propose", "ok", { specMatch: true, created: 2 })],
-      context,
-    ).result,
-    "passed",
-  );
-  // A propose that created nothing, or failed, is not the batch.
-  assert.equal(
-    evaluateCandidatesGate(
-      [coredoc("intent_propose", "ok", { specMatch: true, created: 0 })],
-      context,
-    ).result,
-    "unmet",
-  );
-  assert.equal(
-    evaluateCandidatesGate(
-      [coredoc("intent_propose", "denied", { specMatch: true, created: 1 })],
-      context,
-    ).result,
-    "unmet",
-  );
-});
-
-test("BR-2 names both refs when the propose cited another repository's identical path", () => {
-  const otherRef = "other/repo:.scratch/gates/spec.md";
-  const gate = evaluateCandidatesGate(
-    [
-      coredoc("intent_propose", "ok", {
-        specMatch: false,
-        created: 1,
-        refs: [otherRef],
-      }),
-    ],
-    {
-      bound: true,
-      stage: "implement",
-      specRef: SPEC_REF,
-      spec: { status: "accepted" },
-    },
-  );
-  assert.equal(gate.result, "unmet");
-  assert.ok(gate.message.includes(otherRef), gate.message);
-  assert.ok(gate.message.includes(SPEC_REF), gate.message);
-  assert.equal(gate.reason, `propose cited ${otherRef}`);
-});
-
-test("BR-2 is forced by `required` and reports an unreadable or absent spec", () => {
-  // `spec accept --finish` applies the check as the precondition of the
-  // draft → accepted transition, so a draft is still checked there.
-  assert.equal(
-    evaluateCandidatesGate([SEARCH], {
-      bound: true,
-      stage: "accept",
-      specRef: SPEC_REF,
-      spec: { status: "draft" },
-      required: true,
-    }).result,
-    "unmet",
-  );
-  assert.equal(
-    evaluateCandidatesGate([SEARCH], {
-      bound: true,
-      stage: "implement",
-      specRef: SPEC_REF,
-      required: true,
-    }).result,
-    "not-applicable",
-  );
-  assert.equal(
-    evaluateCandidatesGate([SEARCH], { bound: false, stage: "implement" }).result,
-    "not-bound",
-  );
-});
-
 test("BR-3 resolves the Coredoc status from local facts only", () => {
   assert.equal(
     resolveCoredocStatus({ explicit: "partial", bound: true, coredocCalls: 3 }),
@@ -357,14 +248,14 @@ test("enforce refuses, warn prints the same text and closes, non-success records
 
 test("the stage gate table evaluates spec, implement and review", () => {
   assert.deepEqual(STAGE_GATES.spec, ["intent"]);
-  assert.deepEqual(STAGE_GATES.implement, ["candidates", "mcp"]);
+  // Implement never carries a candidates gate: intent is accepted when its
+  // source document is approved, not at implementation.
+  assert.deepEqual(STAGE_GATES.implement, ["mcp"]);
+  assert.ok(!STAGE_GATES.implement.includes("candidates"));
   assert.deepEqual(STAGE_GATES.review, ["mcp"]);
-  // BR-2 is never checked at the spec close: the spec is still a draft there.
   assert.deepEqual(
     evaluateStageGates("spec", [coredoc("get_intent_context", "ok")], {
       bound: true,
-      specRef: SPEC_REF,
-      spec: { status: "accepted" },
     }).map(({ gate, result }) => [gate, result]),
     [["intent", "passed"]],
   );
@@ -379,38 +270,24 @@ test("the stage gate table evaluates spec, implement and review", () => {
   assert.deepEqual(
     evaluateStageGates("implement", [SEARCH], {
       bound: true,
-      specRef: SPEC_REF,
-      spec: { status: "draft" },
       skipMcpReason: "graph not indexed",
     }).map(({ gate, result, reason }) => [gate, result, reason]),
-    [
-      ["candidates", "not-applicable", "specification is draft, not accepted"],
-      ["mcp", "skipped", "graph not indexed"],
-    ],
+    [["mcp", "skipped", "graph not indexed"]],
   );
 });
 
 test("gate evidence reports what the observations already satisfy", () => {
-  assert.deepEqual(gateEvidence([]), {
+  assert.deepEqual(gateEvidence([]), { intent: "pending", mcp: "pending" });
+  assert.deepEqual(gateEvidence([coredoc("search_symbols", "ok")]), {
     intent: "pending",
-    candidates: "not-applicable",
-    mcp: "pending",
+    mcp: "satisfied",
   });
   assert.deepEqual(
-    gateEvidence([coredoc("search_symbols", "ok")], {
-      spec: { status: "draft" },
-    }),
-    { intent: "pending", candidates: "not-applicable", mcp: "satisfied" },
-  );
-  assert.deepEqual(
-    gateEvidence(
-      [
-        coredoc("get_intent_context", "ok"),
-        coredoc("intent_propose", "ok", { specMatch: true, created: 1 }),
-      ],
-      { spec: { status: "accepted" } },
-    ),
-    { intent: "satisfied", candidates: "satisfied", mcp: "satisfied" },
+    gateEvidence([
+      coredoc("get_intent_context", "ok"),
+      coredoc("intent_propose", "ok", { specMatch: true, created: 1 }),
+    ]),
+    { intent: "satisfied", mcp: "satisfied" },
   );
   assert.equal(
     gateEvidence([coredoc("get_intent_context", "not_configured")]).intent,
@@ -453,6 +330,8 @@ test("the durable history appends, trims to 200 lines, and reads back its last l
 });
 
 test("route-task shows the previous run's unmet and skipped gates only", () => {
+  // A legacy `candidates` entry persisted by an older run reads back but is
+  // never shown: that gate no longer exists.
   assert.deepEqual(
     unresolvedGates({
       gates: [
@@ -462,15 +341,12 @@ test("route-task shows the previous run's unmet and skipped gates only", () => {
         { stage: "finish", gate: "intent", result: "not-bound" },
       ],
     }),
-    [
-      { stage: "implement", gate: "candidates", result: "unmet" },
-      { stage: "implement", gate: "mcp", result: "skipped", reason: "offline" },
-    ],
+    [{ stage: "implement", gate: "mcp", result: "skipped", reason: "offline" }],
   );
   assert.deepEqual(unresolvedGates(undefined), []);
 });
 
-test("the specification artifact reader takes three keys and nothing else", () => {
+test("the specification artifact reader takes two keys and nothing else", () => {
   const directory = mkdtempSync(join(tmpdir(), "coredoc-spec-artifact-"));
   const path = join(directory, "spec.md");
   writeFileSync(
@@ -479,7 +355,6 @@ test("the specification artifact reader takes three keys and nothing else", () =
   );
   assert.deepEqual(readSpecArtifact(path), {
     status: "draft",
-    intentChanges: "none",
     run: "cdr-20260915-a1b2c3",
   });
   assert.equal(readSpecArtifact(join(directory, "absent.md")), undefined);
@@ -490,7 +365,6 @@ test("the specification artifact reader takes three keys and nothing else", () =
   assert.equal(writeSpecArtifactKey(path, "status", "accepted"), true);
   assert.equal(readSpecArtifact(path).status, "accepted");
   assert.match(readFileSync(path, "utf8"), /# Title\n\nstatus: accepted\n$/);
-  assert.equal(readSpecArtifact(path).intentChanges, "none");
   // A key the document lacks is inserted.
   writeFileSync(join(directory, "bare.md"), "---\nsize: s\n---\n\nbody\n");
   writeSpecArtifactKey(join(directory, "bare.md"), "run", "cdr-20260915-a1b2c3");

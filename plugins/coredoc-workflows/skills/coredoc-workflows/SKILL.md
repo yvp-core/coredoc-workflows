@@ -1,6 +1,6 @@
 ---
 name: coredoc-workflows
-description: Route engineering work through the smallest useful self-contained Coredoc workflow for investigation, planning, adaptive implementation, review, specification, browser QA, benchmarking, security review, learning, or retrospectives. Use when asked to route, orchestrate, or choose a workflow for a task. On a checkout bound to a Coredoc workspace, stages close on observed evidence, not on the agent's report: intent reads, candidates and Coredoc MCP reads are checked, and skips are signed with a reason that the next route shows.
+description: Route engineering work through the smallest useful self-contained Coredoc workflow for investigation, planning, adaptive implementation, review, specification, browser QA, benchmarking, security review, learning, or retrospectives. Use when asked to route, orchestrate, or choose a workflow for a task. On a checkout bound to a Coredoc workspace, stages close on observed evidence, not on the agent's report: intent reads and Coredoc MCP reads are checked, and skips are signed with a reason that the next route shows.
 ---
 
 # Coredoc workflow router
@@ -112,9 +112,7 @@ When that attempt ends, run:
 
 A successful stage close is checked against what the host observed in that
 attempt, on a checkout enrolled to a Coredoc workspace. Closing `spec`
-successfully requires an observed intent-context read; closing `implement`
-successfully requires the candidate batch when the specification is `accepted`
-and does not declare `intentChanges: none`; closing `implement` or `review`
+successfully requires an observed intent-context read; closing `implement` or `review`
 successfully requires at least one observed Coredoc read that answered —
 repository searches (Grep/Glob/Read/`rg`) and Coredoc writes never count. A
 refusal names the remedy and leaves the stage open — satisfy it, or close with
@@ -166,7 +164,12 @@ question in prose and wait.
 Only a fresh affirmative user reply to that decision counts: it both
 accepts the reviewed specification and authorizes the gated implementation
 stage. An acknowledgement, a partial answer, or an acceptance with a requested
-change is a revision request. Open the gated implementation stage, complete its
+change is a revision request. That reply is also the acceptance of a PRD-less
+specification's own intent: before opening the implementation stage, when
+`intent_propose` is visible, propose its verbatim rows and accept them under the
+specification lifecycle's single-approval clause, without asking again; a
+PRD-derived specification accepts nothing. Implementation never accepts intent.
+Open the gated implementation stage, complete its
 read-only preflight, and announce its proof plan. If the reviewed specification
 is still `status: draft`, update it to `status: accepted` as the first repository
 write, before any code or test edit; preserve an unchanged accepted status from a
