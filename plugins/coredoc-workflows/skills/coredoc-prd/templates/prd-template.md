@@ -37,7 +37,7 @@ estimate written into a PRD becomes a commitment nobody made.
 ```markdown
 ---
 status: draft | approved
-intentIds: []        # filled after approval when an intent write capability proposed candidates
+intentIds: []        # filled after approval: approving the PRD proposes and accepts its rows verbatim
 ---
 ```
 

@@ -6,11 +6,14 @@
  * A standalone `spec` run delivers a draft and is parked, not finished
  * (`finish-run --outcome delivered-draft`). When the user approves the draft —
  * usually in a later session — `spec accept --path <spec>` brings that run back
- * so the candidate batch the agent proposes is observed, and `spec accept
- * --finish` applies the candidate check as the precondition of the draft →
- * accepted transition itself. Only then is `status: accepted` written and the
- * single `workflow.run.finished` sent, under the session and capture identity
- * the run started with.
+ * and names the intent step: the approval of a PRD-less specification IS the
+ * acceptance of its own verbatim intent (single approval), so the agent
+ * proposes those rows and accepts them under that approval, with no second
+ * prompt. A PRD-derived specification accepts nothing. The script cannot call
+ * Coredoc MCP itself, so it instructs rather than checks. `spec accept
+ * --finish` then writes `status: accepted` and sends the single
+ * `workflow.run.finished`, under the session and capture identity the run
+ * started with.
  *
  * Every terminal path here goes through one `terminateRun`, so no run can be
  * finished twice.
@@ -30,13 +33,7 @@ import {
   specPathFromRef,
   writeSpecArtifactKey,
 } from "./spec-artifact.mjs";
-import {
-  applyGates,
-  evaluateCandidatesGate,
-  gateMode,
-  runIsBound,
-  skipReason,
-} from "./workflow-gates.mjs";
+import { runIsBound, skipReason } from "./workflow-gates.mjs";
 import {
   completeWorkflowRun,
   listParkedWorkflowRuns,
@@ -45,7 +42,6 @@ import {
   parkWorkflowRun,
   parkedRunEnv,
   reactivateParkedRun,
-  readWorkflowObservations,
   readWorkflowRun,
   recordWorkflowGates,
   terminateRun,
@@ -53,6 +49,17 @@ import {
 
 const ACCEPT_STAGE = "accept";
 const ACCEPT_FINISH_COMMAND = "coredoc-workflows spec accept --finish";
+
+/** What the agent does between `spec accept --path` and `--finish`. */
+export function acceptanceIntentInstruction(specRef) {
+  const source = specRef === undefined ? "the specification" : specRef;
+  return (
+    `The user's approval of ${source} is the acceptance of its intent; do not ask again. ` +
+    `Unless the specification is derived from an approved PRD, propose its own intent rows verbatim ` +
+    `with intent_propose (sources cite ${source}) and accept them with intent_review under that single approval. ` +
+    `A PRD-derived specification accepts nothing. Then run ${ACCEPT_FINISH_COMMAND}.`
+  );
+}
 const VALUE_FLAGS = new Set(["--path", "--reason", "--skip-intent"]);
 
 export function parseSpecArgs(args) {
@@ -170,7 +177,8 @@ export function acceptSpecification(
       status: resumed ? "reactivated" : "no-pending-run",
       runId: found.runId,
       ...(found.specRef === undefined ? {} : { specRef: found.specRef }),
-      proposeBefore: ACCEPT_FINISH_COMMAND,
+      acceptIntentBefore: ACCEPT_FINISH_COMMAND,
+      intent: acceptanceIntentInstruction(found.specRef),
     };
   }
   if (found.location === "other-session") {
@@ -209,7 +217,8 @@ export function acceptSpecification(
     ...(reactivated.specRef === undefined
       ? {}
       : { specRef: reactivated.specRef }),
-    proposeBefore: ACCEPT_FINISH_COMMAND,
+    acceptIntentBefore: ACCEPT_FINISH_COMMAND,
+    intent: acceptanceIntentInstruction(reactivated.specRef),
   };
 }
 
@@ -233,29 +242,23 @@ export async function finishAcceptedSpecification(
     throw new Error(`the specification ${specRef} does not exist at ${absolute}`);
   }
   const bound = runIsBound(state);
-  // The candidate check is the precondition of the draft → accepted transition
-  // itself, so it applies whatever the document currently says.
-  const gated = applyGates(
-    [
-      evaluateCandidatesGate(readWorkflowObservations(sessionId, { env }), {
-        bound,
-        stage: ACCEPT_STAGE,
-        spec: artifact,
-        specRef,
-        required: true,
-        ...(skipIntentReason === undefined ? {} : { reason: skipIntentReason }),
-      }),
-    ],
-    { outcome: "success", bound, mode: gateMode(env) },
-  );
-  // On a refusal nothing is written: the document stays draft and the run stays
-  // reactivated, so the remedy is a propose away.
-  if (gated.refusal !== undefined) throw new Error(gated.refusal);
-  recordWorkflowGates(
-    sessionId,
-    gated.results.map((entry) => ({ ...entry, at })),
-    { env },
-  );
+  // No candidates precondition: the acceptance itself is the intent approval
+  // (the agent accepts the verbatim items it was instructed to), and intent
+  // checks stay advisory. A signed skip is still recorded, so the history says
+  // the intent step was waived.
+  const gates =
+    skipIntentReason === undefined
+      ? []
+      : [
+          {
+            stage: ACCEPT_STAGE,
+            gate: "intent",
+            result: bound ? "skipped" : "not-bound",
+            ...(bound ? { reason: skipIntentReason } : {}),
+            at,
+          },
+        ];
+  if (gates.length > 0) recordWorkflowGates(sessionId, gates, { env });
   // The acceptance is written only once the run has actually closed: a finish
   // that fails closed (an unfinished declared stage, say) must leave the
   // document a draft and the run reactivated.
@@ -264,7 +267,7 @@ export async function finishAcceptedSpecification(
     {
       env,
       cwd,
-      // BR-3 belongs to `finish-run`; this close is gated on its candidates.
+      // BR-3 belongs to `finish-run`; this close is the acceptance itself.
       assessCoredocStatus: false,
       // The one caller allowed to end a run awaiting acceptance.
       acceptanceTerminal: true,
@@ -285,8 +288,7 @@ export async function finishAcceptedSpecification(
     runId: state.runId,
     specRef,
     terminated: terminated.status,
-    gates: gated.results,
-    ...(gated.warned === undefined ? {} : { gatesWarned: true }),
+    gates: gates.map(({ at: _at, ...entry }) => entry),
     capture: finished.capture,
     ...(finished.history === undefined ? {} : { history: finished.history }),
   };

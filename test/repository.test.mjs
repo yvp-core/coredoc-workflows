@@ -39,7 +39,7 @@ test("keeps package and plugin release metadata aligned", async () => {
   const codex = await json(join(pluginRoot, ".codex-plugin", "plugin.json"));
   const claude = await json(join(pluginRoot, ".claude-plugin", "plugin.json"));
 
-  assert.equal(pkg.version, "0.12.3");
+  assert.equal(pkg.version, "0.13.0");
   assert.equal(codex.version, pkg.version);
   assert.equal(claude.version, pkg.version);
   assert.equal(pkg.license, "Apache-2.0");
@@ -101,7 +101,7 @@ test("documents the runtime trust boundary without claiming source reproducibili
 });
 
 test("release tags must match the aligned committed version", async () => {
-  assert.equal(await verifyRelease("v0.12.3"), "0.12.3");
+  assert.equal(await verifyRelease("v0.13.0"), "0.13.0");
   await assert.rejects(verifyRelease("v0.11.1"), /tag does not match/);
 });
 
@@ -146,7 +146,7 @@ test("advertises the optional capture agent without changing OSS release identit
   const claude = await json(join(pluginRoot, ".claude-plugin", "plugin.json"));
 
   for (const manifest of [codex, claude]) {
-    assert.equal(manifest.version, "0.12.3");
+    assert.equal(manifest.version, "0.13.0");
     assert.equal(manifest.repository, "https://github.com/yvp-core/coredoc-workflows");
     assert.match(manifest.description, /capture agent/i);
   }

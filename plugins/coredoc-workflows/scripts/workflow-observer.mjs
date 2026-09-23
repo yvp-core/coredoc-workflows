@@ -197,8 +197,8 @@ export function hookObservation(event, at = new Date().toISOString()) {
       access,
       result,
       ...(unclassified ? { unclassified: true } : {}),
-      // Only the propose call carries evidence a gate can read; everything else
-      // from inputs and responses is deliberately dropped.
+      // Only the propose call keeps reportable evidence (created count, cited
+      // refs); everything else from inputs and responses is deliberately dropped.
       ...(tool === "intent_propose"
         ? {
             created: createdCandidates(event?.tool_response),

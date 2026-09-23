@@ -88,7 +88,6 @@ test("run status distinguishes unattributed, inactive, and live runs", () => {
       // A stage is open, so the evidence is that attempt's own.
       scope: "stage",
       intent: "pending",
-      candidates: "not-applicable",
       mcp: "pending",
     },
     stages: [

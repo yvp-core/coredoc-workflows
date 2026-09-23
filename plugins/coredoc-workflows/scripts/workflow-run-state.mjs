@@ -21,6 +21,8 @@ import { stateRoot } from "./project-key.mjs";
 const SESSION_ID_RE = /^[a-zA-Z0-9_-]{1,128}$/;
 const SAFE_SEGMENT_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const RUN_ID_SEGMENT_RE = /^cdr-\d{8}-[0-9a-f]{6}$/;
+// `candidates` is no longer evaluated; it stays readable so gate entries
+// persisted by older runs still load.
 const GATE_NAMES = new Set(["intent", "candidates", "mcp"]);
 const GATE_RESULTS = new Set([
   "passed",

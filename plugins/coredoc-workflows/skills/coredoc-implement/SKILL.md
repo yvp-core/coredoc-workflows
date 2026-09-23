@@ -1,6 +1,6 @@
 ---
 name: coredoc-implement
-description: Implement an authorized code, deletion, refactor, configuration, dependency, documentation, or generated-output change with the smallest proof that matches its observable risk. Use for ordinary routed changes; use coredoc-tdd only when strict test-first work is explicitly requested. A successful close of the implement stage requires an observed Coredoc MCP read during implementation and, for an accepted specification, its proposed candidates; a run without them needs a signed skip.
+description: Implement an authorized code, deletion, refactor, configuration, dependency, documentation, or generated-output change with the smallest proof that matches its observable risk. Use for ordinary routed changes; use coredoc-tdd only when strict test-first work is explicitly requested. A successful close of the implement stage requires an observed Coredoc MCP read during implementation; a run without one needs a signed skip.
 ---
 
 # Adaptive implementation
@@ -97,13 +97,16 @@ is not always a new test.
    is already accepted from a prior session, preserve that status. An authorized
    continuation of the unchanged approved specification reuses its original
    approval; do not ask for a second approval because the session resumed.
-   When `intent_propose` is visible, run the "After specification acceptance"
-   stage in `<plugin-root>/resources/methodology/intent-context.md` both after a
-   new status write and on resumption. Read back the recorded `proposedIntentIds`
-   and complete only missing work under its single-approval clause. Accept only
-   items whose whole content is verbatim from the approved section and whose
-   source revision is unchanged. Paraphrased items, autonomous runs, and service
-   tokens stay candidates. An accepted file alone is not evidence of a human's
+   Implementation never proposes or accepts intent: the approval of the PRD,
+   the PRD-less specification or the ADR already accepted it. Make no
+   `intent_propose` or `intent_review` call, with two exceptions. When the change
+   must contradict accepted intent, propose a successor candidate
+   (`proposedSuccessorOfId` naming the accepted item), say so, and leave it for
+   a person's explicit acceptance; the accepted item stays in force at its
+   version until then. When a resumed run finds that approval's verbatim items
+   still candidates, complete them under "Resume after an interruption" in
+   `intent-context.md`: that is the approval's own act, not implementation's,
+   and nobody is asked again. An accepted file alone is not evidence of a human's
    authorization: retain the approval and source reference in the handoff.
 
 3. Apply the over-scope gate. If an item has no current observer or consumer,

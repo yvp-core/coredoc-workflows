@@ -181,7 +181,7 @@ shape an `isError` flag can travel on.
 
 | File | Row it covers |
 |---|---|
-| `synthetic-cloud-intent-propose-created.json` | `intent_propose` → `ok`, `created: 1`, cited ref |
+| `synthetic-cloud-intent-propose-created.json` | `intent_propose` → `ok`, `created: 1`, cited ref (observed for reporting; no gate reads it since implement dropped the candidates gate) |
 | `synthetic-cloud-permission-denied.json` | cloud `status: permission_denied` → `denied` |
 | `synthetic-cloud-not-configured.json` | cloud `status: not_configured` → `not_configured` |
 | `synthetic-local-overlay-invalid.json` | local `overlayStatus: invalid` → `invalid` |

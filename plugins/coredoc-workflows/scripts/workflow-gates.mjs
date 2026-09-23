@@ -21,7 +21,6 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path";
 
 import { resolveProjectKey } from "./project-key.mjs";
-import { readSpecArtifact, specAbsolutePath } from "./spec-artifact.mjs";
 import {
   openStageId,
   readWorkflowObservations,
@@ -120,88 +119,6 @@ export function evaluateIntentGate(
     reads.length === 0
       ? {}
       : { reason: `observed get_intent_context results: ${[...new Set(reads.map((event) => event.result ?? "unknown"))].join(", ")}` },
-  );
-}
-
-/**
- * BR-2 — an accepted specification carries its candidates. `required` forces
- * the check independently of the document's current status: `spec accept
- * --finish` applies it as the precondition of the draft → accepted transition
- * itself (BR-5).
- */
-export function evaluateCandidatesGate(
-  observations,
-  {
-    bound = false,
-    reason,
-    stage = "implement",
-    spec,
-    specRef,
-    required = false,
-  } = {},
-) {
-  if (!bound) {
-    return gate(stage, "candidates", "not-bound", "");
-  }
-  if (reason !== undefined) {
-    return gate(stage, "candidates", "skipped", "", { reason });
-  }
-  if (spec === undefined) {
-    return gate(stage, "candidates", "not-applicable", "", {
-      reason: specRef === undefined ? "no specification artifact on the run" : `specification ${specRef} is unreadable`,
-    });
-  }
-  if (!required && spec.status !== "accepted") {
-    return gate(stage, "candidates", "not-applicable", "", {
-      reason: `specification is ${spec.status ?? "unstated"}, not accepted`,
-    });
-  }
-  if (spec.intentChanges === "none") {
-    return gate(stage, "candidates", "passed", "", {
-      reason: "frontmatter declares intentChanges: none",
-    });
-  }
-  const proposals = coredocObservations(observations, "intent_propose");
-  if (
-    proposals.some(
-      (event) =>
-        event.result === "ok" && event.specMatch === true && (event.created ?? 0) >= 1,
-    )
-  ) {
-    return gate(stage, "candidates", "passed", "");
-  }
-  const remedy =
-    `propose the specification's candidate intent with intent_propose sourced at ${specRef}, ` +
-    `declare intentChanges: none in its frontmatter, or close with --skip-intent "<reason>"`;
-  if (observations.length === 0) {
-    return gate(
-      stage,
-      "candidates",
-      "not-observed",
-      `no tool call was observed since the specification stage, so the candidate batch for ${specRef} cannot be confirmed: ${remedy}`,
-    );
-  }
-  const mismatched = proposals.filter((event) => event.specMatch === false);
-  const citedRefs = [
-    ...new Set(mismatched.flatMap((event) => event.refs ?? [])),
-  ];
-  if (citedRefs.length > 0) {
-    return gate(
-      stage,
-      "candidates",
-      "unmet",
-      `the accepted specification ${specRef} has no candidate batch: the observed intent_propose cited ${citedRefs.join(", ")}, not ${specRef}. ${remedy}`,
-      { reason: `propose cited ${citedRefs.join(", ")}` },
-    );
-  }
-  return gate(
-    stage,
-    "candidates",
-    "unmet",
-    `the accepted specification ${specRef} has no candidate batch: ${remedy}`,
-    proposals.length === 0
-      ? {}
-      : { reason: `observed intent_propose results: ${[...new Set(proposals.map((event) => event.result ?? "unknown"))].join(", ")}` },
   );
 }
 
@@ -311,37 +228,33 @@ export function evaluateFinishGate({ coredocStatus, bound = false, reason }) {
 
 /**
  * The gates each stage close evaluates, by stage id. The spec stage is never
- * gated on a Coredoc read: its evidence is the intent read (BR-1).
+ * gated on a Coredoc read: its evidence is the intent read (BR-1). Implement
+ * carries no candidates gate: intent is accepted when its source document is
+ * approved, and implementation only records what it delivers.
  */
 export const STAGE_GATES = Object.freeze({
   spec: Object.freeze(["intent"]),
-  implement: Object.freeze(["candidates", "mcp"]),
+  implement: Object.freeze(["mcp"]),
   review: Object.freeze(["mcp"]),
 });
 
 export const GATE_EVALUATORS = Object.freeze({
   intent: evaluateIntentGate,
-  candidates: evaluateCandidatesGate,
   mcp: evaluateMcpGate,
 });
 
 /**
  * The gate results for one stage close, in `STAGE_GATES` order.
  *
- * `observations` is the closing stage attempt's own (LIM-1). BR-2 is the one
- * gate with a wider window — the candidate batch may be proposed any time from
- * the specification stage onward — so it reads `candidatesObservations`.
+ * `observations` is the closing stage attempt's own (LIM-1).
  */
 export function evaluateStageGates(
   stageId,
   observations,
   {
     bound = false,
-    spec,
-    specRef,
     skipIntentReason,
     skipMcpReason,
-    candidatesObservations,
     stderr = process.stderr,
   } = {},
 ) {
@@ -350,11 +263,9 @@ export function evaluateStageGates(
     const evaluate = GATE_EVALUATORS[name];
     if (evaluate === undefined) continue;
     results.push(
-      evaluate(name === "candidates" ? candidatesObservations ?? observations : observations, {
+      evaluate(observations, {
         bound,
         stage: stageId,
-        spec,
-        specRef,
         ...(name === "mcp"
           ? skipMcpReason === undefined
             ? {}
@@ -415,42 +326,18 @@ export function applyGates(
   return { results: normalized, warned: refusal };
 }
 
-/**
- * BR-2's evidence window: the candidate batch is proposed once the user accepts
- * the specification, which can happen in any stage from the specification stage
- * onward, so it is read from that occurrence's start rather than from the
- * closing attempt. A run with no specification stage is read whole.
- */
-function observationsSinceSpecStage(sessionId, state, env) {
-  const events = readWorkflowObservations(sessionId, { env });
-  const startedAt = state.stageProgress?.spec?.startedAt;
-  if (startedAt === undefined) return events;
-  const from = Date.parse(startedAt);
-  return events.filter((event) => Date.parse(event.at) >= from);
-}
-
 /** Every gate of one stage of one run, judged on what is on disk right now. */
 export function evaluateRunStageGates(
   sessionId,
   state,
   stageId,
-  { env = process.env, cwd = process.cwd(), skipIntentReason, skipMcpReason } = {},
+  { env = process.env, skipIntentReason, skipMcpReason } = {},
 ) {
-  const { specRef } = state;
   return evaluateStageGates(
     stageId,
     readWorkflowObservations(sessionId, { env, stageId }),
     {
       bound: runIsBound(state),
-      specRef,
-      ...(specRef === undefined
-        ? {}
-        : {
-            spec: readSpecArtifact(
-              specAbsolutePath(specRef, { repoRoot: state.repoRoot, cwd }),
-            ),
-          }),
-      candidatesObservations: observationsSinceSpecStage(sessionId, state, env),
       ...(skipIntentReason === undefined ? {} : { skipIntentReason }),
       ...(skipMcpReason === undefined ? {} : { skipMcpReason }),
     },
@@ -570,7 +457,7 @@ export function lastRunHistory(projectKey, { env = process.env } = {}) {
  * compacted or resumed session is re-anchored with. Evidence, not a verdict:
  * it never refuses anything and never writes.
  */
-export function gateEvidence(observations, { spec } = {}) {
+export function gateEvidence(observations) {
   const coredoc = coredocObservations(observations);
   const reads = coredoc.filter((event) => event.tool === "get_intent_context");
   return {
@@ -579,18 +466,6 @@ export function gateEvidence(observations, { spec } = {}) {
       : reads.some((event) => event.result === "not_configured")
         ? "not-configured"
         : "pending",
-    candidates:
-      spec?.status === "accepted" && spec.intentChanges !== "none"
-        ? coredoc.some(
-            (event) =>
-              event.tool === "intent_propose" &&
-              event.result === "ok" &&
-              event.specMatch === true &&
-              (event.created ?? 0) >= 1,
-          )
-          ? "satisfied"
-          : "pending"
-        : "not-applicable",
     // The same predicate BR-4's gate is judged on, never re-derived here.
     mcp: hasCoredocRead(observations) ? "satisfied" : "pending",
   };
@@ -622,6 +497,10 @@ export function lastRunAddendum({
 /** What `route-task` shows before routing: the previous run's open questions. */
 export function unresolvedGates(line) {
   return (Array.isArray(line?.gates) ? line.gates : []).filter(
-    (entry) => entry.result === "unmet" || entry.result === "skipped",
+    (entry) =>
+      // "candidates" is a legacy gate that no longer exists; drop stale
+      // entries so history from an older run can't surface it.
+      entry.gate !== "candidates" &&
+      (entry.result === "unmet" || entry.result === "skipped"),
   );
 }

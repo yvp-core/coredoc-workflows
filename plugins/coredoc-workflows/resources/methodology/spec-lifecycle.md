@@ -8,7 +8,8 @@ ordinary session needs none of it: the draft is the handoff.
 
 Keep `status: draft` through plan review. In a gated routed workflow, the fresh
 affirmative post-review reply both accepts the reviewed
-specification and authorizes implementation. After its read-only preflight and
+specification and authorizes implementation; for a PRD-less specification that
+same reply is the acceptance of its intent (single approval, see below). After its read-only preflight and
 proof-plan announcement, the implementation stage changes a draft frontmatter to
 `status: accepted` as its first repository write, before any code or test edit;
 it preserves an unchanged accepted status from a prior session. A requested
@@ -28,8 +29,8 @@ two are the coordinator's commands; never run them yourself.
 
 `delivered-draft` parks the run for up to 14 days awaiting approval, and the
 draft carries `run: <runId>` back to it. When approval arrives, usually in a
-later session, do not edit `status:` by hand: reopen the parked run, propose the
-candidate intent as below, and let the acceptance command make the transition.
+later session, do not edit `status:` by hand: reopen the parked run, accept the
+specification's own intent as below, and let the acceptance command make the transition.
 These two are yours to run:
 
 ```text
@@ -37,30 +38,28 @@ These two are yours to run:
 <plugin-root>/bin/coredoc-workflows spec accept --finish
 ```
 
-`--finish` writes `status: accepted` itself and refuses until a candidate batch
-citing this specification was observed; pass `--skip-intent "<reason>"` only
-when there genuinely can be none, for example when the product intent lives in
-an approved PRD whose rows the specification cites. If the user drops the
-draft, run `spec abandon --reason "<text>"`.
+`spec accept --path` returns the intent instruction; `--finish` then writes
+`status: accepted` itself. It checks for no candidates and blocks nothing: the
+approval is the acceptance, so propose and accept the verbatim items before
+running it. `--skip-intent "<reason>"` records a signed waiver of the intent
+step. If the user drops the draft, run `spec abandon --reason "<text>"`.
 
-### Intent write stage
+### Intent acceptance at approval
 
-If the specification has reached `status: accepted`, it introduces or changes
-product intent of its own (no PRD owns it), and this session has a cloud
-Coredoc intent write capability — `intent_propose` is visible — run the "After
-specification acceptance" write stage of
-`<plugin-root>/resources/methodology/intent-context.md`: propose that intent as
-one candidate batch, sourced at the repo-qualified spec path and stable section
-id, and report each `itemId`, `outcome`, and `version` as `proposedIntentIds`
-beside `intentIds` and `intentVersions`. Proposals are candidates; anchoring or
-recording is never yours. The single exception is that write stage's
-single-approval clause: when the acting human accepts the specification in this
-session, accept only items whose whole content is verbatim from the accepted
-section; every paraphrased item, and every autonomous or service-token run,
-stays a candidate. A draft specification proposes nothing. A specification
-written from a PRD proposes nothing either: the PRD's approval owns the
-candidates, and the specification carries the PRD's `intentIds` through
-unchanged. When no intent capability is present, proceed from repository
+When the person approves the specification, it introduces or changes product
+intent of its own (no PRD owns it), and this session has a cloud Coredoc intent
+write capability — `intent_propose` is visible — run the "At document approval"
+write stage of `<plugin-root>/resources/methodology/intent-context.md` at that
+approval: propose that intent as one batch, sourced at the repo-qualified spec
+path and stable section id, then accept the verbatim items under its
+single-approval clause without asking again, and report each `itemId`,
+`outcome`, and `version` as `proposedIntentIds` beside `intentIds` and
+`intentVersions`. Every paraphrased item, and every autonomous or service-token
+run, stays a candidate; anchoring or recording is never yours. A draft
+specification proposes nothing. A specification written from a PRD proposes
+and accepts nothing: the PRD's approval accepted its intent, and the
+specification carries the PRD's `intentIds` through unchanged. Implementation
+never accepts intent. When no intent capability is present, proceed from repository
 evidence alone and do not mention intent context in the output.
 
 ### Privacy gate

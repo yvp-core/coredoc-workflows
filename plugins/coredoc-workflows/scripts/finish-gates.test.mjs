@@ -419,7 +419,6 @@ test("AC-4d: a compacted session is re-anchored with the gate evidence on disk",
     // The open stage's own attempt, which is what its close will be judged on.
     scope: "stage",
     intent: "pending",
-    candidates: "not-applicable",
     mcp: "satisfied",
   });
   assert.equal(status.bound, true);
@@ -437,12 +436,6 @@ test("AC-4d: a compacted session is re-anchored with the gate evidence on disk",
   );
   assert.equal(closed.status, "finished");
   assert.deepEqual(closed.gates, [
-    {
-      stage: "implement",
-      gate: "candidates",
-      result: "not-applicable",
-      reason: "no specification artifact on the run",
-    },
     // The read the status block reported as `mcp: satisfied` is the same
     // evidence BR-4's gate passes the close on.
     { stage: "implement", gate: "mcp", result: "passed", searches: 0, writes: 0 },

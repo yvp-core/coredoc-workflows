@@ -1,6 +1,6 @@
 {
   "name": "coredoc-workflows",
-  "version": "0.12.3",
+  "version": "0.13.0",
   "description": "Self-contained engineering workflows with read-only Coredoc context, explicit peer adapters, bundled macOS ARM browser QA, and an opt-in macOS and Linux capture agent.",
   "author": {
     "name": "Coredoc team"
