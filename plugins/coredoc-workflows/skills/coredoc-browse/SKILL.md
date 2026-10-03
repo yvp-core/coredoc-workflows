@@ -34,10 +34,11 @@ show JS errors and failed requests. Set a dialog's response before the action
 that opens it (`B dialog-accept [text]` or `B dialog-dismiss`); `B dialog` shows
 what appeared.
 
-Enter credentials, including proxy credentials, only when the user explicitly
-authorizes it, and never echo or log them. Prefer `@e` references from the
-latest snapshot over guessed selectors. The daemon keeps cookies, tabs and
-logins between calls; stop it with `B stop` when that state is unnecessary.
+Enter credentials only when the user explicitly authorizes it. Proxy
+credentials must come from an explicitly authorized environment variable and
+must never be logged. Prefer `@e` references from the latest snapshot over
+guessed selectors. The daemon keeps cookies, tabs and logins between calls;
+stop it with `B stop` when that state is unnecessary.
 
 ## Coredoc overlay
 

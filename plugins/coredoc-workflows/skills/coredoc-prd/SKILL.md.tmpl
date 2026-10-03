@@ -1,6 +1,6 @@
 ---
 name: coredoc-prd
-description: Use whenever the user asks to write, draft, or improve a PRD, product brief, feature brief, or product spec, or to spec a feature from the product side. Interviews the product owner to establish the goal, decisions, user stories, edge cases, non-goals, and open questions with stable row ids and claim provenance; records unknowns instead of answering engineering questions, and keeps approval, intent proposals, and external destinations behind an explicit fresh reply.
+description: Use whenever the user asks to write, draft, or improve a PRD, product brief, feature brief, or product spec, or to spec a feature from the product side. Interviews the product owner to establish the goal, decisions, user stories, edge cases, non-goals, and open questions with stable row ids and claim provenance.
 ---
 
 # Product requirements document
@@ -59,51 +59,25 @@ the parts ship independently, test independently, or carry genuinely different
 rules, and a split inside a one-item request is a question for the user, not a
 call the draft makes.
 
-### 2. State the verification contract
-
-Tell the user how this gets checked before spending their time: the clarity
-check in `references/interview.md` runs before drafting; the draft is a
-`status: draft` file they can read and revise; and only a fresh explicit reply
-marks it approved, proposes intent, or sends it anywhere external.
-
-### 3. Interview
+### 2. Interview
 
 Read `references/interview.md`, the method, question groups and how to ask,
 before the first question.
 
-- **Find the goal, not the task.** The problem, who it is for, who it is
-  explicitly not for; ask what the user would not know to ask.
-- **Ask with options where the answer set is knowable**, generated from what
-  was read or said, with the source named in the line before the call; prose
-  where no option set holds the answer honestly. Use `AskUserQuestion` as the
-  host interaction contract resolves it, with its numbered-text fallback.
-- **Batch coverage, single-thread decisions.** Factual gaps go out in one
-  grouped round; each consequential decision comes alone with the alternative
-  and the trade-off. One full clarifying round runs before drafting. Never
-  re-ask what was answered. From the second round on, offer the way out:
-  answer to improve completeness, or draft now.
 - **Sort every claim by who can settle it.** Intent is the user's to decide;
-  how the system behaves today is not. A relayed claim carries `[unverified]`
-  and an `OQ-n` for Engineering. A ruling in the request, "we decided X" or
-  "we rejected Y", is a `D-n` row with the decider as `PM` or the requester's
+  how the system behaves today is not. A ruling in the request, "we decided X"
+  or "we rejected Y", is a `D-n` row with the decider as `PM` or the requester's
   role; never open an `OQ` asking who decided.
-- **Current vs desired, and what must not move**, whenever something that
-  already ships changes: both sides of the delta, and the guardrail as an
-  `NG-n` row.
-- **Show inferences as inferences**, and let the user override. "Use your best
-  judgment" proceeds and records the assumption in Assumptions.
 - **A non-answer is not an answer.** "None of these" is recorded as a decision;
   "not sure" gets one narrower re-ask, then an `OQ-n` row.
-- **Sign-off zones** are the profile's list plus any open concern or blocking
-  design gap; the user rules on them rather than getting a filled-in guess.
 
-### 4. Summarise back, then check clarity
+### 3. Summarise back, then check clarity
 
 The problem, who it is for and not for, decisions with the alternative each
 beat, assumptions, what is out. The user confirms before drafting; then run the
 clarity check.
 
-### 5. Draft, then revise
+### 4. Draft, then revise
 
 Follow `templates/prd-template.md` exactly, including its variants. Write the
 draft as `status: draft` to the path the user named or the documented PRD
@@ -125,7 +99,7 @@ Keep the PRD proportional to the brief. No quotas, but:
   "draft it now"; offer them in the reply, outside the PRD, as candidates the
   requester can add.
 
-### 6. Approval
+### 5. Approval
 
 Ask for approval explicitly and wait. Silence, a follow-up question, or "looks
 good so far" is not approval; a fresh affirmative reply is. Only then set
@@ -137,7 +111,7 @@ Before any write, read the draft once for anything that must not travel: a
 credential, token, connection string, or personal data from a source. Where the
 PRD needs a setting, name the setting, not the value.
 
-### 7. After approval
+### 6. After approval
 
 When `intent_propose` is visible, the owner's approval is the acceptance of the
 PRD's intent: run the "At document approval" write stage of
@@ -147,7 +121,7 @@ PRD path and row id; accept the verbatim ones without asking again, and record
 each returned slug beside its row and in the frontmatter's `intentIds`. A draft
 proposes nothing.
 
-### 8. Reply
+### 7. Reply
 
 Report where the PRD was written and what changed, then close with **What I
 need from you**, at most five lines: the blocking `OQ`s addressed to the
