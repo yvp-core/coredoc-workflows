@@ -13,9 +13,10 @@ For visual or interaction quality, also apply
 `<plugin-root>/resources/methodology/design-review.md`.
 
 Before an authorized cache write, resolve the directory rather than composing it:
-`COREDOC_WORKFLOW_CACHE=$(<plugin-root>/bin/coredoc-workflows project-key)` returns
-`~/.coredoc/<project-key>/cache`. Everything under it is disposable; nothing that
-must survive belongs there.
+`<plugin-root>/bin/coredoc-workflows project-key` prints
+`~/.coredoc/<project-key>/cache`, written `$COREDOC_WORKFLOW_CACHE` here. Each
+tool call starts a fresh shell, so use the printed path literally. Everything
+under it is disposable; nothing that must survive belongs there.
 
 ## Coredoc overlay
 
@@ -255,14 +256,18 @@ Run full mode, then load `baseline.json` from a previous run. Diff: which issues
 
 Note the start time. The conversation is the default issue register. Only when
 the user requested saved evidence or a durable report, use
-`<plugin-root>/resources/qa-report-template.md` and a new authorized report
-directory, so earlier evidence is never overwritten. Otherwise use a temporary
-evidence directory:
+`<plugin-root>/resources/qa-report-template.md` and start the command below
+with `REPORT_DIR=<dir>`: their path or a new directory under
+`$COREDOC_WORKFLOW_CACHE/qa-reports/`, so earlier evidence is never
+overwritten. Otherwise it uses a temporary evidence directory:
 
 ```bash
 QA_EVIDENCE_DIR="${REPORT_DIR:-${TMPDIR:-/tmp}/coredoc-workflows-qa}"
-mkdir -p "$QA_EVIDENCE_DIR/screenshots"
+mkdir -p "$QA_EVIDENCE_DIR/screenshots" && echo "$QA_EVIDENCE_DIR"
 ```
+
+Each tool call starts a fresh shell: write the printed path in place of
+`$QA_EVIDENCE_DIR` in later commands.
 
 ### Phase 2: Authenticate (if needed)
 
@@ -313,20 +318,13 @@ B console --errors
 ```
 
 Then follow the **per-page exploration checklist** in
-`<plugin-root>/resources/qa-issue-taxonomy.md`:
+`<plugin-root>/resources/qa-issue-taxonomy.md`. For its responsiveness item:
 
-1. **Visual scan** — Look at the annotated screenshot for layout issues
-2. **Interactive elements** — Click buttons, links, controls. Do they work?
-3. **Forms** — Fill and submit. Test empty, invalid, edge cases
-4. **Navigation** — Check all paths in and out
-5. **States** — Empty state, loading, error, overflow
-6. **Console** — Any new JS errors after interactions?
-7. **Responsiveness** — Check mobile viewport if relevant:
-   ```bash
-   B viewport 375x812
-   B screenshot "$QA_EVIDENCE_DIR/screenshots/page-mobile.png"
-   B viewport 1280x720
-   ```
+```bash
+B viewport 375x812
+B screenshot "$QA_EVIDENCE_DIR/screenshots/page-mobile.png"
+B viewport 1280x720
+```
 
 ### Phase 5: Document
 
@@ -467,7 +465,7 @@ something regressed.
 ## Phase 10: Report
 
 Report findings in the conversation by default. If the user requested an
-artifact, use the bundled report template and save it to their path or
-`$COREDOC_WORKFLOW_CACHE/qa-reports/` as `qa-report-{domain}-{YYYY-MM-DD}.md`,
-keeping any `baseline.json` beside it. Include before/after evidence, validation
-commands, changed files, unresolved issues, and baseline-to-final health delta.
+artifact, save it in Phase 1's `REPORT_DIR` as
+`qa-report-{domain}-{YYYY-MM-DD}.md`, keeping any `baseline.json` beside it.
+Include before/after evidence, validation commands, changed files, unresolved
+issues, and baseline-to-final health delta.

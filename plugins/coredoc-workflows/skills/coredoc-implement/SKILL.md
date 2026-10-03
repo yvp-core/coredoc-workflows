@@ -87,13 +87,14 @@ proof appropriate to the change; that proof is not always a new test.
    first repository write, before any code or test edit. If an unchanged artifact
    is already accepted from a prior session, preserve that status. An authorized
    continuation of the unchanged approved specification reuses its original
-   approval. Implementation never proposes or accepts intent, except in two
-   cases. When the change must contradict accepted intent, propose a successor
-   candidate (`proposedSuccessorOfId` naming the accepted item), say so, and
-   leave it for a person's explicit acceptance. When a resumed run finds the
-   approval's verbatim items still candidates, complete them under "Resume
-   after an interruption" in `intent-context.md` without asking again. Retain
-   the approval and source reference in the handoff.
+   approval. Implementation never proposes or accepts intent, with one
+   exception: when the change must contradict accepted intent, propose a
+   successor candidate (`proposedSuccessorOfId` naming the accepted item), say
+   so, and leave it for a person's explicit acceptance. When a resumed run finds
+   the approval's verbatim items still candidates, complete them under "Resume
+   after an interruption" in `intent-context.md` without asking again: that is
+   the approval's own act, not implementation's. Retain the approval and source
+   reference in the handoff.
 
 3. Apply the over-scope gate. If an item has no current observer or consumer,
    protects an unreachable state, duplicates an authoritative implementation,
