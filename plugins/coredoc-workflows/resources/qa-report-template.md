@@ -11,7 +11,6 @@
 | **Duration** | {DURATION} |
 | **Pages visited** | {COUNT} |
 | **Screenshots** | {COUNT} |
-| **Framework** | {DETECTED or "Unknown"} |
 
 ## Health score: {SCORE}/100
 

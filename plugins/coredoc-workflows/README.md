@@ -51,7 +51,8 @@ cases, guardrails, and open questions, each with a stable row id), and the spec
 consumes it, citing those rows instead of restating them, verifying the PRD's
 `[unverified]` claims against the repository, and answering its engineering
 questions. The shared contract lives once in
-`resources/methodology/prd-spec-contract.md` and is built into both skills.
+`resources/methodology/prd-spec-contract.md`: it is built into `coredoc-prd`,
+and `coredoc-spec` reads it when a PRD is its input.
 
 Learning and retrospective output stays in the conversation by default. Nothing
 is captured automatically, and persistence requires an explicit target from the
@@ -439,8 +440,9 @@ semantic capture and native OTLP point to `http://127.0.0.1:43181`; host setting
 never contain the cloud bearer. A Codex `SessionStart` hook may provide optional
 repository attribution, but native and workspace-level delivery does not wait
 for that claim. A missing repository or unmapped remote remains workspace-scoped
-instead of being guessed. No repository-local capture file is created or
-required.
+instead of being guessed. A schema-1 policy creates no repository-local capture
+file. Schema-2 setup writes a marker-owned `.claude/settings.local.json` in each
+listed checkout and removes it when the policy drops that checkout.
 
 Codex workflow boundary commands (`coredoc-workflows route-task`,
 `coredoc-workflows stage-run`, and `coredoc-workflows finish-run`) must run
