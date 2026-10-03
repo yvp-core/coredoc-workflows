@@ -465,7 +465,8 @@ something regressed.
 ## Phase 10: Report
 
 Report findings in the conversation by default. If the user requested an
-artifact, save it in Phase 1's `REPORT_DIR` as
+artifact, save it in Phase 1's `REPORT_DIR` (if none was set, a new directory
+under `$COREDOC_WORKFLOW_CACHE/qa-reports/`) as
 `qa-report-{domain}-{YYYY-MM-DD}.md`, keeping any `baseline.json` beside it.
 Include before/after evidence, validation commands, changed files, unresolved
 issues, and baseline-to-final health delta.

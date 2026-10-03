@@ -7,6 +7,7 @@ meaningful branch comparison.
 
 ```bash
 BASE_BRANCH=$({ gh pr view --json baseRefName -q .baseRefName || glab mr view -F json | jq -r .target_branch; } 2>/dev/null)
+git rev-parse --verify -q "origin/$BASE_BRANCH" >/dev/null || git rev-parse --verify -q "$BASE_BRANCH" >/dev/null || BASE_BRANCH=
 [ -z "$BASE_BRANCH" ] && BASE_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
 [ -z "$BASE_BRANCH" ] && git rev-parse --verify origin/main >/dev/null 2>&1 && BASE_BRANCH=main
 [ -z "$BASE_BRANCH" ] && git rev-parse --verify origin/master >/dev/null 2>&1 && BASE_BRANCH=master
