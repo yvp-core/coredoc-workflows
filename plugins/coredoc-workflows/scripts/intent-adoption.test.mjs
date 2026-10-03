@@ -29,39 +29,6 @@ const ADAPTERS = [
 
 const skill = (name) => readFile(join(SKILLS_ROOT, name, "SKILL.md"), "utf8");
 
-// `--project` is a required option on every `coredoc intent` subcommand, and the
-// hosts truncate the MCP tool descriptions, so this methodology is the agent's
-// only complete copy of the parameter names the tools declare.
-test("methodology shows runnable CLI invocations and the MCP parameter names", async () => {
-  const body = await readFile(METHODOLOGY_PATH, "utf8");
-
-  const invocations = body
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("coredoc intent "));
-  assert.ok(invocations.length >= 2, "show more than one CLI invocation");
-  for (const invocation of invocations) {
-    assert.match(invocation, /--project /, invocation);
-  }
-
-  for (const parameter of [
-    "intentIds",
-    "query",
-    "nodeIds",
-    "domain",
-    "feature",
-    "includeCandidates",
-    "effectivity",
-    "observed",
-    "limit",
-    // Local-only: the cloud tool refuses both.
-    "detailLevel",
-    "format",
-  ]) {
-    assert.match(body, new RegExp(`\`${parameter}\``), parameter);
-  }
-});
-
 test("intent reads stay out of the router and every other skill", async () => {
   const names = (await readdir(SKILLS_ROOT, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory())
@@ -70,7 +37,7 @@ test("intent reads stay out of the router and every other skill", async () => {
   const leaked = [];
   for (const name of names) {
     if (ADAPTERS.includes(name)) continue;
-    if (/get_intent_context|coredoc\s+intent\s+context/.test(await skill(name))) leaked.push(name);
+    if (/get_intent_context|intent_read/.test(await skill(name))) leaked.push(name);
   }
   assert.deepEqual(leaked, [], "only the six lifecycle adapters may run an intent read");
 });

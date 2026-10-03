@@ -1,5 +1,5 @@
 /**
- * Normalise what a Coredoc MCP tool answered into one of six results.
+ * Normalise what a Coredoc MCP tool answered into one of five results.
  *
  * Pure: the hook name, the tool's compact name, the raw `tool_response` and,
  * for the action-dispatching tools, `tool_input.action`. Nothing is retained.
@@ -19,13 +19,6 @@ export const STATUS_RESULTS = Object.freeze({
   error: "error",
   permission_denied: "denied",
   not_configured: "not_configured",
-  invalid: "invalid",
-});
-
-/** The local overlay answers its own status instead (get-intent-context.ts). */
-export const OVERLAY_STATUS_RESULTS = Object.freeze({
-  invalid: "invalid",
-  not_configured: "not_configured",
 });
 
 /**
@@ -36,14 +29,19 @@ export const OVERLAY_STATUS_RESULTS = Object.freeze({
  * - `allKeys`: every one of these keys is present.
  * - `itemsWithOutcome`: `items` is an array whose entries each carry `outcome`.
  * - `byAction`: the marker depends on `tool_input.action`.
+ * - `text`: the tool answers its document as a non-empty Markdown text block
+ *   (no JSON body); a JSON body never matches it.
  */
 export const POSITIVE_MARKERS = Object.freeze({
-  get_intent_context: { anyArray: ["matches", "entries", "items", "ids"] },
+  get_intent_context: { anyArray: ["matches", "entries"] },
+  intent_read: { text: true }, // answers its document as Markdown text (intent.tools.ts respond)
   intent_propose: { itemsWithOutcome: true },
   intent_review: { anyArray: ["decisions"] },
   intent_release: { anyArray: ["entries"], anyKey: ["contentHash", "event"] },
-  intent_anchor: { anyArray: ["anchors"] },
-  intent_tree: { anyKey: ["id"] },
+  intent_anchor: { anyKey: ["anchor", "target"] },
+  intent_tree: {
+    anyKey: ["domain", "feature", "dimension", "seed", "relation", "deleted"],
+  },
   intent_handoff: {
     byAction: {
       get: { allKeys: ["id", "version"] },
@@ -100,40 +98,33 @@ export const RESULT_TABLE = Object.freeze([
     result: "not_configured",
   },
   {
-    row: "cloud intent status invalid",
-    sample: {
-      hookName: "PostToolUse",
-      tool: "intent_review",
-      toolResponse: [{ type: "text", text: '{"status":"invalid"}' }],
-    },
-    result: "invalid",
-  },
-  {
-    row: "local overlayStatus invalid",
-    sample: {
-      hookName: "PostToolUse",
-      tool: "get_intent_context",
-      toolResponse: [{ type: "text", text: '{"overlayStatus":"invalid","items":[]}' }],
-    },
-    result: "invalid",
-  },
-  {
-    row: "local overlayStatus not_configured",
-    sample: {
-      hookName: "PostToolUse",
-      tool: "get_intent_context",
-      toolResponse: [{ type: "text", text: '{"overlayStatus":"not_configured","items":[]}' }],
-    },
-    result: "not_configured",
-  },
-  {
     row: "intent tool with its positive marker",
     sample: {
       hookName: "PostToolUse",
       tool: "get_intent_context",
-      toolResponse: [{ type: "text", text: '{"overlayStatus":"ready","items":[]}' }],
+      toolResponse: [{ type: "text", text: '{"matches":[]}' }],
     },
     result: "ok",
+  },
+  {
+    row: "intent_read Markdown answer",
+    sample: {
+      hookName: "PostToolUse",
+      tool: "intent_read",
+      toolResponse: [
+        { type: "text", text: "# Intent tree: 1 domains, 0 features, 0 accepted items" },
+      ],
+    },
+    result: "ok",
+  },
+  {
+    row: "intent_read JSON answer without a status",
+    sample: {
+      hookName: "PostToolUse",
+      tool: "intent_read",
+      toolResponse: [{ type: "text", text: '{"unexpected":true}' }],
+    },
+    result: "unknown",
   },
   {
     row: "intent tool without a marker",
@@ -229,8 +220,8 @@ function hasPositiveMarker(tool, body, action) {
 }
 
 /**
- * `ok | error | denied | not_configured | invalid | unknown` for one observed
- * Coredoc tool call. An intent tool never reaches `ok` without its marker.
+ * `ok | error | denied | not_configured | unknown` for one observed Coredoc
+ * tool call. An intent tool never reaches `ok` without its marker.
  */
 export function normalizeCoredocResult({
   hookName,
@@ -243,15 +234,18 @@ export function normalizeCoredocResult({
   if (!isIntentTool(tool)) return "ok";
 
   const body = parsedAnswer(toolResponse);
-  if (!body) return "unknown";
+  if (!body) {
+    const text = contentBlocks(toolResponse).find(
+      (entry) => entry?.type === "text",
+    )?.text;
+    return POSITIVE_MARKERS[tool]?.text === true &&
+      typeof text === "string" &&
+      text.trim() !== ""
+      ? "ok"
+      : "unknown";
+  }
   if (typeof body.status === "string" && STATUS_RESULTS[body.status]) {
     return STATUS_RESULTS[body.status];
-  }
-  if (
-    typeof body.overlayStatus === "string" &&
-    OVERLAY_STATUS_RESULTS[body.overlayStatus]
-  ) {
-    return OVERLAY_STATUS_RESULTS[body.overlayStatus];
   }
   return hasPositiveMarker(tool, body, action) ? "ok" : "unknown";
 }

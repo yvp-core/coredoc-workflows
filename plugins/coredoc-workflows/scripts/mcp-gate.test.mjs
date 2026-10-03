@@ -240,7 +240,7 @@ test("each read that answered ok satisfies the gate on its own", async () => {
     coredocEvent(
       "intent_anchor",
       { action: "preview", repoKey: PROJECT_KEY },
-      '{"anchors":[]}',
+      '{"target":{},"graphVersionId":"g1","existing":null,"wouldCreate":true,"drifted":false}',
     ),
     "2026-09-15T11:01:00.000Z",
   );
@@ -249,6 +249,22 @@ test("each read that answered ok satisfies the gate on its own", async () => {
     ["intent_anchor", "read", "ok"],
   );
   assert.equal((await closeWith(env, "implement", [preview])).status, "finished");
+
+  // `intent_read` answers its document as Markdown text, not JSON.
+  const readEnv = harness();
+  const tree = observed(
+    coredocEvent(
+      "intent_read",
+      { action: "tree" },
+      "# Intent tree: 1 domains, 0 features, 0 accepted items",
+    ),
+    "2026-09-15T11:01:00.000Z",
+  );
+  assert.deepEqual(
+    [tree.tool, tree.access, tree.result],
+    ["intent_read", "read", "ok"],
+  );
+  assert.equal((await closeWith(readEnv, "implement", [tree])).status, "finished");
 });
 
 test("a mixed stage passes on its one read and still counts what else it did", async () => {

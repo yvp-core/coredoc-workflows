@@ -88,10 +88,13 @@ test("a skip reason is mandatory and bounded", () => {
 
 test("BR-1 passes only on an intent read that answered ok", () => {
   const context = { bound: true, stage: "spec" };
-  assert.equal(
-    evaluateIntentGate([coredoc("get_intent_context", "ok")], context).result,
-    "passed",
-  );
+  for (const tool of ["get_intent_context", "intent_read"]) {
+    assert.equal(
+      evaluateIntentGate([coredoc(tool, "ok")], context).result,
+      "passed",
+      tool,
+    );
+  }
   for (const result of ["denied", "error", "invalid", "unknown"]) {
     const gate = evaluateIntentGate(
       [coredoc("get_intent_context", result)],
@@ -99,7 +102,7 @@ test("BR-1 passes only on an intent read that answered ok", () => {
     );
     assert.equal(gate.result, "unmet", result);
     assert.match(gate.reason, new RegExp(result));
-    assert.match(gate.message, /run get_intent_context/);
+    assert.match(gate.message, /read intent with intent_read or get_intent_context/);
     assert.match(gate.message, /--skip-intent "<reason>"/);
   }
 });
@@ -109,6 +112,10 @@ test("BR-1 tells not-configured, not-observed and a plain miss apart", () => {
   assert.equal(
     evaluateIntentGate([coredoc("get_intent_context", "not_configured")], context)
       .result,
+    "not-configured",
+  );
+  assert.equal(
+    evaluateIntentGate([coredoc("intent_read", "not_configured")], context).result,
     "not-configured",
   );
   // Zero observations of any type: the host saw nothing, which is not the same
@@ -208,7 +215,9 @@ test("enforce refuses, warn prints the same text and closes, non-success records
     bound: true,
     mode: "enforce",
   });
-  assert.ok(enforced.refusal.includes("run get_intent_context"));
+  assert.ok(
+    enforced.refusal.includes("read intent with intent_read or get_intent_context"),
+  );
   assert.equal(enforced.warned, undefined);
   assert.deepEqual(
     enforced.results.map(({ result }) => result),
@@ -293,6 +302,7 @@ test("gate evidence reports what the observations already satisfy", () => {
     gateEvidence([coredoc("get_intent_context", "not_configured")]).intent,
     "not-configured",
   );
+  assert.equal(gateEvidence([coredoc("intent_read", "ok")]).intent, "satisfied");
   // A write is never a read.
   assert.equal(
     gateEvidence([coredoc("intent_propose", "ok", { specMatch: true, created: 1 })])

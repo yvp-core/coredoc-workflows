@@ -1,39 +1,23 @@
 ## Product-intent context
 
-Apply this only when a Coredoc intent capability is present: the workspace
-(cloud) `get_intent_context` MCP tool, the local one, or the `coredoc intent
-context` CLI. Its absence is the normal case: proceed from repository evidence
-and do not mention intent context. Never install, configure, or initialize
-anything to obtain it.
+Apply this only when the workspace MCP exposes the intent tools
+(`get_intent_context`, `intent_read`). Their absence is the normal case: proceed
+from repository evidence and do not mention intent context. Never install,
+configure, or initialize anything to obtain them.
 
-### Which surface, and how to call it
+### Calling it
 
-Three surfaces expose overlapping selections with different argument sets.
-Unknown arguments are refused, not silently ignored, so send only what the
-surface you are on declares. The cloud tool is the primary surface whenever the
-workspace MCP exposes intent tools; the local MCP tool or the CLI is the surface
-otherwise. Use whichever exists; never try a second surface after a successful
-answer.
+The tools refuse unknown arguments rather than ignoring them, so send only the
+parameters each declares.
 
-**Cloud MCP — `get_intent_context`** (workspace MCP endpoint). **It refuses
-`detailLevel` and `format`.** When `handoffFreshness.needsAttention` is above
-zero, re-read with `includeDiagnostics: true` for the operation ids, then
-inspect and repair them with `intent_handoff get`.
-
-**Local MCP — `get_intent_context`** (repo-local overlay). It accepts `mode`,
-`format` (`index|ids`, list mode only), `kind`, `intentIds`, `query`, `nodeIds`,
-`domain`, `includeCandidates`, `limit` (1..20), and `detailLevel`
-(`basic|full`) for the full typed payload. It refuses `feature`, `observed`,
-`effectivity`, and `cursor`. It answers `overlayStatus` (`ready`,
-`not_configured`, `invalid`), `items` (no per-item `version`; anchors under
-`items[].codeAnchors`), `relations`, `truncated`, `unknownIntentIds`,
-`repoSnapshots` (per-repo snapshot freshness), `evidence`, and `warning`. There
-is no `pendingReview` and no effectivity here.
+**`get_intent_context`** (workspace MCP endpoint). When
+`handoffFreshness.needsAttention` is above zero, re-read with
+`includeDiagnostics: true` for the operation ids, then inspect and repair them
+with `intent_handoff get`.
 
 **Intent ids are kind-prefixed slugs** — `br-refund-window`,
 `cap-widget-ordering` — where the prefix names the kind (`cap`, `uc`, `flow`,
-`br`, `lim`, `dec`). Numeric ids like `BR-3` are a pre-v2 shape and resolve to
-nothing.
+`br`, `lim`, `dec`). Numeric ids like `BR-3` resolve to nothing.
 
 **A `nodeIds` value is a stable code node id, not a path.** It looks like
 `40080b8c38fc:function:src/formatting/money.ts:roundCurrency`, and a file node
@@ -42,30 +26,7 @@ ids only from a coredoc tool response — `search_symbols`, `explain`,
 `list_file_symbols` — and never construct, assemble, or guess one. A bare file
 path is not a node id and matches nothing.
 
-**CLI — `coredoc intent`** (local overlay; after a cloud cutover its reads are a
-frozen snapshot). Its reads (`list`, `context`, `status`, `validate`) require
-`--project <projectId>`:
-
-```bash
-coredoc intent list --project <projectId> --domain payments
-coredoc intent context --project <projectId> --id br-refund-window --id cap-widget-ordering
-coredoc intent context --project <projectId> --query "retention window" --domain payments
-coredoc intent context --project <projectId> --node-id <stableNodeId>
-```
-
-Resolve `<projectId>` by reading the `projects[]` entries in
-`coredoc.config.json` at the workspace root and taking the `id` of the project
-that owns the repository you are working in. If that file is unreadable or
-ambiguous, ask the user when the host allows interaction; in an autonomous run
-that forbids questions, state the assumption inline and proceed WITHOUT intent
-context. Never guess a project id — a wrong one reads another project's intent,
-and no context at all beats another project's rules. `--id` and `--node-id`
-repeat; `-c <path>` points at a config outside the workspace root.
-
-### Cloud task context
-
-When the cloud tool declares `task`, use this protocol; the exact-ID-first
-protocol below is for the local tool and CLI.
+### Fetch protocol
 
 - Before planning or editing, make one task call per stage with `limit: 10`.
   Keep the routed IDs alongside newly discovered constraints and compare their
@@ -78,66 +39,11 @@ protocol below is for the local tool and CLI.
   `truncated` with a `graph.scopeSuggestion`, re-running that same read with the
   narrowing it names is the ONE permitted follow-up; no other second call is
   licensed by a truncation. Report unresolved paths and unknown IDs.
+- Never call `get_intent_context` with no selector (that returns every accepted
+  item up to the limit), and an empty or disappointing answer is not a license
+  for a second lookup with another selector or with `intent_read search`.
 
-### Fetch protocol — exact-ID-first (local tool and CLI)
-
-1. **Reuse what was routed.** If the handoff, specification, plan, or task text
-   already names intent IDs, they are the working set. Do not re-derive it. A
-   handoff produced with intent context carries both fields together:
-   `intentIds: string[]` and `intentVersions: Record<id, number>`, the `version`
-   each item had when it was read (cloud surface; absent when the surface
-   returned no version).
-2. **Refresh the exact routed IDs by exact id.** When `intentVersions` is
-   present, refresh those exact ids once (`--id` / `intentIds`) and compare each
-   returned `version` against the recorded one; when the surface returns no
-   `version`, compare `authority` and `statement` instead. Unchanged for every
-   routed id → record `no_relevant_change` and continue. Changed → surface that
-   id's authority, payload, relation, and anchor deltas. An id the response
-   reports as unknown is missing; say so. When an item carries `supersededById`,
-   name the successor id and fetch it by exact id — never fuzzy-replace a
-   missing or superseded one. Do not run broad lookup or discovery in either
-   case, and do not turn an anchor result into the comparison. If the prior
-   projection is unavailable or either response is truncated, say the routed set
-   was refreshed but do not claim `no_relevant_change`.
-3. **Otherwise fetch only absent payload.** Without recorded versions, request
-   exactly the IDs whose statement or payload you do not already have. Never
-   reload the whole overlay, and never repeat broad discovery for IDs you were
-   handed. Following an id a PREVIOUS response returned (a relation endpoint, a
-   returned item, a named successor) by exact id is fine — that is still
-   exact-ID navigation. Fetching an id that neither the handoff nor an earlier
-   response named is not.
-4. **No IDs routed? Orient with the index first.** `mode: "list"` (CLI
-   `coredoc intent list`) returns one payload-free line per item and does NOT
-   spend the broad-lookup budget below. List, optionally narrowed with
-   `--domain`, then fetch the few ids that matter by exact id.
-5. **One broad lookup, and only one.** Run at most one broad lookup per stage —
-   any context-mode call that is not an exact-ID fetch: a `query`, code
-   `nodeIds`, or a bare `domain`/`feature` filter — at the default limit, then
-   work with what came back and with exact-id follow-ups of what it returned.
-   ONE means one for the whole stage, regardless of which selector shape you
-   spend it on; the shapes are not separate budgets. **An empty or disappointing
-   result is not a license for a second lookup with a different selector**: do
-   not rephrase the query and search again, and do not follow a `query` with a
-   `nodeIds` call or the reverse. When the one lookup comes back empty, either
-   reorient with `mode: "list"`, which is budget-exempt, or say plainly that no
-   anchored or matching intent was found and move on. If it returns `truncated`,
-   say so; do not page through the overlay. **Never call context mode with no
-   selector at all** — an empty call returns every accepted item up to the
-   limit, the broadest read there is.
-   **Reviewing or changing specific code? Spend the one lookup on `nodeIds` of
-   the touched symbols/files INSTEAD of a text query — never in addition to
-   one.** The node lookup returns the rules ANCHORED to the code in front of
-   you — including rules whose wording shares no words with the diff, which a
-   text query will miss every time. On the cloud surface it also returns rules
-   whose enclosing scope or graph-derived feature applies. It is still your
-   single broad lookup, not a second one.
-6. **Never read `.coredoc/intent.json` directly**, not even while exploring:
-   the raw file lacks anchor status and snapshot freshness and bypasses the
-   bounded read. Leave `.coredoc/` out of listings, greps and read sweeps as you
-   would `.git/`. With no surface available, intent context is unavailable; say
-   so and move on.
-
-### Cloud reading rules
+### Reading rules
 
 `observed` is how code freshness becomes `current` or `stale` instead of
 `unverified`: pass `"<repoKey>@<commit>"` from `git rev-parse HEAD` for a
@@ -156,7 +62,7 @@ is queued and leave it to them; never review it yourself.
 
 ### Read the answer honestly
 
-`authority`, `anchorStatus`, and `snapshotFreshness` are three independent
+`authority`, `anchors[].status`, and `snapshotFreshness` are three independent
 dimensions. Report each one; never fuse them into a single verdict.
 
 | Signal | What it licenses | What it never licenses |
@@ -164,8 +70,8 @@ dimensions. Report each one; never fuse them into a single verdict.
 | `accepted` | Citing the item as reviewed product intent | — |
 | `candidate` | Context, a question, a hypothesis | A blocking finding or an authority claim |
 | `rejected` / `superseded` | Provenance, and only when fetched by exact ID | Applying it as current intent |
-| `anchorStatus: matched` | The stable node still carries the captured version | Conformance — anchors are implementation touchpoints, not conformance proof |
-| `anchorStatus: changed` / `missing` | Flagging the anchor as unverified | Concluding the rule is broken |
+| `anchors[].status: matched` | The stable node still carries the captured version | Conformance — anchors are implementation touchpoints, not conformance proof |
+| `anchors[].status: changed` / `missing` | Flagging the anchor as unverified | Concluding the rule is broken |
 | `snapshotFreshness: stale` / `unknown` | Naming the code dimension as unverified | Any statement about current code |
 
 A candidate item is context and is never a blocking finding; raise it as a
@@ -173,19 +79,16 @@ question to the user instead. A `matched` anchor on a `stale` or `unknown`
 snapshot is not "unaffected" — the anchor matched an old graph. State both
 dimensions in that exact form.
 
-### Four distinct unavailable states
+### Unavailable states
 
-Absent file (`not_configured`), invalid file (`invalid`), a valid overlay with no
-match, and an unavailable local graph are four different results. Name which one
-occurred. None of them means "no applicable rule" — that claim requires a valid,
-current overlay that was searched and returned nothing. When the graph is
-unavailable, the intent may still be readable; the code dimension is `unknown`,
-not empty.
-
-A missing capability is not a `not_configured` overlay: the first means no
-intent surface at all (as when a workspace's intent feature is off), the second
-that the capability answered and the project or workspace has no intent yet.
-Both are ordinary states, and neither is a finding.
+`not_configured` (the workspace holds no intent yet), a configured workspace
+whose read matched nothing, and `evidence.available: false` (the graph could not
+be read; text and exact-ID matches still return, graph-derived matches drop out,
+and anchors carry no `status`/`snapshotFreshness` — unverified, not empty;
+`graph.degradation` says why) are different results. Name which one occurred. A
+missing capability (no intent tools at all, as when the workspace's intent
+feature is off) is not `not_configured`. Both are ordinary states, and neither
+is a finding.
 
 ### Stage contracts
 
@@ -196,7 +99,7 @@ product intent.
 
 | Stage | Intent and graph use | Required artifact or handoff | Degraded path |
 | --- | --- | --- | --- |
-| PRD | Use cloud task context; on the local tool or CLI, use the bounded exact-ID-first protocol. Separate accepted constraints from candidate ideas; graph evidence describes current touchpoints only. | Cite applicable exact IDs with their `intentVersions`, accepted decisions/non-goals, and unresolved questions. | Name the unavailable state and continue from owner/repository evidence. |
+| PRD | Read product intent with `intent_read`: `tree`, then `node` for the request's domain or feature (`includeCandidates: true` to see candidates); cite ids from that document and take their versions from one exact-id `get_intent_context` read. Separate accepted constraints from candidate ideas; graph evidence describes current touchpoints only. | Cite applicable exact IDs with their `intentVersions`, accepted decisions/non-goals, and unresolved questions. | Name the unavailable state and continue from owner/repository evidence. |
 | Specification | Use task context with routed IDs; compare their versions. Trace each material outcome and acceptance criterion to accepted intent; use graph/source evidence to verify current contracts and consumers. | Executable acceptance criteria plus `intentIds`, `intentVersions`, any `proposedIntentIds` (accepted at the specification's approval when no PRD exists), and unresolved missing/changed context. | A missing ID or source becomes an unresolved decision, never an invented requirement. |
 | Plan | Reuse the exact working set. Use graph impact to scope symbols and critical manual consumers; use broad discovery only when the set is absent or explicitly incomplete. | Ordered steps trace acceptance criteria and intent IDs and name impact, validation, rollback, freshness, and coverage gaps. | Replace unavailable graph impact with manual repository analysis and say coverage is unknown. |
 | Implementation | Use task context with the routed set and refresh before editing outside the requested scope. Inspect impacted symbols/callers and keep code-derived observations as questions, not intent changes. | Scoped diff and tests plus the unchanged exact-ID handoff, a saved `intent_handoff` when a write capability exists, a successor candidate only when the change must contradict accepted intent, and any new product questions. | Continue under the accepted spec and repository rules when optional intent/graph context is unavailable. |
@@ -216,9 +119,8 @@ second time. Everything else the agent proposes is a candidate. The agent calls
 verbatim items, as the acting person's own decision, and never records or rolls
 back a release through `intent_release`. When a document needs a domain or
 feature the tree does not declare, read the tree, reuse a node that honestly
-fits, and otherwise create it with `intent_tree` in the acting user's session
-before proposing into it, naming what you created and placed there; a
-service-token session drafts the layout, places each item at the closest
+fits, and otherwise create it with `intent_tree`, naming what you placed there;
+a service-token session drafts the layout, places each item at the closest
 existing node, and says so. Archive and delete follow an explicit maintainer
 instruction naming the node. Read release state only through
 `effectivity: true`. Call `intent_anchor add`, `refresh`, or `remove` only on an
@@ -236,12 +138,10 @@ owner would recognise it without reading code; flags, paths, types, function
 names, release-scoping and adoption-phase notes stay in the document. Before
 sending the batch, retain it and its `idempotencyKey` in the existing
 specification handoff so an interrupted request can be replayed unchanged. Each
-item carries `kind`, `title` — a short noun phrase that still states the rule
-(`Refund window is 30 days`, not a full sentence and not a bare topic like
-`Refund windows`), because the server derives the immutable id from it and
-refuses a title too long for the id cap — a self-contained `statement`,
-optional `rationale` and kind-validated `payload`, at most one of
-`domainId`/`featureId`, and
+item carries `kind`, a `title` that is a short noun phrase still stating the
+rule (`Refund window is 30 days`, not a full sentence and not a bare topic like
+`Refund windows`), a self-contained one-sentence `statement`, optional `body`
+Markdown lines for everything else the item says, and
 `sources: [{ kind: "spec", ref: "<repoKey>:<spec path relative to the repository
 root>", localId: <the spec's stable section id, e.g. "AC-3" or "BR-2">, revision: <approved commit or content digest> }]`.
 Source identity is the exact `(ref, localId)` pair, scoped to the WORKSPACE,
@@ -252,17 +152,16 @@ pair stable across runs and precise per statement. Place each item in the
 domain or feature the working set already showed, or as the tree rule above
 says. Set `proposedSuccessorOfId` only when the document explicitly replaces a
 named accepted item. If the `intent-capture` skill is available in this
-session, follow its drafting rules; otherwise the field list above is the
-contract. Report
-`itemId`, `outcome`, and `version` per item and carry them into the handoff as
-`proposedIntentIds` with their versions. Never propose from a draft
-document, from code, or from your own inference.
+session, follow its drafting rules; the `intent_propose` description owns the
+field contract. Report `itemId`, `outcome`, and `version` per item and carry
+them into the handoff as `proposedIntentIds` with their versions. Never propose
+from a draft document, from code, or from your own inference.
 
 **Single approval, including an authorized resumption.** When the acting
 person approves the document IN THEIR OWN SESSION, or authorizes continuation
 of that unchanged, previously approved document, the acceptance step proposes
 missing items and then calls `intent_review accept` for every item whose WHOLE
-content is verbatim from the approved section — statement,
+content is verbatim from the approved section — statement, `body`,
 condition/exceptions/affects, and `sources.revision` equal to the
 approved commit or content digest — passing `authorizingSource` with that
 document's `(ref, localId, revision)` and `reason` "accepted with <path>@<revision>".
