@@ -396,13 +396,14 @@ and `TENTATIVE` for 2-4. Suppress confidence 1.
 4. Framework defaults count: React and Angular escape output, Rails has CSRF tokens. Flag only escape hatches.
 5. Client-side JS/TS does not need auth — that's the server's job.
 6. Shell script command injection needs a concrete untrusted input path.
-7. Subtle web vulnerabilities need high confidence and a concrete exploit.
+7. Subtle web vulnerabilities need extremely high confidence and a concrete exploit.
 8. iPython notebooks — only flag if untrusted input can trigger the vulnerability.
 
 **Active Verification:**
 
 For each finding that survives the confidence gate, attempt to prove it where
-safe, by tracing code and config. Never send requests to live endpoints or APIs.
+safe, by tracing code and config. For secrets, never test against live APIs;
+for webhooks and SSRF, make no requests at all.
 
 1. **Secrets:** check the pattern is a real key format (length, prefix).
 2. **Webhooks:** look for signature verification anywhere in the middleware chain, gateway config included.

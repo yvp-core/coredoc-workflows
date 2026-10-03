@@ -56,9 +56,9 @@ Per page, give each metric's baseline, current value, delta and status:
 - Bundle size: REGRESSION above +25%; WARNING above +10%.
 - Request count: WARNING above +30%.
 
-Name the likely cause of each regression. List the slowest resources with type,
-size and duration, flag third-party ones, and recommend fixes for first-party
-ones.
+Name the likely cause of each regression. List the top 10 slowest resources
+with type, size and duration, flag third-party ones, and recommend fixes for
+first-party ones.
 
 Without a baseline, report absolute numbers against these budgets and say that
 detecting regressions needs one: FCP < 1.8 s, LCP < 2.5 s, JS < 500 KB,

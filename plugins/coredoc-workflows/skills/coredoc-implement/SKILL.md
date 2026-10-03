@@ -114,11 +114,6 @@ proof appropriate to the change; that proof is not always a new test.
    ID/version into the review handoff. When hosted writes are unavailable, carry
    the prepared data and state the missing capability.
 
-Never add a test merely to assert that deleted private code stays deleted, that
-an implementation detail has a particular shape, or that an unreachable stale
-branch remains unreachable. Test externally meaningful contracts and realistic
-failure paths, not the diff itself.
-
 **Escalate an under-scoped route.** Routing happens before source inspection. If
 the change must alter a shared or cross-package contract, create a component or
 subsystem, or cannot be verified on one test surface, stop and name the affected

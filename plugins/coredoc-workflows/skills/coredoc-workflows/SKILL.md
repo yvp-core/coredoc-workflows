@@ -116,7 +116,7 @@ change is a revision request. A revision returns to specification and review,
 or to the spec's alignment checkpoint when it exposes a new material user-owned
 decision; add no generic approval round. For a PRD-less specification, that
 reply also accepts its own intent: before opening the implementation stage,
-when `intent_propose` is visible, apply the single-approval clause of
+when `intent_propose` is visible, apply "Intent acceptance at approval" in
 `<plugin-root>/resources/methodology/spec-lifecycle.md` without asking again.
 Do not run `coredoc-workflows finish-run` while paused.
 
