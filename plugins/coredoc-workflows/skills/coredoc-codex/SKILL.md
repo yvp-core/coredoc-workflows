@@ -1,6 +1,6 @@
 ---
 name: coredoc-codex
-description: Explicitly ask a pinned Codex model for an independent plan or diff review, or start and continue a repository-scoped engineering consultation. Use only when the user directly asks to call Codex from a non-Codex host.
+description: Ask a pinned Codex model for an independent plan or diff review or a resumable consultation. Use only when the user directly asks to call Codex from a non-Codex host.
 ---
 
 # Codex peer adapter

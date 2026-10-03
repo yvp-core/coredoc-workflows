@@ -1,6 +1,6 @@
 ---
 name: coredoc-learn
-description: Extract, inspect, or explicitly persist a concise reusable engineering lesson grounded in repository evidence. Use when asked what was learned, to remember a lesson, or to audit documented learnings.
+description: Extract, inspect, or explicitly persist a concise reusable engineering lesson grounded in repository evidence. Use when asked what was learned, to record a lesson, or to audit documented learnings.
 ---
 
 # Evidence-grounded learning

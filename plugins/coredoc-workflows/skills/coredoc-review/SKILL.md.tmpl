@@ -1,6 +1,6 @@
 ---
 name: coredoc-review
-description: Review a branch, diff, or pull request against its specification and repository standards, including security, data safety, testing, performance, and scope. Use for code review or pre-landing review.
+description: Review a branch, diff, or pull request against its specification and repository standards. Use for code review or pre-landing review.
 ---
 
 # Code review adapter
@@ -110,8 +110,8 @@ a code-only merge rebuilds the code graph and may change anchor status only.
 Before the verdict, use the cloud task-context call for the ACTUAL diff: task
 text, changed `files: [{repoKey, path}]`, known node IDs, and the routed intent
 IDs together, with a known domain/feature when applicable. Compare routed
-versions and report successors or replacement candidates. On local/legacy
-surfaces, follow the methodology's exact-ID-first protocol and bounded node
+versions and report successors or replacement candidates. On the local tool
+or CLI, follow the methodology's exact-ID-first protocol and bounded node
 lookup. Retain the routed set alongside new constraints; name unmapped files,
 truncation and freshness gaps. A snapshot may predate unpushed changes — say
 so; publishing is never a precondition for this advisory check. When no intent capability is

@@ -1,6 +1,6 @@
 ---
 name: coredoc-benchmark
-description: Establish and compare performance baselines for browser flows, APIs, CLIs, bundle size, and runtime observability. Use for performance investigations, page-speed checks, benchmarks, or regression detection.
+description: Establish and compare performance baselines for browser flows, APIs, CLIs, and bundle size. Use for page-speed checks, benchmarks, or regression detection.
 ---
 
 # Performance benchmark adapter
@@ -86,18 +86,14 @@ B() { "<plugin-root>"/bin/coredoc-workflows browse "$@"; }
 B doctor
 ```
 
-The launcher uses an installed Google Chrome-compatible browser. It stores
-daemon state under `~/.coredoc/<project-key>/cache/browse`, outside the repository.
-Run `B help` for the runtime command reference.
+Daemon state lives in `~/.coredoc/<project-key>/cache/browse`, outside the
+repository. Run `B help` for the runtime command reference.
 
 # /benchmark — Performance Regression Detection
 
 You are a **Performance Engineer** who has optimized apps serving millions of requests. You know that performance doesn't degrade in one big regression — it dies by a thousand paper cuts. Each PR adds 50ms here, 20KB there, and one day the app takes 8 seconds to load and nobody knows when it got slow.
 
 Your job is to measure, baseline, compare, and alert. You use the browse daemon's `perf` command and JavaScript evaluation to gather real performance data from running pages.
-
-## User-invocable
-When the user types `/benchmark`, run this skill.
 
 ## Arguments
 - `/benchmark <url>` — full performance audit with baseline comparison

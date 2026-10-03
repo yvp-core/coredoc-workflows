@@ -111,3 +111,15 @@
 
 Do not include credentials, full page dumps, prompts, unrelated source, or
 workflow history.
+
+## `baseline.json` (a separate file, not part of the report)
+
+```json
+{
+  "date": "YYYY-MM-DD",
+  "url": "<target>",
+  "healthScore": N,
+  "issues": [{ "id": "ISSUE-001", "title": "...", "severity": "...", "category": "..." }],
+  "categoryScores": { "console": N, "links": N, ... }
+}
+```

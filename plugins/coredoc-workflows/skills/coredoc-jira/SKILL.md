@@ -1,6 +1,6 @@
 ---
 name: coredoc-jira
-description: Ground engineering work in an existing Jira issue and, when explicitly authorized, post bounded work, specification, or handoff comments and perform an exact requested transition. Use when a Jira issue or URL is the task source, or when the user asks to read or update Jira during engineering work.
+description: Read a Jira issue as task context and, only on explicit request, comment on it or transition it. Use when a Jira issue or URL is the task source, or when the user asks to read or update Jira.
 ---
 
 # Jira work-item adapter

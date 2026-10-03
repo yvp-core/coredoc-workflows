@@ -2,25 +2,17 @@
 
 ### Diff-aware (automatic when on a feature branch with no URL)
 
-This is the **primary mode** for developers verifying their work. When the user says `/qa` without a URL and the repo is on a feature branch, automatically:
+1. **Map the change to pages.** From the files and commits changed since the
+   merge base with the base branch, and from the PR description, work out what
+   the change should do and which pages, routes and API endpoints it reaches.
+   Test API endpoints directly with `B js "await fetch('/api/...')"`.
 
-1. **Analyze the branch diff** to understand what changed:
-   ```bash
-   git diff "$DIFF_BASE" --name-only
-   git log "$DIFF_BASE"..HEAD --oneline
-   ```
+   **If the diff maps to no page,** still test in the browser: backend, config
+   and infrastructure changes affect the app, and unit tests or evals are not a
+   substitute. Fall back to Quick mode and also test any interactive elements
+   found.
 
-2. **Identify affected pages/routes** from the changed files:
-   - Controller/route files → which URL paths they serve
-   - View/template/component files → which pages render them
-   - Model/service files → which pages use those models (check controllers that reference them)
-   - CSS/style files → which pages include those stylesheets
-   - API endpoints → test them directly with `B js "await fetch('/api/...')"`
-   - Static pages (markdown, HTML) → navigate to them directly
-
-   **If no obvious pages/routes are identified from the diff:** Do not skip browser testing. The user invoked /qa because they want browser-based verification. Fall back to Quick mode — navigate to the homepage, follow the top 5 navigation targets, check console for errors, and test any interactive elements found. Backend, config, and infrastructure changes affect app behavior — always verify the app still works.
-
-3. **Detect the running app** — check common local dev ports, stopping at the first that loads:
+2. **Detect the running app** — check common local dev ports, stopping at the first that loads:
    ```bash
    for port in 3000 4000 5173 8080; do
      B goto "http://localhost:$port" 2>/dev/null && { echo "Found app on :$port"; break; }
@@ -28,29 +20,20 @@ This is the **primary mode** for developers verifying their work. When the user 
    ```
    If no local app is found, check for a staging/preview URL in the PR or environment. If nothing works, ask the user for the URL.
 
-4. **Test each affected page/route:**
-   - Navigate to the page
-   - Take a screenshot
-   - Check console for errors
-   - If the change was interactive (forms, buttons, flows), test the interaction end-to-end
-   - Use `snapshot -D` before and after actions to verify the change had the expected effect
+3. **Test each affected page:** screenshot it, check the console, and exercise
+   any changed interaction end to end, using `snapshot -D` before and after each
+   action to confirm the change does what it should.
 
-5. **Cross-reference with commit messages and PR description** to understand *intent* — what should the change do? Verify it actually does that.
-
-6. **Check TODOS.md** (if it exists) for known bugs or issues related to the changed files. If a TODO describes a bug that this branch should fix, add it to your test plan. If you find a new bug during QA that isn't in TODOS.md, note it in the report.
-
-7. **Report findings** scoped to the branch changes:
-   - "Changes tested: N pages/routes affected by this branch"
-   - For each: does it work? Screenshot evidence.
-   - Any regressions on adjacent pages?
+4. **Report** the pages tested, whether each works with screenshot evidence,
+   and any regression on adjacent pages.
 
 **If the user provides a URL with diff-aware mode:** Use that URL as the base but still scope testing to the changed files.
 
 ### Full (default when URL is provided)
-Systematic exploration. Visit every reachable page. Document 5-10 well-evidenced issues. Produce health score. Takes 5-15 minutes depending on app size.
+Systematic exploration. Visit every reachable page. Document 5-10 well-evidenced issues. Produce health score.
 
 ### Quick (`--quick`)
-30-second smoke test. Visit homepage + top 5 navigation targets. Check: page loads? Console errors? Broken links? Produce health score. No detailed issue documentation.
+Smoke test: only the homepage and the top 5 navigation targets from Orient. Skip the per-page checklist and check only: page loads? Console errors? Broken links? Produce health score. No detailed issue documentation.
 
 ### Regression (`--regression <baseline>`)
 Run full mode, then load `baseline.json` from a previous run. Diff: which issues are fixed? Which are new? What's the score delta? Append regression section to report.
@@ -61,15 +44,11 @@ Run full mode, then load `baseline.json` from a previous run. Diff: which issues
 
 ### Phase 1: Initialize
 
-1. Find browse binary (see Setup above)
-2. Use the conversation as the default issue register. Create an output
-   directory only when the user requested saved evidence or a durable report.
-3. When a saved report was requested, use
-   `<plugin-root>/resources/qa-report-template.md` and place screenshots under
-   the authorized report directory.
-4. Start timer for duration tracking
-
-Use a temporary evidence directory when no durable report was requested:
+Note the start time. The conversation is the default issue register. Only when
+the user requested saved evidence or a durable report, use
+`<plugin-root>/resources/qa-report-template.md` and a new authorized report
+directory, so earlier evidence is never overwritten. Otherwise use a temporary
+evidence directory:
 
 ```bash
 QA_EVIDENCE_DIR="${REPORT_DIR:-${TMPDIR:-/tmp}/coredoc-workflows-qa}"
@@ -78,15 +57,10 @@ mkdir -p "$QA_EVIDENCE_DIR/screenshots"
 
 ### Phase 2: Authenticate (if needed)
 
-First prefer the selected surface's existing session. For Electron, run
-`D auth-status`; the app itself reads and refreshes its safeStorage-backed
-credentials. For web, use the selected browser profile's existing cookie
-session. Never inspect or export cookies, local storage, browser profiles,
-password stores, desktop credential files, access tokens, or refresh tokens.
-
-If the Electron app is logged out, activate its normal login control and hand
-the external OAuth/MFA interaction to the user. Resume with `D auth-status`
-and `D snapshot` after the callback returns to the app.
+Reuse the selected surface's existing session. For Electron, run
+`D auth-status`; if the app is logged out, activate its login control, hand
+OAuth/MFA to the user, and resume with `D auth-status` and `D snapshot` after
+the callback returns.
 
 **For web only, if the user explicitly authorized entering credentials:**
 
@@ -106,10 +80,6 @@ B cookie-import cookies.json
 B goto <target-url>
 ```
 
-**If 2FA/OTP is required:** Ask the user for the code and wait.
-
-**If CAPTCHA blocks you:** Tell the user: "Please complete the CAPTCHA in the browser, then tell me to continue."
-
 ### Phase 3: Orient
 
 Get a map of the application:
@@ -120,12 +90,6 @@ B snapshot -i -a -o "$QA_EVIDENCE_DIR/screenshots/initial.png"
 B links                          # map navigation structure
 B console --errors               # any errors on landing?
 ```
-
-**Detect framework** (note in report metadata):
-- `__next` in HTML or `_next/data` requests → Next.js
-- `csrf-token` meta tag → Rails
-- `wp-content` in URLs → WordPress
-- Client-side routing with no page reloads → SPA
 
 **For SPAs:** The `links` command may return few results because navigation is client-side. Use `snapshot -i` to find nav elements (buttons, menu items) instead.
 
@@ -155,22 +119,15 @@ Then follow the **per-page exploration checklist** in
    B viewport 1280x720
    ```
 
-**Depth judgment:** Spend more time on core features (homepage, dashboard, checkout, search) and less on secondary pages (about, terms, privacy).
-
-**Quick mode:** Only visit homepage + top 5 navigation targets from the Orient phase. Skip the per-page checklist — just check: loads? Console errors? Broken links visible?
-
 ### Phase 5: Document
 
-Document each issue **immediately when found** — don't batch them.
+Retry each issue once to confirm it reproduces, then record it immediately in
+the conversation issue register or, when requested, the saved report. Never
+batch issues or reconstruct evidence from memory at the end.
 
-**Two evidence tiers:**
-
-**Interactive bugs** (broken flows, dead buttons, form failures):
-1. Take a screenshot before the action
-2. Perform the action
-3. Take a screenshot showing the result
-4. Use `snapshot -D` to show what changed
-5. Write repro steps referencing screenshots
+**Interactive bugs** (broken flows, dead buttons, form failures): screenshot
+before the action, perform it, screenshot the result, run `snapshot -D` to show
+what changed, and write repro steps that reference the screenshots.
 
 ```bash
 B screenshot "$QA_EVIDENCE_DIR/screenshots/issue-001-step-1.png"
@@ -179,126 +136,41 @@ B screenshot "$QA_EVIDENCE_DIR/screenshots/issue-001-result.png"
 B snapshot -D
 ```
 
-**Static bugs** (typos, layout issues, missing images):
-1. Take a single annotated screenshot showing the problem
-2. Describe what's wrong
+**Static bugs** (typos, layout issues, missing images): one annotated
+screenshot showing the problem, and a description of what's wrong.
 
 ```bash
 B snapshot -i -a -o "$QA_EVIDENCE_DIR/screenshots/issue-002.png"
 ```
 
-**Record each issue immediately** in the active conversation issue register or,
-when requested, the saved report. Do not wait until the end and reconstruct
-evidence from memory.
-
 ### Phase 6: Wrap Up
 
-1. **Compute health score** using the rubric below
-2. **Write "Top 3 Things to Fix"** — the 3 highest-severity issues
-3. **Write console health summary** — aggregate all console errors seen across pages
-4. **Update severity counts** in the summary table
-5. **Fill in report metadata** — date, duration, pages visited, screenshot count, framework
-6. **Save a baseline only for regression mode or when the user requests a
-   durable baseline.** Use `baseline.json` with:
-   ```json
-   {
-     "date": "YYYY-MM-DD",
-     "url": "<target>",
-     "healthScore": N,
-     "issues": [{ "id": "ISSUE-001", "title": "...", "severity": "...", "category": "..." }],
-     "categoryScores": { "console": N, "links": N, ... }
-   }
-   ```
-
-**Regression mode:** After writing the report, load the baseline file. Compare:
-- Health score delta
-- Issues fixed (in baseline but not current)
-- New issues (in current but not baseline)
-- Append the regression section to the report
+Compute the health score with the rubric below. Then write the top three
+issues to fix, a summary of console errors across pages, the severity counts,
+and the report metadata (date, duration, pages visited, screenshot count). Save
+`baseline.json`, in the shape at the end of
+`<plugin-root>/resources/qa-report-template.md`, only in regression mode or when
+the user requests a durable baseline.
 
 ---
 
 ## Health Score Rubric
 
-Compute each category score (0-100), then take the weighted average.
+Score each category from 0 to 100, then take the weighted average,
+`score = Σ (category_score × weight)`:
 
-### Console (weight: 15%)
-- 0 errors → 100
-- 1-3 errors → 70
-- 4-10 errors → 40
-- 10+ errors → 10
-
-### Links (weight: 10%)
-- 0 broken → 100
-- Each broken link → -15 (minimum 0)
-
-### Per-Category Scoring (Visual, Functional, UX, Content, Performance, Accessibility)
-Each category starts at 100. Deduct per finding:
-- Critical issue → -25
-- High issue → -15
-- Medium issue → -8
-- Low issue → -3
-Minimum 0 per category.
-
-### Weights
-| Category | Weight |
-|----------|--------|
-| Console | 15% |
-| Links | 10% |
-| Visual | 10% |
-| Functional | 20% |
-| UX | 15% |
-| Performance | 10% |
-| Content | 5% |
-| Accessibility | 15% |
-
-### Final Score
-`score = Σ (category_score × weight)`
-
----
-
-## Framework-Specific Guidance
-
-### Next.js
-- Check console for hydration errors (`Hydration failed`, `Text content did not match`)
-- Monitor `_next/data` requests in network — 404s indicate broken data fetching
-- Test client-side navigation (click links, don't just `goto`) — catches routing issues
-- Check for CLS (Cumulative Layout Shift) on pages with dynamic content
-
-### Rails
-- Check for N+1 query warnings in console (if development mode)
-- Verify CSRF token presence in forms
-- Test Turbo/Stimulus integration — do page transitions work smoothly?
-- Check for flash messages appearing and dismissing correctly
-
-### WordPress
-- Check for plugin conflicts (JS errors from different plugins)
-- Verify admin bar visibility for logged-in users
-- Test REST API endpoints (`/wp-json/`)
-- Check for mixed content warnings (common with WP)
-
-### General SPA (React, Vue, Angular)
-- Use `snapshot -i` for navigation — `links` command misses client-side routes
-- Check for stale state (navigate away and back — does data refresh?)
-- Test browser back/forward — does the app handle history correctly?
-- Check for memory leaks (monitor console after extended use)
+- **Console (15%):** 0 errors → 100, 1-3 → 70, 4-10 → 40, 11 or more → 10.
+- **Links (10%):** 100, minus 15 per broken link, minimum 0.
+- **Functional (20%), UX (15%), Accessibility (15%), Visual (10%), Performance
+  (10%), Content (5%):** start at 100 and deduct per finding: critical 25,
+  high 15, medium 8, low 3. Minimum 0.
 
 ---
 
 ## Important Rules
 
-1. **Repro is everything.** Every issue needs at least one screenshot. No exceptions.
-2. **Verify before documenting.** Retry the issue once to confirm it's reproducible, not a fluke.
-3. **Never include credentials.** Write `[REDACTED]` for passwords in repro steps.
-4. **Write incrementally.** Add each issue to the active issue register as you
-   find it. Don't batch.
-5. **Preserve the black-box perspective.** Read source only to map a diff to
-   affected routes, verify a concrete finding, or implement an authorized fix.
-6. **Check console after every interaction.** JS errors that don't surface visually are still bugs.
-7. **Test like a user.** Use realistic data. Walk through complete workflows end-to-end.
-8. **Depth over breadth.** 5-10 well-documented issues with evidence > 20 vague descriptions.
-9. **Do not overwrite prior requested evidence.** Store new screenshots and
-   reports under a unique authorized cache/report path.
-10. **Use `snapshot -C` for tricky UIs.** Finds clickable divs that the accessibility tree misses.
-11. **Show screenshots to the user.** After every `B screenshot`, `B snapshot -a -o`, or `B responsive` command, use the Read tool on the output file(s) so the user can see them inline. For `responsive` (3 files), Read all three. This is critical — without it, screenshots are invisible to the user.
-12. **Never refuse to use the browser.** When the user invokes /qa or /qa-only, they are requesting browser-based testing. Never suggest evals, unit tests, or other alternatives as a substitute. Even if the diff appears to have no UI changes, backend changes affect app behavior — always open the browser and test.
+- **Preserve the black-box perspective.** Read source only to map a diff to
+  affected routes, verify a concrete finding, or implement an authorized fix.
+- **Use `snapshot -C` for tricky UIs.** Finds clickable divs that the accessibility tree misses.
+- **Show screenshots to the user.** Open every screenshot you capture with the
+  host's file/image-viewing tool, and give the user its path.

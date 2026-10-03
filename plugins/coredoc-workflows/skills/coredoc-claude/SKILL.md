@@ -1,6 +1,6 @@
 ---
 name: coredoc-claude
-description: Explicitly ask a pinned Claude model for an independent plan or diff review, or start and continue a repository-scoped engineering consultation. Use only when the user directly asks to call Claude from a non-Claude host.
+description: Ask a pinned Claude model for an independent plan or diff review or a resumable consultation. Use only when the user directly asks to call Claude from a non-Claude host.
 ---
 
 # Claude peer adapter

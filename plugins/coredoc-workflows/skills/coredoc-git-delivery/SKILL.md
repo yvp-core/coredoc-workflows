@@ -1,6 +1,6 @@
 ---
 name: coredoc-git-delivery
-description: Prepare and perform an explicitly requested Git commit, push, branch publication, or pull request with staged/range secret scanning and branch-state checks. Use when the user asks to commit, push, publish, or open a PR; ordinary implementation work does not imply delivery.
+description: Commit, push, publish a branch, or open a pull request behind secret scanning and branch-state checks. Use when the user asks to commit, push, publish, or open a PR.
 ---
 
 # Git delivery
