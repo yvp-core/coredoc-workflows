@@ -641,40 +641,37 @@ test("preflight CLI drains large JSON before exiting with a slow pipe reader", a
   }
 });
 
-test("delivery skill keeps commit, push, and PR authority separate", async () => {
+// The preflight fingerprints exactly what these invocations commit and push, so
+// the skill has to run them in this shape and read the preflight's own output
+// fields. Invocations and field names only, no prose (ADR 0004).
+test("delivery skill runs the preflight's invocations and reads its output fields", async () => {
   const body = await readFile(
     join(PLUGIN_ROOT, "skills", "coredoc-git-delivery", "SKILL.md"),
     "utf8",
   );
-  assert.match(body, /preflight.*read-only|read-only.*preflight/is);
-  assert.match(body, /commit.*does not authorize.*push/is);
-  assert.match(body, /push.*does not authorize.*(?:PR|pull request)/is);
-  assert.match(body, /never.*(?:automatically )?stage|do not.*stage/is);
-  assert.match(body, /no automatic.*fetch|do not.*fetch/is);
-  assert.match(body, /never.*force-push|do not.*force-push/is);
-  assert.match(body, /existing.*pull request.*(?:found|none|unknown)/is);
-  assert.match(body, /query.*fail.*unknown|unknown.*query.*fail/is);
-  assert.match(body, /git-delivery-preflight --operation/);
-  assert.match(body, /--message-file <temporary-message-file>/);
-  assert.match(body, /commit\.indexFingerprint/);
-  assert.match(body, /commit\.messageFingerprint/);
-  assert.match(body, /git commit --cleanup=verbatim --file <temporary-message-file>/);
-  assert.match(body, /--verify-created <created-commit-sha>/);
-  assert.match(body, /--expected-parent <scanned-parent-sha>/);
-  assert.match(body, /--expected-index <scanned-index-fingerprint>/);
-  assert.match(body, /--expected-message <scanned-message-fingerprint>/);
-  assert.match(body, /do\s+not\s+bypass repository hooks/i);
-  assert.match(body, /do not push it/i);
-  assert.match(body, /current\s+HEAD.*scanned commit|scanned commit.*current\s+HEAD/is);
+  assert.match(body, /git-delivery-preflight\s+--operation/);
+  assert.match(body, /--message-file\s+<temporary-message-file>/);
+  for (const field of [
+    /\bcommit\.indexFingerprint\b/,
+    /\bcommit\.messageFingerprint\b/,
+    /\bpush\.source\b/,
+    /\bpush\.configureUpstream\b/,
+  ]) {
+    assert.match(body, field);
+  }
+  assert.match(body, /git\s+commit\s+--cleanup=verbatim\s+--file\s+<temporary-message-file>/);
+  assert.match(body, /--verify-created\s+<created-commit-sha>/);
+  assert.match(body, /--expected-branch\s+<scanned-branch>/);
+  assert.match(body, /--expected-parent\s+<scanned-parent-sha>/);
+  assert.match(body, /--expected-index\s+<scanned-index-fingerprint>/);
+  assert.match(body, /--expected-message\s+<scanned-message-fingerprint>/);
   assert.match(body, /<scanned-commit-sha>:refs\/heads\/<branch>/);
-  assert.doesNotMatch(body, /origin HEAD:refs\/heads\/<branch>/);
+  assert.doesNotMatch(body, /origin\s+HEAD:refs\/heads\/<branch>/);
   assert.match(body, /--no-follow-tags/);
   assert.match(body, /remote\.origin\.mirror=false/);
   assert.match(body, /--recurse-submodules=no/);
   assert.doesNotMatch(body, /--set-upstream(?:\s|\])/);
-  assert.match(body, /push\.configureUpstream/);
-  assert.match(body, /branch --set-upstream-to=origin\/<branch> <branch>/);
-  assert.doesNotMatch(body, /REST fallback|create_pr\.py/i);
+  assert.match(body, /branch\s+--set-upstream-to=origin\/<branch>\s+<branch>/);
 });
 
 

@@ -43,7 +43,8 @@ Keep the result under 800 words unless the user asks for detail:
 5. **Friction and rework** — causes, not blame.
 6. **Risks** — quality or operational concerns still open.
 7. **Next actions** — at most three, each with an owner only if known.
-8. **Candidate learnings** — only lessons that pass the reusable-learning gate.
+8. **Candidate learnings** — only lessons that pass the quality gate in
+   `<plugin-root>/skills/coredoc-learn/SKILL.md`.
 
 Separate fact from inference. Avoid ranking people, praising raw activity, or
 using additions/deletions as a quality proxy.

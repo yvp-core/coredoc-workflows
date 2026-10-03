@@ -80,9 +80,7 @@ When unfamiliar custom machinery is proposed, apply
 search when unavailable. If the plan exposes a CLI/SDK/API/plugin/config surface,
 also apply `<plugin-root>/resources/methodology/dx-framework.md`.
 
-## Anti-shortcut clause
-
-Apply `<plugin-root>/resources/methodology/anti-shortcut.md`.
+### Premises and accepted scope
 
 Inspect the real runtime path before accepting or rejecting a plan premise.
 Never infer correctness from a filename, test name, diagram, or intended layer.
@@ -105,9 +103,12 @@ For a candidate finding, read
 `<plugin-root>/resources/methodology/confidence-calibration.md` and verify evidence,
 reachability, observer, impact, violated requirement, and existing handling before
 emitting it. Ask only for a blocking disposition, a single release fact needed
-for `NEEDS_CONTEXT`, or a user-owned behavior/architecture decision. Use
-`<plugin-root>/resources/methodology/decision-brief.md` for that question and
-`estimate-buckets.md` only when comparing effort materially changes the choice.
+for `NEEDS_CONTEXT`, or a user-owned behavior/architecture decision. Retry a
+failed question call once, and only if the user cannot have seen it; an error
+can arrive after the question was shown. When asking in prose about an
+irreversible or destructive choice, state what cannot be undone and proceed
+only when the user types the chosen option; a bare "ok" is not confirmation, so
+re-ask.
 
 ### 3. Test review
 

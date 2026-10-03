@@ -596,8 +596,8 @@ mutation, report persistence, dependency installation, CI changes, and commits
 require explicit authorization. The separate `coredoc-claude` and
 `coredoc-codex` skills restore a fresh external perspective only when explicitly
 requested and keep only a project-scoped opaque session handle after explicit
-consultation. Owned-template build and content tests fail when a shared
-expansion disappears or its behavioral landmarks are lost.
+consultation. Skill tests check contracts, not wording
+([ADR 0004](../../docs/adr/0004-skill-tests-check-contracts-not-wording.md)).
 
 ## Provenance
 

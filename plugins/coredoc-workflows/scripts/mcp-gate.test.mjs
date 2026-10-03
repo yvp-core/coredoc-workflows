@@ -13,6 +13,7 @@ import { join } from "node:path";
 import test from "../test/test-api.mjs";
 
 import { finishWorkflowRun } from "./finish-run.mjs";
+import { executeRoutedTask } from "./route-task.mjs";
 import { finishWorkflowSession } from "./session-end.mjs";
 import { runWorkflowStage } from "./stage-run.mjs";
 import { workflowRunContext, workflowRunStatus } from "./run-status.mjs";
@@ -73,7 +74,12 @@ const SEARCH_FIXTURES = [
   "claude-2.1.272-bash-rg-version.json",
 ];
 
-function harness({ gates = "enforce", bound = true } = {}) {
+function harness({
+  gates = "enforce",
+  bound = true,
+  // Independent stages: each test opens exactly the one stage it gates.
+  stages = ["spec", "implement", "review"],
+} = {}) {
   const env = {
     COREDOC_WORKFLOWS_STATE_DIR: mkdtempSync(join(tmpdir(), "coredoc-mcp-gate-")),
     COREDOC_WORKFLOW_GATES: gates,
@@ -85,12 +91,7 @@ function harness({ gates = "enforce", bound = true } = {}) {
       workflowId: "change:normal",
       intent: "change",
       risk: "normal",
-      // Independent stages: each test opens exactly the one stage it gates.
-      declaredStages: [
-        { stageId: "spec", after: [] },
-        { stageId: "implement", after: [] },
-        { stageId: "review", after: [] },
-      ],
+      declaredStages: stages.map((stageId) => ({ stageId, after: [] })),
       repositoryKey: PROJECT_KEY,
       bound,
       projectKey: PROJECT_KEY,
@@ -556,5 +557,38 @@ test("AC-7: a terminal SessionEnd records the abandoned implement stage's unmet 
         writes,
       ]),
     [["implement", "mcp", "unmet", 1, 0]],
+  );
+});
+
+test("a signed --skip-mcp reaches the next route with its reason", async () => {
+  const env = harness({ stages: ["review"] });
+  await closeWith(
+    env,
+    "review",
+    [fixtureObservation("claude-2.1.272-grep.json", "2026-09-15T11:01:00.000Z")],
+    { skipMcpReason: "graph not indexed for this repository" },
+  );
+  await finishWorkflowRun(
+    { sessionId: SESSION_ID, outcome: "success", coredocStatus: "partial", at: "2026-09-15T12:00:00.000Z" },
+    {
+      env,
+      deliver: async () => DISABLED,
+      checkpointArtifacts: async () => ({ status: "disabled", queued: 0, sent: 0, pending: 0 }),
+    },
+  );
+
+  const routed = await executeRoutedTask(
+    { intent: "change" },
+    {
+      env: { ...env, COREDOC_WORKFLOWS_SESSION_ID: SESSION_ID, COREDOC_WORKFLOWS_REPO_KEY: PROJECT_KEY },
+      cwd: mkdtempSync(join(tmpdir(), "coredoc-mcp-gate-repo-")),
+      preflight: async () => {},
+      recordCapture: async () => DISABLED,
+      expireRuns: async () => [],
+    },
+  );
+  assert.deepEqual(
+    routed.previousRunGates.map(({ stage: stageId, gate, result, reason }) => [stageId, gate, result, reason]),
+    [["review", "mcp", "skipped", "graph not indexed for this repository"]],
   );
 });

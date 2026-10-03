@@ -56,16 +56,19 @@ Edit a skill's `SKILL.md.tmpl`, not its generated `SKILL.md`. Hand-written
 skills have no template. The build script discovers this distinction from the
 filesystem.
 
-The normal suite checks every shipped skill's top-level Markdown fences and
-UTF-8 size against `plugins/coredoc-workflows/test/skill-budgets.json`, including
-the aggregate discovery catalog. These are byte budgets, not token estimates.
+The normal suite checks every shipped skill's strict-YAML frontmatter, top-level
+Markdown fences and UTF-8 size against
+`plugins/coredoc-workflows/test/skill-budgets.json`, including the aggregate
+discovery catalog. These are byte budgets, not token estimates.
 Ceilings round each skill up to the next KiB and keep at least 512 bytes of
 headroom, so a wording fix never trips the gate but sustained growth does. Do
 not automatically regenerate ceilings after a failure: explain any necessary
 increase using the measured size the failing assertion reports, and for skills
 that the routed scenarios reach, measure the behavior/cost of the change with
 the workflow baseline harness. New skills need a measured budget; removed skills
-must remove theirs.
+must remove theirs. Skill tests check contracts, not wording
+([ADR 0004](docs/adr/0004-skill-tests-check-contracts-not-wording.md)); do not
+add an assertion that pins a sentence.
 
 ## Pull requests
 

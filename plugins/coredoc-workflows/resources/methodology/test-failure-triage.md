@@ -7,10 +7,11 @@ next person cannot tell what your change did.
 
 ### 1. Classify each failure
 
-Get what this branch actually changed:
+Get what this branch actually changed, including uncommitted edits:
 
 ```bash
-git diff <base>...HEAD --name-only
+git diff --name-only "$(git merge-base <base> HEAD)"
+git status --short
 ```
 
 A failure is **in-branch** when the failing test file was modified here, when the

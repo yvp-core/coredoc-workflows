@@ -1,6 +1,6 @@
 ---
 name: coredoc-workflows
-description: Route engineering work through the smallest useful self-contained Coredoc workflow for investigation, planning, adaptive implementation, review, specification, browser QA, benchmarking, security review, learning, or retrospectives. Use when asked to route, orchestrate, or choose a workflow for a task. On a checkout bound to a Coredoc workspace, stages close on observed evidence, not on the agent's report: intent reads and Coredoc MCP reads are checked, and skips are signed with a reason that the next route shows.
+description: Route engineering work through the smallest useful self-contained Coredoc workflow for investigation, planning, adaptive implementation, review, specification, browser QA, benchmarking, security review, learning, or retrospectives. Use when asked to route, orchestrate, or choose a workflow for a task.
 ---
 
 # Coredoc workflow router
@@ -58,7 +58,8 @@ lifecycle command. It is read-only. `status: inactive` there means no run is
 open: if this session already finished the run, report that plainly instead of
 finishing it again; otherwise route again.
 
-Tell the user the selected route in one sentence. Preflight available tools for
+Tell the user the selected route in one sentence. If the route is `direct`, do
+the task directly, then run `finish-run`. Preflight available tools for
 a delimited `Coredoc` MCP namespace. If absent, say graph grounding is
 unavailable, mention the project's `.mcp.json` or `claude mcp add`, then continue.
 Pass `capability-missing` at finish. For a large route with graph tools, run one
@@ -234,5 +235,3 @@ new workflow artifacts. Repository/git inspection is read-only; database and
 runtime access is read-only and only when selected; UI control is task-scoped.
 Never persist prompts, command text, source, diffs, fixtures, paths, or a parallel
 workflow ledger as evidence.
-
-If the route is `direct`, answer directly. A simple task stays simple.
