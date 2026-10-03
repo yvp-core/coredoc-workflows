@@ -171,8 +171,7 @@ real snag was Codex's config-default model (`gpt-6-astra`) being rejected by thi
 ## Synthetic fixtures (`synthetic-*.json`)
 
 Added by issue 01 for the normalisation rows that have **no real producer to capture today**
-(no cloud workspace refusal, no local overlay in a broken state, no handoff, no `isError`
-transport on this machine). Each one is marked `provenance.capture:
+(no cloud workspace refusal, no handoff, no `isError` transport on this machine). Each one is marked `provenance.capture:
 "synthetic-from-server-source"` and names the server/MCP source file and lines its
 `tool_response` text is derived from. The hook envelope around it is the real Claude Code
 2.1.272 shape proven by the captures above (bare content-block array), except
@@ -184,8 +183,6 @@ shape an `isError` flag can travel on.
 | `synthetic-cloud-intent-propose-created.json` | `intent_propose` → `ok`, `created: 1`, cited ref (observed for reporting; no gate reads it since implement dropped the candidates gate) |
 | `synthetic-cloud-permission-denied.json` | cloud `status: permission_denied` → `denied` |
 | `synthetic-cloud-not-configured.json` | cloud `status: not_configured` → `not_configured` |
-| `synthetic-local-overlay-invalid.json` | local `overlayStatus: invalid` → `invalid` |
-| `synthetic-local-overlay-not-configured.json` | local `overlayStatus: not_configured` → `not_configured` |
 | `synthetic-cloud-intent-handoff-get.json` | `intent_handoff get` → read, `ok` |
 | `synthetic-cloud-intent-handoff-list-empty.json` | `intent_handoff list`, empty `operations` → read, `ok` |
 | `synthetic-cloud-intent-handoff-save.json` | `intent_handoff save` → write, `ok` |

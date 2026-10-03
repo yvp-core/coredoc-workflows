@@ -44,8 +44,7 @@ proof appropriate to the change; that proof is not always a new test.
    silently implementing or skipping it. Use the specification's non-goals as
    the scope boundary.
 
-   If this session has a Coredoc intent capability — the `get_intent_context` MCP
-   tool or the `coredoc intent context` CLI — read
+   If this session has the `get_intent_context` tool, read
    `<plugin-root>/resources/methodology/intent-context.md` before editing and
    follow its implementation and validation stage contracts. Treat the
    limitations and non-goals it returns as scope boundaries, cite the IDs a
@@ -108,12 +107,12 @@ proof appropriate to the change; that proof is not always a new test.
    `<plugin-root>/resources/methodology/test-failure-triage.md`; never weaken an
    assertion to get green.
 6. Report the proof mode actually used, changed files, commands and outcomes,
-   and any check that could not run. If a cloud Coredoc intent write capability
-   is present, save `intent_handoff` per "Implementation handoff and delivery" in
-   `intent-context.md` for the items this change implements or relocates, with
-   the reviewed `headSha`, before PR creation; read it back and carry its
-   ID/version into the review handoff. When hosted writes are unavailable, carry
-   the prepared data and state the missing capability.
+   and any check that could not run. If `intent_handoff` is available, save it
+   per "Implementation handoff and delivery" in `intent-context.md` for the
+   items this change implements or relocates, with the reviewed `headSha`,
+   before PR creation; read it back and carry its ID/version into the review
+   handoff. When hosted writes are unavailable, carry the prepared data and
+   state the missing capability.
 
 **Escalate an under-scoped route.** Routing happens before source inspection. If
 the change must alter a shared or cross-package contract, create a component or

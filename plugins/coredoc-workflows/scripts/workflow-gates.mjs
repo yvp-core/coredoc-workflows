@@ -36,6 +36,9 @@ const HISTORY_FILE = "history.jsonl";
 // Results that a bound successful close refuses on. Everything else — passed,
 // skipped, not-configured, not-bound, not-applicable — closes.
 const REFUSING_RESULTS = new Set(["unmet", "not-observed"]);
+// Either workspace read counts as reading intent: `intent_read` for product
+// questions, `get_intent_context` for the rules on code.
+const INTENT_READ_TOOLS = new Set(["intent_read", "get_intent_context"]);
 
 export function gateMode(env = process.env) {
   const value = env.COREDOC_WORKFLOW_GATES ?? "warn";
@@ -66,9 +69,13 @@ function gate(stage, name, result, message, extra = {}) {
   return { stage, gate: name, result, message, ...extra };
 }
 
-function coredocObservations(observations, tool) {
-  return observations.filter(
-    (event) => event.type === "coredoc" && (tool === undefined || event.tool === tool),
+function coredocObservations(observations) {
+  return observations.filter((event) => event.type === "coredoc");
+}
+
+function intentReads(observations) {
+  return coredocObservations(observations).filter((event) =>
+    INTENT_READ_TOOLS.has(event.tool),
   );
 }
 
@@ -87,7 +94,7 @@ export function evaluateIntentGate(
   if (reason !== undefined) {
     return gate(stage, "intent", "skipped", "", { reason });
   }
-  const reads = coredocObservations(observations, "get_intent_context");
+  const reads = intentReads(observations);
   if (reads.some((event) => event.result === "ok")) {
     return gate(stage, "intent", "passed", "");
   }
@@ -97,11 +104,11 @@ export function evaluateIntentGate(
       "intent",
       "not-configured",
       "",
-      { reason: "get_intent_context answered not_configured" },
+      { reason: "the intent read answered not_configured" },
     );
   }
   const remedy =
-    `run get_intent_context for this repository before closing stage ${stage}, ` +
+    `read intent with intent_read or get_intent_context before closing stage ${stage}, ` +
     `or close with --skip-intent "<reason>"`;
   if (observations.length === 0) {
     return gate(
@@ -115,10 +122,10 @@ export function evaluateIntentGate(
     stage,
     "intent",
     "unmet",
-    `stage ${stage} closed without an observed get_intent_context read: ${remedy}`,
+    `stage ${stage} closed without an observed intent read: ${remedy}`,
     reads.length === 0
       ? {}
-      : { reason: `observed get_intent_context results: ${[...new Set(reads.map((event) => event.result ?? "unknown"))].join(", ")}` },
+      : { reason: `observed intent read results: ${[...new Set(reads.map((event) => event.result ?? "unknown"))].join(", ")}` },
   );
 }
 
@@ -458,8 +465,7 @@ export function lastRunHistory(projectKey, { env = process.env } = {}) {
  * it never refuses anything and never writes.
  */
 export function gateEvidence(observations) {
-  const coredoc = coredocObservations(observations);
-  const reads = coredoc.filter((event) => event.tool === "get_intent_context");
+  const reads = intentReads(observations);
   return {
     intent: reads.some((event) => event.result === "ok")
       ? "satisfied"

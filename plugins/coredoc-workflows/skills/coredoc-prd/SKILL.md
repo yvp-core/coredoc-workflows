@@ -116,19 +116,19 @@ was read, what holds up, and what is missing. Search it for a likely
 duplicate. When a linked source cannot be read, say so in the standing
 disclaimer rather than skipping silently.
 
-If this session has a Coredoc intent capability — the `get_intent_context` MCP
-tool or the `coredoc intent context` CLI — make one read before the interview,
-with `task` (the request text) and, when known, `domain`/`feature` where the
-tool declares them, and take the domain vocabulary from the returned
-`matchedFeatureIds`, rules, and their wording; when `matchedFeatureIds` is
-empty, propose the feature in the interview: domain, title, one-sentence
-statement. Follow the PRD stage contract in
+If this session has the Coredoc `intent_read` MCP tool, read before the
+interview: `tree`, then `node` for the domain or feature the request belongs to
+(`search` with the request's key terms when the tree does not show which), and
+take the domain vocabulary from that document's rules, open questions and
+wording; when no node fits, propose the placement in the interview: domain,
+feature title, one-sentence statement. Follow the PRD stage contract in
 `<plugin-root>/resources/methodology/intent-context.md`: cite accepted intent
 beside the goals and rules it supports, keep candidate items as context or
 questions, and carry the exact ids you cited as `intentIds` with their
-`intentVersions`. When no intent capability is present, or the graph is empty,
-proceed from repository evidence alone and do not mention intent context in the
-output.
+`intentVersions`, which one `get_intent_context` read of those `intentIds`
+returns (a node read carries none). When no intent capability is present, or
+the workspace has no intent yet, proceed from repository evidence alone and do
+not mention intent context in the output.
 
 ### 1. Work type and shape
 

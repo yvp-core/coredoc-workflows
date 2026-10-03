@@ -73,6 +73,15 @@ test("classifyCoredocTool: intent_propose is write", () => {
   });
 });
 
+test("classifyCoredocTool: intent_read is read, intent_source_update is write", () => {
+  assert.deepEqual(classifyCoredocTool("intent_read", { action: "tree" }), {
+    access: "read",
+  });
+  assert.deepEqual(classifyCoredocTool("intent_source_update", {}), {
+    access: "write",
+  });
+});
+
 test("coredoc-tool-classes: byAction covers intent_anchor (preview is a read)", () => {
   const classes = loadCoredocToolClasses();
   assert.deepEqual(classes.byAction.intent_anchor, {

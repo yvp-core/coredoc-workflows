@@ -216,7 +216,7 @@ test("BR-1 refuses a successful spec close with no observed intent read", async 
         outcome: "success",
         at: "2026-09-15T10:00:03.000Z",
       }),
-    /closed without an observed get_intent_context read/,
+    /closed without an observed intent read/,
   );
   // The stage stays open for the remedy and nothing was recorded.
   assert.equal(
@@ -267,7 +267,7 @@ test("BR-1 counts only the current attempt's observations", async () => {
         outcome: "success",
         at: "2026-09-15T10:01:02.000Z",
       }),
-    /closed without an observed get_intent_context read/,
+    /closed without an observed intent read/,
   );
 });
 
@@ -370,7 +370,7 @@ test("warn prints the refusal, closes the stage, and records the would-be result
   assert.equal(closed.gatesWarned, true);
   assert.equal(closed.gates[0].result, "unmet");
   assert.equal(printed.length, 1);
-  assert.match(printed[0], /closed without an observed get_intent_context read/);
+  assert.match(printed[0], /closed without an observed intent read/);
 });
 
 test("--spec-path records the artifact on the run at the spec close", async () => {

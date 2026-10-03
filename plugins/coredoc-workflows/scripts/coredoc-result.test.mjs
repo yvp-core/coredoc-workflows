@@ -3,7 +3,6 @@ import { readFileSync, readdirSync } from "node:fs";
 import test from "../test/test-api.mjs";
 
 import {
-  OVERLAY_STATUS_RESULTS,
   POSITIVE_MARKERS,
   RESULT_TABLE,
   STATUS_RESULTS,
@@ -40,9 +39,6 @@ test("coredoc-result: the table covers every documented status and marker", () =
   for (const result of Object.values(STATUS_RESULTS)) {
     assert.equal(rows.includes(result), true, `no table row answers ${result}`);
   }
-  for (const result of Object.values(OVERLAY_STATUS_RESULTS)) {
-    assert.equal(rows.includes(result), true, `no table row answers ${result}`);
-  }
   assert.deepEqual(
     Object.keys(POSITIVE_MARKERS).filter((tool) => !isIntentTool(tool)),
     [],
@@ -52,12 +48,12 @@ test("coredoc-result: the table covers every documented status and marker", () =
 
 test("coredoc-result: every intent tool with a marker reaches ok, and only with it", () => {
   const positives = {
-    get_intent_context: { items: [] },
+    get_intent_context: { matches: [] },
     intent_propose: { items: [{ outcome: "created_candidate" }] },
     intent_review: { decisions: [] },
     intent_release: { contentHash: "abc" },
-    intent_anchor: { anchors: [] },
-    intent_tree: { id: "dom-workflow" },
+    intent_anchor: { target: {} },
+    intent_tree: { domain: { id: "dom-workflow" } },
   };
   for (const [tool, body] of Object.entries(positives)) {
     const toolResponse = [{ type: "text", text: JSON.stringify(body) }];
@@ -106,6 +102,28 @@ test("coredoc-result: every intent tool with a marker reaches ok, and only with 
   }
 });
 
+test("coredoc-result: intent_read answers ok only with a non-empty text document", () => {
+  const read = (text) =>
+    normalizeCoredocResult({
+      hookName: "PostToolUse",
+      tool: "intent_read",
+      toolResponse: [{ type: "text", text }],
+    });
+  assert.equal(read("- br-refund-window [business_rule] payments: refunds"), "ok");
+  assert.equal(read('{"unexpected":true}'), "unknown");
+  assert.equal(read("  "), "unknown");
+  assert.equal(read('{"status":"not_configured","message":"empty"}'), "not_configured");
+  // Another intent tool answering Markdown is still not a read.
+  assert.equal(
+    normalizeCoredocResult({
+      hookName: "PostToolUse",
+      tool: "get_intent_context",
+      toolResponse: [{ type: "text", text: "# Intent tree" }],
+    }),
+    "unknown",
+  );
+});
+
 test("coredoc-result: an intent tool without a marker row never answers ok", () => {
   assert.equal(
     normalizeCoredocResult({
@@ -136,8 +154,6 @@ test("coredoc-result: real and synthetic fixtures normalise as documented", () =
     ["synthetic-cloud-intent-propose-created.json", "ok"],
     ["synthetic-cloud-permission-denied.json", "denied"],
     ["synthetic-cloud-not-configured.json", "not_configured"],
-    ["synthetic-local-overlay-invalid.json", "invalid"],
-    ["synthetic-local-overlay-not-configured.json", "not_configured"],
     ["synthetic-cloud-intent-handoff-get.json", "ok"],
     ["synthetic-cloud-intent-handoff-list-empty.json", "ok"],
     ["synthetic-cloud-intent-handoff-save.json", "ok"],

@@ -54,7 +54,7 @@ const COREDOC_RESULTS = new Set([
   "error",
   "denied",
   "not_configured",
-  "invalid",
+  "invalid", // no longer produced; kept so older observations still load
   "unknown",
 ]);
 const MAX_OBSERVATION_REFS = 2;

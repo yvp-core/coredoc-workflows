@@ -120,8 +120,7 @@ file references. Its coverage is a lower bound; verify critical consumers
 against source. When no graph capability is present, proceed from repository
 evidence alone and do not mention it in the output.
 
-If this session has a Coredoc intent capability — the `get_intent_context` MCP
-tool or the `coredoc intent context` CLI — read
+If this session has the Coredoc `get_intent_context` MCP tool, read
 `<plugin-root>/resources/methodology/intent-context.md` and follow its fetch and
 PRD/spec stage contracts. Carry the ids you cite as `intentIds` with their
 `intentVersions`; from a PRD, its `intentIds` pass through unchanged. When no
