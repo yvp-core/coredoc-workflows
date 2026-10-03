@@ -1,6 +1,6 @@
 ---
 name: coredoc-capture
-description: Install, inspect, repair, upgrade, disable, or uninstall the Coredoc plugin-managed capture agent on macOS or Linux. Use for workflow/native telemetry setup or relay lifecycle requests; do not use for ordinary workflow event recording.
+description: Install, inspect, repair, upgrade, disable, or uninstall the Coredoc plugin-managed capture agent on macOS or Linux. Use for workflow or native telemetry setup and relay lifecycle requests.
 ---
 
 # Plugin-managed capture agent

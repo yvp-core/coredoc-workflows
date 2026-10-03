@@ -582,8 +582,8 @@ the method text; making one enforced is a job for a `PreToolUse` hook.
 
 The `.tmpl` files are the full method, not intentionally shortened prompts. The
 build expands every placeholder a workflow needs, so an invoked skill carries
-its complete methodology and needs no shell command to obtain it. Skills that
-are not invoked add no prompt context.
+its complete methodology and needs no shell command to obtain it. A skill that
+is not invoked adds only its name and description to the prompt context.
 
 Semantic gates are preserved: confidence scoring and quoted evidence, framework
 metadata verification, plan-completion and scope audits, specialist and

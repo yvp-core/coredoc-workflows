@@ -41,7 +41,6 @@ export const PARTIALS = Object.freeze({
   PREAMBLE: "coredoc-overlay.md",
   BROWSE_SETUP: "browser-setup.md",
   QA_SURFACE_SETUP: "qa-surface-setup.md",
-  BASE_BRANCH_DETECT: "base-branch.md",
   CACHE_WRITE: "cache-write.md",
   CONFIDENCE_CALIBRATION: "confidence-calibration.md",
   PRE_SPEC_ALIGNMENT: "pre-spec-alignment.md",

@@ -9,6 +9,5 @@ B() { "<plugin-root>"/bin/coredoc-workflows browse "$@"; }
 B doctor
 ```
 
-The launcher uses an installed Google Chrome-compatible browser. It stores
-daemon state under `~/.coredoc/<project-key>/cache/browse`, outside the repository.
-Run `B help` for the runtime command reference.
+Daemon state lives in `~/.coredoc/<project-key>/cache/browse`, outside the
+repository. Run `B help` for the runtime command reference.

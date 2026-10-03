@@ -1,6 +1,6 @@
 ---
 name: coredoc-devex-review
-description: Audit the live developer experience of a CLI, SDK, API, plugin, or config surface — install cold, measure time to hello world, and score getting started, ergonomics, errors, docs, and upgrade path against evidence. Use for a DX audit or when asked how a developer-facing surface feels to adopt.
+description: Audit the developer experience of a CLI, SDK, API, plugin, or config surface from a cold install. Use for a DX audit or when asked how a developer-facing surface feels to adopt.
 ---
 
 # Live developer-experience audit

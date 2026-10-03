@@ -1,6 +1,6 @@
 ---
 name: coredoc-plan-review
-description: Review an implementation plan for architecture, data flow, edge cases, testing, performance, and scope before coding. Use for engineering plan review or when asked whether a technical design is ready to implement.
+description: Review an implementation plan before coding. Use for engineering plan review or when asked whether a technical design is ready to implement.
 ---
 
 # Engineering plan review adapter

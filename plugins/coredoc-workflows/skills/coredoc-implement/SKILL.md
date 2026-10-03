@@ -1,6 +1,6 @@
 ---
 name: coredoc-implement
-description: Implement an authorized code, deletion, refactor, configuration, dependency, documentation, or generated-output change with the smallest proof that matches its observable risk. Use for ordinary routed changes; use coredoc-tdd only when strict test-first work is explicitly requested.
+description: Implement an authorized code, deletion, refactor, configuration, dependency, documentation, or generated-output change with the smallest proof that matches its observable risk. Use for ordinary routed changes.
 ---
 
 # Adaptive implementation

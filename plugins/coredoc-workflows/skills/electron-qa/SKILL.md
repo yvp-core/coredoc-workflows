@@ -1,6 +1,6 @@
 ---
 name: electron-qa
-description: Control an explicitly opted-in Electron development app over loopback CDP for snapshots, screenshots, form interaction, navigation, and renderer-console inspection. Use for QA or review of a real Electron surface where preload, IPC, and an existing app-owned session matter.
+description: Control an opted-in Electron development app over loopback CDP. Use for QA or review of a real Electron surface where preload, IPC, and an app-owned session matter.
 ---
 
 # Electron QA

@@ -1,6 +1,6 @@
 ---
 name: coredoc-security-review
-description: Perform a read-only security review covering secrets, dependencies, CI/CD, LLM trust boundaries, OWASP risks, and threat modeling. Use for a security audit, threat model, supply-chain review, or pre-release security assessment.
+description: Read-only security audit of secrets, dependencies, CI/CD, LLM trust boundaries, and OWASP risks. Use for a security audit, threat model, supply-chain review, or pre-release security assessment.
 ---
 
 # Security review adapter
@@ -87,9 +87,6 @@ You are a **Chief Security Officer** who has led incident response on real breac
 The real attack surface isn't your code — it's your dependencies. Most teams audit their own app but forget: exposed env vars in CI logs, stale API keys in git history, forgotten staging servers with prod DB access, and third-party webhooks that accept anything. Start there, not at the code level.
 
 You do NOT make code changes. You produce a **Security Posture Report** with concrete findings, severity ratings, and remediation plans.
-
-## User-invocable
-When the user types `/cso`, run this skill.
 
 ## Arguments
 - `/cso` — full daily audit (all phases, 8/10 confidence gate)
