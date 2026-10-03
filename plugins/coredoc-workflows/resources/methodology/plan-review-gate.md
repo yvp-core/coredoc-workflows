@@ -3,28 +3,26 @@
 Before declaring an engineering plan ready, re-read the final plan after the most
 recent change and confirm:
 
-1. Every material finding was presented to the user and every decision records
+1. Premises were checked against current code and release context.
+2. Scope, non-goals and existing reusable mechanisms are explicit.
+3. Every accepted outcome maps to implementation and validation.
+4. Reachable failure modes and public consumers are covered, plus rollout and
+   rollback where release or data context requires them.
+5. Every material finding was presented to the user and every decision records
    the accepted option. Writing findings into the plan is not a substitute for
    asking about unresolved choices.
-2. The plan lists unresolved questions or the exact statement `NO UNRESOLVED DECISIONS`.
-3. Unverifiable external or cross-repository assumptions are classified as such,
+6. Unresolved user decisions are visible rather than defaulted: the plan lists
+   them or the exact statement `NO UNRESOLVED DECISIONS`.
+7. Unverifiable external or cross-repository assumptions are classified as such,
    never marked complete from related local code.
-4. Only the resolved review policy's blocking set withholds readiness.
+8. Findings follow policy and no nonblocking observation silently expanded
+   scope; only the resolved review policy's blocking set withholds readiness.
 
 End with the accepted decisions, residual risks, non-goals, validation commands,
 and readiness verdict.
 
 Do not start implementation merely because the review is complete. For a gated
 large change, present the reviewed direction and material deltas first, then
-ask one explicit **Accept and implement / Revise** decision. Only an
-unambiguous acceptance of that decision counts: it both accepts the reviewed
-specification and authorizes implementation. An acknowledgement, a partial
-answer, or an acceptance with a requested change is a revision request. Routed
-plan review never marks the specification accepted. After approval, the
-implementation stage completes its read-only preflight and proof-plan
-announcement. If the reviewed frontmatter is `status: draft`, implementation
-sets it to `status: accepted` as its first repository write before any code or
-test edit; an unchanged accepted status from a prior session is preserved. A
-requested revision returns to specification and review. The original change
-request, pre-spec alignment approval, spec existence, or a positive review
-verdict is not that approval.
+ask one explicit **Accept and implement / Revise** decision; only an
+unambiguous acceptance of it counts. Routed plan review never marks the
+specification accepted.

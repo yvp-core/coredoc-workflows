@@ -5,7 +5,8 @@ description: Implement a feature or bug fix test-first with a strict red-green-r
 
 # Test-driven implementation
 
-Resolve `<plugin-root>` as two directories above this file.
+Resolve `<plugin-root>` as two directories above this file. Stay inside the
+user's authorization boundary.
 
 For a change whose best proof is not a new failing test (a deletion,
 behavior-preserving refactor, documentation, configuration, or generated

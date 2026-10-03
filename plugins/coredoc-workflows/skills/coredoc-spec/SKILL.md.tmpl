@@ -1,6 +1,6 @@
 ---
 name: coredoc-spec
-description: Use whenever the user asks to write, draft, or update a spec, specification, ticket, issue, epic, or backlog item, or to "spec out" a change, whether the request is vague or already fully detailed. Produces a compact executable specification (scope, use cases, acceptance criteria, implementation plan) grounded in repository evidence, sized to the change, and stops to ask before writing when a high-blast-radius decision is unresolved.
+description: Use whenever the user asks to write, draft, or update a spec, specification, ticket, issue, epic, or backlog item, or to "spec out" a change, whether the request is vague or already fully detailed. Produces a compact executable specification (scope, use cases, acceptance criteria, implementation plan) grounded in repository evidence and sized to the change.
 ---
 
 # Specification adapter
@@ -11,23 +11,23 @@ requires explicit user authorization; never persist the original prompt or secre
 
 {{PREAMBLE}}
 
-{{PRD_SPEC_CONTRACT}}
-
 ## Input modes
 
 Decide the mode before anything else and name it in the reply.
 
 **A PRD is available**: a path, pasted text, or a Jira issue read through
-`coredoc-jira`. The PRD owns product intent: cite its rows by id (`G-n`, `D-n`,
-`US-n`, `EC-n`, `NG-n`) and never restate or re-derive product content. The
-spec's work: verify each `[unverified]` claim against the repository and record
-the outcome per claim (verified, contradicted with evidence, or not verifiable
-here); answer each `OQ` addressed to Engineering, or state exactly what is
-needed to answer it; add the technical contract, acceptance criteria that trace
-to `US`/`D` rows, the plan, and technical limitations, under technical ids only
-(`AC-n`, `LIM-n`, plan steps). A product rule the change needs and the PRD
-lacks goes under **Candidates for the PRD**, without an id. The spec proposes
+`coredoc-jira`. The spec's work: verify each `[unverified]` claim against the
+repository and record the outcome per claim (verified, contradicted with
+evidence, or not verifiable here); answer each `OQ` addressed to Engineering,
+or state exactly what is needed to answer it; add the technical contract,
+acceptance criteria that trace to `US`/`D` rows, the plan, and technical
+limitations, under technical ids only (`AC-n`, `LIM-n`, plan steps). A product
+rule the change needs and the PRD lacks goes under **Candidates for the PRD**,
+without an id. The spec proposes
 nothing to the intent graph; it carries the PRD's `intentIds` through unchanged.
+Before writing from a PRD, read
+`<plugin-root>/resources/methodology/prd-spec-contract.md`, the contract both
+documents follow.
 
 **No PRD, and the request is product-shaped or vague.** Do not interview the
 developer about product decisions. Ground what the repository can answer, then
@@ -83,15 +83,14 @@ decisions without silently widening them. For raw ideas and unaccepted proposals
 select the smallest reversible slice that can prove value. A new store, service,
 shared schema, public API, synchronization path, automatic lifecycle, or workflow
 integration needs a current consumer and observable requirement in this slice;
-otherwise defer it. Leave owner-controlled distribution, authority, and contract
-choices unresolved when selecting one would materially expand the result. An
-unresolved decision must rest on a supplied fact or repository evidence. A
-supplied fact such as "nothing else references it" closes that failure class:
-name no flag provider, scheduler, persistence layer, or other infrastructure
-anywhere in the spec, not even as a non-goal or a hedge. A confirmed root cause
-plus fix in the request is the slice: hardening the failure class (validation,
-fail-fast, warnings, `0`/empty/non-numeric handling) is a one-line non-goal or
-follow-up, never an AC, remedy step, or decision, unless the user asked for it.
+otherwise defer it. An unresolved decision must rest on a supplied fact or
+repository evidence. A supplied fact such as "nothing else references it"
+closes that failure class: name no flag provider, scheduler, persistence layer,
+or other infrastructure anywhere in the spec, not even as a non-goal or a hedge.
+A confirmed root cause plus fix in the request is the slice: hardening the
+failure class (validation, fail-fast, warnings, `0`/empty/non-numeric handling)
+is a one-line non-goal or follow-up, never an AC, remedy step, or decision,
+unless the user asked for it.
 
 Absent infrastructure is a constraint, not a decision. When the request states
 there is no queue, scheduler, or store, the smallest slice consistent with that
@@ -121,9 +120,9 @@ settled interview. Verify runtime pins and configuration conventions in manifest
 lockfiles and neighbouring integrations before asking for a version preference.
 
 Resolve repository-verifiable facts yourself. Ask the user only for decisions
-that materially change the outcome, boundary, public contract, data ownership/lifecycle,
-migration, consistency or performance posture, security/retention, compatibility,
-rollout, or acceptance. If repository constraints leave one viable path, explain
+that materially change the outcome, public contract, data lifecycle, migration,
+consistency or performance posture, security/retention, compatibility, or
+rollout. If repository constraints leave one viable path, explain
 the constraint and proceed; do not invent alternatives merely to ask a question.
 
 #### Decide whether interaction is needed
@@ -205,11 +204,8 @@ Use stable IDs so the intent can later form a graph beside the code graph:
 - `AC-n`: pass/fail acceptance criterion and its observer.
 - `ADR-n`: decision with context, alternatives, consequences, and status.
 
-With a PRD, the product layer is the PRD's rows: cite them and write no `UC` or
-`BR` that restates one; the spec adds only `LIM-n` for technical limits and
-`AC-n` tracing to `US`/`D`. Without a PRD, these
-semantic kinds are tools, not quotas. Omit an inapplicable kind instead of
-inventing a row.
+Without a PRD, these semantic kinds are tools, not quotas. Omit an inapplicable
+kind instead of inventing a row.
 
 Granularity test: a `UC`/`BR`/`LIM` row describes behaviour a product owner
 would recognise without reading code. If stating it needs a function name,
@@ -251,9 +247,6 @@ Before delivery, check:
 
 - every product-level outcome maps to at least one use case/rule and observable
   `AC`, and no `UC`/`BR`/`LIM` row fails the granularity test in §4;
-- with a PRD, every `[unverified]` claim has a recorded outcome, every
-  Engineering `OQ` is answered or its missing input named, and no product
-  content is restated outside a citation;
 - every planned change maps to an accepted outcome;
 - acceptance names observable behaviors and predicates, not test counts or
   invented percentage targets; preserve only binding numeric or compliance gates;
