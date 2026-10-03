@@ -49,12 +49,7 @@ const CLI_CARRIERS = {
   "finish-run": ["coredoc-workflows"],
   "run-status": ["coredoc-workflows"],
   spec: ["coredoc-workflows"],
-  "project-key": [
-    "coredoc-benchmark",
-    "coredoc-runtime-qa",
-    "coredoc-runtime-qa-report",
-    "coredoc-security-review",
-  ],
+  "project-key": ["coredoc-benchmark", "coredoc-runtime-qa", "coredoc-runtime-qa-report"],
   browse: [
     "coredoc-benchmark",
     "coredoc-browse",

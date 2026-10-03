@@ -14,10 +14,8 @@ Write in the product's own vocabulary: the terms the intent graph or the PRD
 profile supplies, and otherwise the terms the repository's product docs use.
 Keep every table narrow and every cell to one line.
 
-**Row ids are stable.** `G-n`, `D-n`, `US-n`, `EC-n`, `NG-n`, `OQ-n` are
-assigned once and never renumbered. A row removed in a revision keeps its number
-retired; a new row takes the next number. Cross-references inside the PRD cite
-these ids.
+**Row ids** follow the contract's stable-row-id rule: a new row takes the next
+number, and cross-references inside the PRD cite these ids.
 
 **The PRD describes the behaviour the system must have. It never instructs
 whoever builds it.** No sentence is addressed at an implementer: no "do not
@@ -37,7 +35,7 @@ estimate written into a PRD becomes a commitment nobody made.
 ```markdown
 ---
 status: draft | approved
-intentIds: []        # filled after approval: approving the PRD proposes and accepts its rows verbatim
+intentIds: []        # ids cited from intent context; approval adds each accepted row's slug
 ---
 ```
 
@@ -91,9 +89,6 @@ and never what it was meant to leave alone.
 Non-goals are what the requester excluded plus the guardrail rows for existing
 behaviour this change touches, and nothing else. A decision is never restated
 as a non-goal; a population that is out ("not for Employees") appears once.
-Whenever this changes something that already exists, the current behaviour
-that must survive unchanged is an `NG-n` row: it is the regression scope, and
-without it the build silently drops behaviour nobody wrote down.
 
 ## Current vs Desired
 
@@ -117,9 +112,7 @@ must **not**.
 | D-1 | [Mid-period changes recompute the whole period] | [Forward-only from the change date] | PM |
 
 Only decisions where two readings produce materially different builds, the ones
-the interview took one at a time. A ruling in the request ("we decided", "we
-rejected") is a row with the decider as `PM` or the requester's role; never
-open an `OQ` asking who decided. An entry with no alternative weighed is an
+the interview took one at a time. An entry with no alternative weighed is an
 assumption and belongs below. If the interview settled none, say so in one line.
 
 ## Assumptions
@@ -153,16 +146,9 @@ question.
 
 ## User stories
 
-**The shape the user asked for is the shape they get.** A task, a single
-ticket, or one PRD produces **one story**, with every concern that applies
-appearing as a sub-section or an acceptance criterion inside it. The
-epic-with-children shape is the default only where the user asked for an epic.
-
-**A split needs a reason.** Work becomes more than one story only where at
-least one of three conditions holds: the parts can **ship** independently, be
-**tested** independently, or carry **genuinely different rules**. Absent one of
-those, it is one story with named sub-sections. Where a split condition holds
-inside work the user asked to be one item, ask rather than deciding.
+The shape follows the skill's work-type step: one story, with every concern
+that applies appearing as a sub-section or an acceptance criterion inside it,
+unless that step's split conditions or an asked-for epic say otherwise.
 
 ---
 **US-1  [Story title]**

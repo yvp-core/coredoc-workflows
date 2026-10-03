@@ -1,12 +1,6 @@
 # Review checklist
 
-Load only the sections relevant to the diff.
-
 ## High-impact candidates
-
-These categories identify where to inspect. Assign severity only after the shared
-finding contract proves current reachability, impact, and violated behavior;
-then use the resolved Review policy to determine whether the finding blocks.
 
 - Data loss, unsafe migrations, incorrect transaction boundaries, or writes that
   bypass invariants.
@@ -30,13 +24,11 @@ then use the resolved Review policy to determine whether the finding blocks.
 
 ## Simplification advice
 
-Within the requested diff, look for unused flexibility, one-implementation
-abstractions, and custom code or dependencies duplicating an available built-in.
-Apply `<plugin-root>/resources/methodology/search-before-building.md` before recommending a
-replacement and prove it preserves the current contract. Name the concrete
-structure that can be removed and what replaces it. Correct behavior with a
-smaller implementation is P3 advice; it does not become a defect or approved work
-because of line count. Do not spawn an extra reviewer solely for this lens.
+Within the requested diff, a smaller implementation of correct behavior is P3
+advice, never a defect or approved work. Apply
+`<plugin-root>/resources/methodology/search-before-building.md` before recommending a
+replacement and prove it preserves the current contract. Do not spawn an extra
+reviewer solely for this lens.
 Tests, security checks, input validation, error paths, and accessibility are not
 deletion targets. If no useful simplification exists, say nothing about it.
 
@@ -75,8 +67,3 @@ considered whether all of these rules are needed at this stage?"
   executed or imported by production code.
 - Do not report anything the reviewed diff already addresses; read the full diff
   before reporting.
-
-## Finding format
-
-Provide severity, confidence, `path:line`, evidence, impact, and the smallest
-recommended fix. Review is read-only unless the user asks to address findings.

@@ -1,14 +1,6 @@
-> Part of the `coredoc-prd` skill. Read on demand; `asking.md` says how each
-> question below is delivered.
+> Part of the `coredoc-prd` skill. Read on demand.
 
 # The interview
-
-## Why the interview is the whole job
-
-PRD quality is downstream of interview quality. A PRD assembled from a thin
-interview looks complete and fails in build, because the gaps sit where nobody
-asked. The template and the write are bookkeeping on top of what the interview
-surfaced.
 
 ## Find the goal, not the task
 
@@ -18,8 +10,6 @@ decision that task serves, and only they can set it.
 - Establish the core problem, who it is for, and **who it is explicitly not
   for**.
 - Ask the questions the user would not know to ask. That is the value added.
-- Work key decisions one at a time. "Use your best judgment" is a valid answer:
-  proceed, and record the assumption where it can be seen.
 - Summarize back before drafting, and show the decisions so the user can
   override before anything commits.
 - Keep scope tight. When direction changes, say what moved.
@@ -34,9 +24,8 @@ Openers that reach the goal rather than the task:
 
 **Coverage questions** are factual gaps with no trade-off: which fields, which
 roles, which surfaces, whether an export changes. They go out as **one batched
-round**: a short sequence of single-question calls, empty groups dropped and
-anything already answered left out. Drip-feeding turns a five-minute answer into
-a forty-minute interrogation, and the answers get careless.
+round**, as the host interaction contract allows, with empty groups dropped and
+anything already answered left out.
 
 **Decisions** are where two readings produce materially different builds. They
 are surfaced **one at a time**, with the options and the trade-off spelled out,
@@ -63,6 +52,85 @@ ahead. If they proceed, name the items left open: the ones that block a story
 or a criterion become `OQ-n` rows, the rest become Assumption rows with a
 one-line reason.
 
+## How to ask
+
+### The tool
+
+Without the host's question tool, present the same options as numbered text in
+the same order, "reply 1, 2, or 3, or tell me something else", then stop and
+wait.
+
+### The envelope
+
+Each option is a short label of a few words. Put the reasoning and the evidence
+in the line before the call, not inside the option. Where more than one answer
+can be true at once, say so in that line and ask for several. Stop after the
+call; do not keep drafting past it.
+
+Where a recommendation belongs with a decision, it goes in the line before the
+call and the options carry only the choices:
+
+> Mid-period policy change. I'd suggest recomputing the whole period, since a
+> manager seeing two rules inside one period is the harder thing to explain,
+> but it can move totals someone already approved, so it is your call.
+>
+> *[Recompute the period · Forward-only · Not sure]*
+
+### Three kinds of question
+
+**Fixed options**: the answer set is already known. Yes/no, either/or, which
+work type, which roles, which rollout shape.
+
+**Generated options**: the answer set is not fixed anywhere, but two or three
+plausible answers follow from what was just read. The likely values of a
+dropdown seen in the design, the probable default of a toggle, candidate edge
+cases for this feature, the teams that plausibly need to know.
+
+**Text**: no option set can hold the answer honestly. The problem itself, a
+rule nothing read suggests, a number, a date, a correction to the summary. Ask
+for prose and mean it.
+
+### Generating options from evidence
+
+Options come from something read or something the user already said, never
+from invention. Say where they came from in the line before the call, because
+an option the user cannot trace is one they cannot correct:
+
+> The design shows a "Period" dropdown with no values listed. From the screens
+> around it these look like the candidates:
+
+If nothing read suggests candidates, the question is a text question;
+producing plausible-looking values from nowhere is worse than asking, because a
+wrong option set gets tapped.
+
+Ask in prose about how the system behaves today, which belongs in Open
+Questions, and about any rule the user has not stated: a tapped guess reads
+exactly like a confirmed rule.
+
+A tapped option is the user's answer, not a fact this skill verified: one about
+how the system behaves today still carries `[unverified]` and an `OQ-n` row for
+Engineering, or stays out of the acceptance criteria.
+
+### The escape
+
+Every question carries a way out: **Other**, **None of these**, or **Not sure**,
+chosen to fit the question. Where the host adds its own free-text escape, the
+options still name "Not sure" explicitly when a non-answer is a plausible
+outcome, because a tapped "Not sure" is a recorded answer the PRD can carry as
+an `OQ-n` row. When "None of these" would make a concern `N/A` or an edge case
+out of scope, say so in the line before the call.
+
+### Profile concern groups
+
+Each call carries its own context line, what that group covers and what ticking
+an item produces, so the user can tell the rounds apart. The first call says
+how many are coming.
+
+> **Call 1 of 2: where the data goes.** Ticking a row here produces one line in
+> the concerns table.
+>
+> *[Reports · Exports · Integrations]* (plus: None of these · Not sure)
+
 ## Who can settle which claim
 
 A PRD mixes two kinds of statement that look identical on the page.
@@ -82,15 +150,8 @@ about this, as opposed to changing their mind?** If yes, it is the second kind,
 however confidently it arrived. It carries an inline `[unverified]` marker
 where it appears and one `OQ-n` row addressed to Engineering. A marker with no
 question is a shrug; the question is what gets it answered. A ruling in the
-request, "we decided X" or "we rejected Y", is the first kind: record it as a
-`D-n` row with the decider as `PM` or the requester's role, and never ask who
-decided.
-
-**The marker goes on claims and never on requirements.** A statement of
-behaviour being built is a decision; the only thing that would make it uncertain
-is nobody having taken it, which is a different problem with a different home.
-Where a requirement leans on an unverified fact, mark the fact and leave the
-requirement clean.
+request is the first kind. Where a requirement leans on an unverified fact, mark
+the fact and leave the requirement clean.
 
 ## One destination for anything unsettled
 
@@ -108,9 +169,7 @@ user can carry them into a conversation without this skill in the room:
 - What signal would tell us this worked, and what would tell us it silently
   did not?
 
-Ask only the ones that apply. This skill asks these and records answers. It
-does not answer them and does not offer a theory about what the answer probably
-is: a guess gets built, a blank gets answered.
+Ask only the ones that apply.
 
 ## A non-answer is not an answer
 
@@ -124,24 +183,11 @@ it.
 
 ## Verification realism
 
-**State the conditions.** A criterion about a computed or derived value names
-the conditions it holds under, which configuration, which inputs, which state,
-or it does not get written. "Shows the right number" will be marked passed
-against whatever the system produces.
-
-**Never rest on the absence of an error.** "Runs without errors" asserts that
-nothing visible went wrong, not that the right thing happened. Name the
-observable result. A stated non-effect is different and often the one that
-matters: "totals for users outside the change are unchanged" is observable.
-
-**Send configuration-dependent answers to Open Questions.** Where the expected
-value depends on configuration, ask which configuration governs it rather than
-picking one.
-
-**Write a worked example for a computed rule** when the profile requires one
-or the user can supply the values: given stated inputs and configuration, the
-output reads a stated value. Where the values are not confirmed, keep a
-placeholder with an `OQ-n` row rather than dropping it.
+Ask for what the template's acceptance-criteria rules need: the conditions a
+computed value holds under, an observable result rather than "no errors", and
+the values for a worked example where the profile requires one. Where the
+expected value depends on configuration, ask which configuration governs it
+rather than picking one.
 
 ## Show inferences as inferences
 
@@ -189,7 +235,7 @@ those, then check again.
 ## Question groups
 
 Work through the groups as one batched round, dropping empty groups and
-anything already answered. `asking.md` says how each is asked.
+anything already answered.
 
 ### A. Scope and goals
 
@@ -246,21 +292,3 @@ asked as several yes/no questions), the risks that are real (no minimum count;
 an empty answer comes back once with named candidates, then stands), rollback
 and who decides, dependencies, dates; which teams need to know, whether a demo
 or documentation is needed.
-
-## Worked example
-
-> **User:** I need a PRD for bulk approval of pending items.
-
-1. Read the repository's product docs, existing PRDs, and the profile, then
-   report what already holds up and what is missing.
-2. Check the goal in one line: "Reading this as: supervisors lose time
-   approving items one at a time at period close, and the goal is closing
-   faster, not changing which items need approval. Right?"
-3. Inferences stated as inferences: which roles reach the screen, the default
-   period, whether closed periods are editable.
-4. One batch of coverage questions: which states are eligible, which roles can
-   bulk-approve, whether the export changes.
-5. Decisions one at a time: does bulk approval run the same validation as
-   single approval? What happens to items that fail validation mid-batch?
-6. Summary with the decisions and their alternatives. User confirms.
-7. Draft from the template. Revise on request. Ask for approval, then write.

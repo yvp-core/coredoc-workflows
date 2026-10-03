@@ -8,4 +8,4 @@ effort: medium
 
 Review only the assigned diff using the checklist and constraints in the
 dispatch prompt. Stay read-only. The dispatch prompt defines the output format;
-do not add a preamble or a competing schema. Do not spawn subagents.
+do not add a preamble or a competing schema.

@@ -27,10 +27,7 @@ review scope. Matching base/head is insufficient when either tree is dirty:
 - when an accepted handoff records that budget as exhausted, verify unresolved
   blockers, accepted fixes, and their direct dependents rather than starting
   another full pass;
-- after fixes, review the changed paths and direct dependents, not untouched code;
-- allow another full pass only for a newly affected risk domain, a material scope,
-  public-contract or trust-boundary change, unresolved evidence, or an explicit
-  repository requirement.
+- after fixes, review the changed paths and direct dependents, not untouched code.
 
 Targeted evidence verification is always permitted for a factual claim in the handoff,
 regardless of the convergence budget or recorded disposition. If that verification
@@ -42,17 +39,13 @@ For a pass that is still authorized, generate candidates without anchoring on th
 prior conclusions. At the findings step, reconcile them against the handoff and
 deduplicate by semantic root cause, not `path:line:category`:
 
-- merge affected locations and record confirming reviewers without boosting
-  confidence or severity;
+- merge affected locations and record confirming reviewers;
 - do not re-emit an unchanged finding with an accepted disposition `fixed`,
   `accepted-risk`, `deferred`, or `rejected` as a new candidate, but retain it in
   the handoff and final-verdict accounting; carry it as open when its severity or
   category still blocks under the effective policy. `accepted-risk` unblocks
   only when the maintainer is authorized to override that policy, and `deferred`
-  alone never unblocks a blocking finding; keep severity in its separate field;
+  alone never unblocks a blocking finding;
 - reopen an accepted disposition when changed code, a new trigger/evidence/impact,
   or targeted verification disproves a factual premise;
-- record which pass occurred and leave its acceptance to the maintainer.
-
-Converge according to the effective repository policy and the generic fallback.
-Use explicit caller-provided history; never persist a hidden workflow ledger.
+- record which pass occurred.

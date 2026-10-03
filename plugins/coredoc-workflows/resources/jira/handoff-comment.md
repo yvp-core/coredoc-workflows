@@ -1,8 +1,7 @@
 # Jira handoff comment
 
-Use this only as the body of an explicitly authorized Jira comment after the
-work reaches a real handoff point. Keep it concise and grounded in observed
-repository and provider evidence.
+Use this only as the body of an explicitly authorized Jira comment at a real
+handoff point, grounded in observed evidence.
 
 ## What changed
 
