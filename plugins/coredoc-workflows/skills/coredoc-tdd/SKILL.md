@@ -1,6 +1,6 @@
 ---
 name: coredoc-tdd
-description: Implement a feature or bug fix with ordinary repository tests using a strict red-green-refactor loop. Use only when the user explicitly asks for TDD or strict test-first work; ordinary routed changes use coredoc-implement.
+description: Implement a feature or bug fix test-first with a strict red-green-refactor loop. Use only when the user explicitly asks for TDD or strict test-first work.
 ---
 
 # Test-driven implementation

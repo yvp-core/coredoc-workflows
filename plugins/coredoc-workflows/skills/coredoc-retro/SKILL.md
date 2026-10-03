@@ -1,6 +1,6 @@
 ---
 name: coredoc-retro
-description: Run a compact evidence-based engineering retrospective over local git history and current validation results. Use for a weekly retro, delivery review, or a factual summary of what shipped and what should change next.
+description: Engineering retrospective over local git history and validation results. Use for a weekly retro, delivery review, or a summary of what shipped and what should change next.
 ---
 
 # Compact engineering retrospective

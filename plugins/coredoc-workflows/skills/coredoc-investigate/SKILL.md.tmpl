@@ -1,6 +1,6 @@
 ---
 name: coredoc-investigate
-description: Diagnose a bug or performance regression with evidence-first root-cause analysis, Coredoc graph grounding, and repository-native validation. Use for broken behavior, errors, regressions, or root-cause analysis.
+description: Diagnose a bug or performance regression to a verified root cause. Use for broken behavior, errors, regressions, or root-cause analysis.
 ---
 
 # Coredoc investigation adapter
