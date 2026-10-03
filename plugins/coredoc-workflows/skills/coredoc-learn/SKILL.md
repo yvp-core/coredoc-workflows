@@ -5,50 +5,37 @@ description: Extract, inspect, or explicitly persist a concise reusable engineer
 
 # Evidence-grounded learning
 
-Turn an observed outcome into a future action, not a transcript or prompt archive.
-
-## Default behavior
-
-- Stay read-only unless the user explicitly asks to save, update, or remove a
-  learning.
-- Use the current task evidence plus local repository history, tests, rules, and
-  Coredoc graph context where useful.
-- Do not automatically capture anything at the end of a task.
-- Do not create a global memory database, append-only ledger, hidden history, or
-  plugin-specific state directory.
-- Never persist the original task, prompts, command bodies, source, diffs, logs,
-  credentials, personal data, or full incident narratives.
+Turn an observed outcome into a future action, using the current task's
+evidence, local repository history, tests and rules, and Coredoc graph context
+where useful.
 
 ## Quality gate
 
-A candidate is worth retaining only when it:
-
-1. generalizes beyond the current incident;
-2. cites concrete evidence;
-3. changes a future decision or action;
-4. states its scope and a condition for revalidation; and
-5. does not merely repeat a repository rule that already exists.
-
-If it fails this gate, explain the observation in the current conversation and do
-not recommend persistence.
+Keep a candidate only if it generalizes beyond this incident, cites concrete
+evidence, changes a future decision or action, states its scope and when to
+revalidate it, and does not repeat an existing repository rule. Otherwise
+explain the observation in the conversation and do not recommend persisting it.
 
 ## Learning card
 
-Resolve the plugin root as two directories above this file and use
-`<plugin-root>/resources/learning-card.md`. Keep the card under 120 words.
-Prefer a stable SHA, file path, test name, incident identifier, or measurement as
-evidence. Mark inference as inference.
+Keep it under 120 words and mark inference as inference.
+
+- **Lesson:** the reusable conclusion, stated concretely.
+- **Applies when:** scope and trigger conditions.
+- **Evidence:** a stable commit SHA, path, test name, incident identifier, or
+  measurement.
+- **Do:** the future action it supports.
+- **Avoid:** the failure pattern it replaces.
+- **Revalidate when:** what may make it stale.
+- **Confidence:** `high`, `medium`, or `low`, with one short reason.
 
 ## Persistence boundary
 
-Only persist when the user explicitly asks:
-
-1. Search repository documentation for an existing learning or rule first.
-2. Update the existing entry when it expresses the same lesson.
-3. Prefer the repository's established contributor or agent documentation.
-4. If no convention exists, ask where the learning belongs before creating a new
-   storage location.
-5. Show the exact proposed card and target before writing.
-
-Deletion or broad pruning requires an explicit target. Do not infer permission to
-rewrite unrelated guidance.
+Save, update, or remove a learning only when the user explicitly asks, never
+automatically at the end of a task. Lessons live in repository docs, not host
+memory or a private state directory. Search them first and update an entry that
+states the same lesson; otherwise use the established contributor or agent docs,
+and ask where it belongs when there is no convention. Show the exact card and
+target before writing. Never persist the original task, prompts, command bodies,
+source, diffs, logs, credentials, personal data, or full incident narratives.
+Delete or prune only an explicit target, and do not rewrite unrelated guidance.

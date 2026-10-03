@@ -5,123 +5,89 @@ description: Install, inspect, repair, upgrade, disable, or uninstall the Coredo
 
 # Plugin-managed capture agent
 
-Resolve `<plugin-root>` as two directories above this file. The executable is:
-
-```text
-<plugin-root>/bin/coredoc-workflows capture <command>
-```
-
-This is the supported entry point for an installed plugin; do not assume the
-executable is on `PATH`, and do not ask the user to locate a plugin cache.
+Resolve `<plugin-root>` as two directories above this file and run
+`<plugin-root>/bin/coredoc-workflows capture <command>` by that full path.
 
 The optional agent supports macOS Apple silicon and Linux x86_64 with glibc
-and a running systemd user manager. It uses the plugin's pinned
-bundled Bun runtime. It does not require system Node, Bun, or Python. The agent writes only
-per-user state below `~/.coredoc`, a per-user LaunchAgent or systemd unit, and marker-owned global Claude
-Code/Codex settings. It must not create repository files, use Coredoc MCP for
-routing or credentials, read an MCP credential store, or require Coredoc
-Desktop. Plugin ownership uses `ai.coredoc.workflows.capture-relay` and
-`~/.coredoc/capture-agent/capture-relay`; the legacy Desktop label, plist, and
-`~/.coredoc/capture-relay` root are never mutation targets.
+and a running systemd user manager, runs on the plugin's bundled Bun, and needs
+no system Node, Bun, or Python, and no Coredoc Desktop. It writes per-user
+state below `~/.coredoc`, a per-user LaunchAgent or systemd unit, and
+marker-owned global Claude Code/Codex settings, and never reads an MCP
+credential store. Plugin-owned state uses
+`ai.coredoc.workflows.capture-relay` and `~/.coredoc/capture-agent/capture-relay`;
+the legacy Desktop label, plist, and `~/.coredoc/capture-relay` root are never
+mutation targets.
 
-Before `setup`, `repair`, `upgrade`, authenticated `doctor`, or
-`uninstall --purge`, require an operator-provisioned mode-0600 policy at
+`setup`, `repair`, `upgrade`, authenticated `doctor`, and `uninstall --purge`
+need an operator-provisioned mode-0600 policy at
 `~/.coredoc/capture-agent-policy.json` (or the same filename directly below an
-explicit absolute `COREDOC_HOME`). Schema 1 contains exactly one canonical
-HTTPS `serverOrigin` and one RFC-4122 `workspaceId`. Schema 2 lists
-`destinations`: one `default` plus optional destinations that each own absolute
-checkout paths, so sessions in those checkouts route to their own server
-(loopback `http://127.0.0.1:<port>` is allowed there; `localhost` is not).
-Never install placeholder values, infer them from a repository, environment
-variable, or MCP, or read credentials while checking the file. If setup reports
-`POLICY_INVALID` the file is malformed or unsafe; `REPOSITORY_UNRESOLVED` means
-a listed checkout has no Git `origin`. Both fail before enrollment; fix the
-policy and rerun. Never remove a repository-local `.claude/settings.local.json`
-by hand: rerunning `setup` after the checkout leaves the policy removes it. A
-missing or changed policy does not prevent local `status`, `disable`, or
-default `uninstall`.
+explicit absolute `COREDOC_HOME`); local `status`, `disable`, and default
+`uninstall` do not. Schema 1 holds one canonical HTTPS `serverOrigin` and one
+RFC-4122 `workspaceId`. Schema 2 lists `destinations`: one `default` plus
+optional ones that route their own absolute checkout paths (loopback
+`http://127.0.0.1:<port>` is allowed there; `localhost` is not). Only the
+operator supplies values: never install placeholders, infer them from a
+repository, environment variable, or MCP, read credentials while checking the
+file, or bypass a production discovery or cloud-probe failure by switching to
+localhost or disabling HTTPS. `POLICY_INVALID` (malformed or unsafe file) and
+`REPOSITORY_UNRESOLVED` (a listed checkout has no Git `origin`) fail before
+enrollment; fix the policy and rerun. Never delete a repository-local
+`.claude/settings.local.json` by hand; rerunning `setup` after the policy drops
+its checkout removes it.
 
 ## Choose the smallest command
 
-- `status` is local and read-only. Use it first for a simple state question.
-- `doctor` is read-only but includes a bounded authenticated cloud probe. Use
-  it when capture is unhealthy or the user asks for diagnosis.
+`status` (local) and `doctor` (adds a bounded authenticated cloud probe) are
+read-only: use `status` first for a simple state question, and `doctor` when
+capture is unhealthy or the user asks for diagnosis. Run the rest only on an
+explicit request:
+
 - `setup` installs or reconciles the agent and may open the browser for PKCE
-  enrollment. Run it only when the user asks to enable or set up capture.
-- `repair` repeats the bounded marker-owned reconciliation. Run it only after
-  explaining the intended repair and receiving authorization for that repair.
-- `upgrade` activates the runtime shipped by the installed plugin without
-  browser enrollment when the current installation token remains valid. Run it
-  only when the user asks to upgrade.
-- `disable` removes marker-owned host integration and stops the service while
-  retaining runtime, identity, credential configuration, and queues. Run it
-  only when explicitly requested.
-- `uninstall` removes marker-owned host integration, service, and runtime while
-  preserving recoverable identity, credential configuration, and queues. Run
-  it only when explicitly requested.
+  enrollment.
+- `repair` repeats the marker-owned reconciliation and can restart an intact,
+  verified runtime; explain the repair and get authorization for it first.
+- `upgrade` activates the plugin's shipped runtime, without browser enrollment
+  while the installation token stays valid.
+- `disable` stops the service and removes host integration, keeping runtime,
+  identity, credential configuration, and queues.
+- `uninstall` also removes the runtime, keeping recoverable identity,
+  credential configuration, and queues.
 - `uninstall --purge` authenticates without minting a replacement token,
   quiesces capture, confirms revocation, and deletes retained local state and
-  recognized queues. Never infer or suggest `--purge` as a routine cleanup;
-  require an explicit request to discard that state.
+  recognized queues. Never suggest it as cleanup; it needs a request to discard
+  that state.
 
-Run the exact command through the host's normal command tool. The setup paths
-are intentionally outside most repository sandboxes; request the normal host
-permission when required rather than changing `HOME`, `COREDOC_HOME`, or other
-paths to evade the boundary. Do not retry a failed mutating command
-automatically. The executable returns one redacted JSON object and a non-zero
-status on failure; report its stable `code` and rollback state without reading
-or printing installation or relay credential files.
+The setup paths are outside most repository sandboxes: request the host's
+normal permission rather than changing `HOME`, `COREDOC_HOME`, or other paths
+to evade the boundary. Never retry a failed mutating command automatically. On
+failure, report the returned JSON's `code` and, when present, `rollback`,
+without reading or printing installation or relay credential files. Then:
 
-`repair` can reconcile marker-owned host configuration and restart an intact,
-verified installed runtime. If a command reports `UNSAFE_STATE`, do not delete,
-overwrite, or purge the untrusted runtime tree: preserve credentials and queues,
-report the bounded code, and escalate to the operator's recovery procedure.
-`INSTALLATION_REVOKE_UNCONFIRMED`
-means purge retained local recovery state but intentionally left capture
-disabled because the exact installation token was not authoritatively revoked.
-A rejected retained bearer or an empty token list for a different OAuth
-principal is not proof of absence; do not bypass this check. `PURGE_INCOMPLETE` means
-cloud absence was confirmed and an explicit purge retry may finish receipt-bound
-local cleanup without another browser flow. While `status` reports
-`purge: pending`, do not run `setup`, `repair`, `upgrade`, `disable`, or default
-`uninstall`; only rerun `uninstall --purge` after explicit authorization. Do not
-claim either state rolled back, and do not read credential files to distinguish
-them. `UNINSTALL_INCOMPLETE` is different: default uninstall did not revoke the
-remote token or retained credentials, host integration remains removed, and the
-safe next action is to inspect `status` and explicitly retry default uninstall
-or authorize `repair`—never infer `--purge`.
+- `UNSAFE_STATE`: leave the untrusted runtime tree in place (no delete,
+  overwrite, or purge), preserve credentials and queues, and escalate to the
+  operator's recovery procedure.
+- `INSTALLATION_REVOKE_UNCONFIRMED`: purge kept local recovery state and left
+  capture disabled; the exact installation token's revocation is unconfirmed.
+  A rejected retained bearer or another OAuth principal's empty token list is
+  not proof of absence; do not bypass this check.
+- `PURGE_INCOMPLETE`: cloud absence is confirmed; an explicit purge retry may
+  finish local cleanup without another browser flow.
+- For either purge code, claim no rollback. While `status` reports
+  `purge: pending`, the only mutating command allowed is an explicitly
+  authorized `uninstall --purge`.
+- `UNINSTALL_INCOMPLETE`: host integration is removed, but the remote token and
+  retained credentials are not revoked. Inspect `status`, then explicitly retry
+  default uninstall or get `repair` authorized; never infer `--purge`.
 
-Setup does not stop or migrate a Coredoc Desktop daemon, import its queues, or
-revoke its credentials. `LEGACY_DESKTOP_PRESENT` identifies the exact Desktop-v1
-LaunchAgent; `OWNERSHIP_CONFLICT` is unrecognized state, and
-`FOREIGN_LISTENER` is an unowned process on the relay port. Stop on all three.
-For the exceptional legacy machine, let every binding drain, use Desktop's
-managed-capture **Disable** action for every configured Claude repository and
-Codex profile, and confirm every target is disabled. This removes
-repository-local Claude settings that override the plugin's global settings.
-Any remaining Desktop Codex OTEL block or session-claim hook is legacy state:
-setup returns `CONFIG_CONFLICT`, while `status`/`doctor` preserve it and report
-the native or claim state as `legacy`. Stop and remove the recognized service.
-The plugin recognizes only the standard
-unsuffixed Desktop LaunchAgent; also inventory and retire every exact-marker
-`ai.coredoc.capture-relay.<hash>.plist` development service, because a dormant
-suffixed service is not auto-detected and can restart later. Move each recognized
-Desktop `capture-relay` root—including the standard
-`~/.coredoc/capture-relay` and any configured development root—to a separate
-owner-only backup. Verify no old LaunchAgent, listener, or other
-service that can reclaim the fixed relay port remains before rerunning setup.
-The archived Desktop root is disjoint from plugin-owned state. Never inspect or
+Setup does not stop or migrate a Coredoc Desktop daemon or adopt state it does
+not recognize. On `LEGACY_DESKTOP_PRESENT`, `OWNERSHIP_CONFLICT`,
+`FOREIGN_LISTENER`, or a `CONFIG_CONFLICT` from leftover Desktop Codex OTEL or
+claim-hook state, stop and follow the legacy cutover in
+`<plugin-root>/README.md` (Delivery telemetry and privacy). Never inspect or
 print credential-bearing settings, kill an unknown listener, or delete unproven
-state. If an earlier pre-release plugin build used the Desktop label or relay
-root, uninstall it with that same build before running current setup; the
-current build intentionally reports `OWNERSHIP_CONFLICT` instead of adopting
-or rewriting that old state. After the new agent is healthy and the rollback
-window closes, revoke the old Desktop credentials through the ownership-scoped
-server or administrator workflow, verify their rejection, and securely remove
-the backups.
+state.
 
 After a successful first setup, tell the user to restart Claude Code and Codex
 once. Codex may ask them to trust the installed `SessionStart` hook; declining
 affects optional repository attribution, not immediate workspace-level native
-delivery. A production discovery or cloud-probe failure must not be bypassed by
-switching the configured policy to localhost or disabling HTTPS.
+delivery.

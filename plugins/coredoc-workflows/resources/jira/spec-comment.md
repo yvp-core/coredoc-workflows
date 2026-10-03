@@ -1,10 +1,9 @@
 # Jira specification comment
 
 Use this only as the body of an explicitly authorized Jira specification
-comment. Accepting the specification does not authorize this comment. It is a bounded summary for the reporter and the
-next reader of the issue, not a copy of the specification: the specification
-stays in the repository, and this comment tells Jira what was decided and where
-to read the rest. Do not copy the issue description back into it.
+comment. Accepting the specification does not authorize this comment.
+Summarize what was decided and where to read the rest; do not copy the
+specification or the issue description into it.
 
 ## Outcome
 
@@ -29,6 +28,5 @@ State the residual risks and any question the specification left open. Write
 ## Where the spec lives
 
 Give the repository-relative path of the specification file and the observed
-branch name. Never give an absolute local path, a diff, or the file body. When
-an updated acceptance replaces an earlier specification comment, say so in one
-line so the reader knows which comment is current.
+branch name. When an updated acceptance replaces an earlier specification
+comment, say so in one line so the reader knows which comment is current.

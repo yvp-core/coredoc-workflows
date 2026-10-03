@@ -1,48 +1,56 @@
-## Step 4.5: Review Army — targeted specialist dispatch
-
-### Detect risk and context
-
-Use the resolved `DIFF_BASE` to inspect changed paths and line totals. Read the
-specification/non-goals when present and record the release context: supported
-paths, current users/tenants, realistic load, deployment mode, data-retention
-requirements, deprecations, and accepted rollout decisions. Missing context is
-unknown; it is not permission to assume enterprise scale or a rolling deploy.
+## Step 4.5: Targeted specialist dispatch
 
 ### Select specialists
 
 Read and apply `<plugin-root>/resources/methodology/review-policy.md`. The resolved
 `specialist breadth` determines which materially affected risk domains need
 separate specialist coverage. Under its generic fallback, cover every materially
-affected risk domain below:
+affected risk domain below. Each carries the evidence bar its specialist must meet
+under the finding contract:
 
 - **Testing** — production behavior, a current regression, a public contract, or
-  a declared verification gate changed.
+  a declared verification gate changed. Missing coverage alone is not a runtime
+  defect, but a failed declared numeric or compliance coverage gate is reported
+  as such; a behavior defect needs demonstrated wrong behavior on a reachable
+  accepted path.
 - **Maintainability** — the task is a refactor or current duplication creates a
-  demonstrated synchronized-edit risk under the repository's Rule of Three.
+  demonstrated synchronized-edit risk under the repository's Rule of Three. A
+  pure refactor or preference is P3; demonstrated current divergence takes the
+  severity of its observable impact. Search for an existing implementation before
+  proposing a helper; small local duplication that keeps clarity is fine.
 - **Security** — auth, authorization, tenant isolation, secrets, or an untrusted
-  execution boundary changed.
-- **Performance** — a measured hot path or realistically large input changed.
+  execution boundary changed. A finding needs a concrete reachable trust-boundary
+  or exploit path; a defense-in-depth idea without one is factual uncertainty,
+  not a severity floor.
+- **Performance** — a measured hot path or realistically large input changed. A
+  finding needs a measured hot path, query plan, or deterministic bound on
+  realistic release inputs; a pattern match or possible future scale is factual
+  uncertainty.
 - **Data migration** — retained current data or a live schema transition changed.
-- **API contract** — a current public consumer contract changed.
-- **Design** — user-facing frontend behavior changed.
+  Establish whether data is retained, the deploy is rolling or coordinated, and a
+  migration, export or wipe is already accepted; require no compatibility
+  machinery for a deprecated path outside its support window or an approved
+  coordinated cutover.
+- **API contract** — a current public consumer contract changed. A finding needs
+  a current consumer inside its compatibility window; do not invent mobile,
+  webhook, SDK, or versioned clients absent release context.
+- **Design** — user-facing frontend behavior changed. Use
+  `<plugin-root>/resources/review-specialists/design.md` as its checklist.
 
-Do not cap the number of selected domains and do not select one from LOC alone.
-Several domains may share one reviewer only when the resolved policy permits it
-and the prompt includes every applicable checklist; record the coverage mapping
-in the handoff. If none is materially affected, print `Specialists skipped: no
-additional risk-specific verification needed.`
+Select every domain that qualifies, and none from line count alone. Several
+domains may share one reviewer only when the resolved policy permits it and the
+prompt includes every applicable evidence bar; record the coverage mapping in the
+handoff. If none is materially affected, say that specialists were skipped.
 
 ### Dispatch
 
-Read and apply `<plugin-root>/resources/methodology/subagent-dispatch.md`. Launch
-selected specialists in as many batches as needed. Batch size is bounded by the
-resolved policy and host concurrency, but concurrency is not a total assurance
-cap. Fresh candidate generation may hide prior findings, but never hide the
-specification, non-goals, repository rules, or release context.
+Read and apply `<plugin-root>/resources/methodology/subagent-dispatch.md`. Fresh
+candidate generation may hide prior findings, but never hide the specification,
+non-goals, repository rules, or release context.
 
 Each prompt includes:
 
-1. The specialist checklist content.
+1. The domain's evidence bar above, and `design.md` for Design.
 2. The canonical finding contract content.
 3. The specification, non-goals, release context, and relevant repository rules.
 4. Stack/test-framework context and the resolved diff-base command.
@@ -61,24 +69,11 @@ emit the candidate as a main-finding control record instead of inventing severit
 ```
 
 Validate every object against the canonical finding contract, including its
-missing-context behavior. `test_stub` may be added as a proposed check, but it is
-not evidence. If no finding, resolvable hypothesis, or context question exists,
-output `NO FINDINGS` and nothing else.
-
-Use `coredoc-workflows:coredoc-reviewer`, or the host's general-purpose equivalent
-when plugin agents are unavailable. Retry a failed specialist once. Then handle
-the uncovered domain as the resolved policy requires and name the coverage gap;
-do not silently claim that domain was reviewed.
+missing-context behavior. If no finding, resolvable hypothesis, or context
+question exists, output `NO FINDINGS` and nothing else.
 
 ### Merge
 
-Parse valid objects and reject entries that violate the finding contract.
-Deduplicate by semantic `root_cause`, merging affected locations even when
-categories differ. Reviewer agreement is metadata only: do not boost confidence
-or severity. Present findings, context questions, and any landing disposition as
-the canonical finding contract and resolved Review policy require. Keep every
-`NEEDS_CONTEXT` record in the main findings with its one resolving question.
-Findings continue into Step 5; review remains read-only.
-
-Compile per-specialist counts for the handoff, including skipped/failed coverage,
-without converting counts into a quality score.
+Reject objects that violate the finding contract, deduplicate by semantic
+`root_cause` across categories, and carry the rest into Step 5 with per-specialist
+counts, including skipped or failed coverage.

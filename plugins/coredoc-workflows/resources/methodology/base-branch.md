@@ -1,15 +1,10 @@
 ## Base branch detection
 
-Determine the comparison base without mutating remote state.
-
-1. Inspect `git remote get-url origin` and existing local refs.
-2. When an authenticated GitHub or GitLab CLI is already available, read the
-   current PR/MR target branch. This is optional and read-only.
-3. Otherwise resolve `refs/remotes/origin/HEAD`.
-4. Fall back to an existing `origin/main`, then `origin/master`, then local
-   `main` or `master`.
-5. If none resolve, use `HEAD^` only when it exists; otherwise explain that
-   there is no meaningful branch comparison.
+Determine the comparison base without mutating remote state: the open PR/MR
+target (optional and read-only, via an already-authenticated `gh` or `glab`),
+else `origin/HEAD`, else `origin/main`, then `origin/master`, then local `main`
+or `master`. If none resolves, use `HEAD^` when it exists; otherwise say there
+is no meaningful branch comparison.
 
 ```bash
 BASE_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')

@@ -8,14 +8,12 @@ or repository completion never triggers it. Collect observations during work and
 consolidate them into one record. Skip it entirely when the user said not to
 send feedback, and honor an explicit feedback request at any time.
 
-Assess the run using observed routing, skill instructions, task context, agent
-behavior, host environment, capture, and transport problems. Include graph-tool
-issues only for `graph+session`. Prepare a compact record with an overall rating
-1–5, a one-sentence summary, concrete issues, and missing capabilities.
+Assess observed problems in the issue areas listed below, and graph-tool issues
+only for `graph+session`. Prepare a compact record with an overall rating 1–5,
+a one-sentence summary, concrete issues, and missing capabilities.
 
-Resolve the host's `submit_session_feedback` tool by its documented contract.
-Use only supported fields; do not assume every backend accepts `sessionIssues`,
-`userNotes`, or `reviewStatus`. For a compatible tool, `sessionIssues.area` uses
+Resolve the host's `submit_session_feedback` tool by its documented contract and
+use only the fields it supports. Where it accepts `sessionIssues`, `area` uses
 its closed vocabulary (`workflow-routing`, `skill-instructions`, `task-context`,
 `mcp-transport`, `agent-behavior`, `host-environment`, `capture`, `other`).
 Include the observed run/session IDs only where the tool accepts them. An
