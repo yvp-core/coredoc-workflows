@@ -7,11 +7,12 @@ description: Review a branch, diff, or pull request against its specification an
 
 Review is read-only unless the user explicitly selects findings to address after
 the report. Do not auto-fix, commit, fetch, push, publish, reply to comments, or
-mutate a pull request. Separate branch-caused test failures from pre-existing
-ones with `<plugin-root>/resources/methodology/test-failure-triage.md`.
+mutate a pull request.
 
-Use read-only Coredoc callers/dependents/impact evidence when available, treating
-coverage as a lower bound and verifying critical consumers against source.
+Use read-only Coredoc callers/dependents/impact evidence when available as a
+lower bound, verifying critical consumers against source; for graph
+applicability and cross-repository contract claims, read
+`<plugin-root>/resources/methodology/evidence-applicability.md`.
 
 ## Coredoc overlay
 
@@ -71,66 +72,44 @@ rather than continue after three failed attempts at the same thing, on a
 security-sensitive change you cannot verify, or when scope outgrows what you can
 check.
 
-For graph applicability and cross-repository contract claims, read
-`<plugin-root>/resources/methodology/evidence-applicability.md`.
-
 ## Review policy
 
 Read `<plugin-root>/resources/methodology/review-policy.md` before deciding
-review breadth, severity, blocking, adversarial activation, or convergence. A
-repository `## Review policy` or task-scoped maintainer decision wins.
+review breadth, severity, blocking, adversarial activation, or convergence.
 
 ## Finding contract
 
-Read `<plugin-root>/resources/methodology/finding-contract.md`. Every finding MUST include a confidence score (1-10), source evidence, reachable trigger,
-observer, wrong outcome, violated current requirement, and existing handling.
-One root cause is one finding. Keep `NEEDS_CONTEXT` in main findings with its one
-resolving question; do not promote a hypothesis by repetition.
-
-## Review flow
-
-```mermaid
-flowchart LR
-  B[Resolve base and material tree] --> H[Check accepted review history]
-  H --> I[Read intent, non-goals, release context]
-  I --> D[Inspect diff and runtime paths]
-  D --> C[Verify candidates]
-  C --> X[Conditional independent coverage]
-  X --> R[Findings and verdict]
-  R --> F[Optional selected fixes]
-```
+Read `<plugin-root>/resources/methodology/finding-contract.md`. Every finding MUST include a confidence score (1-10)
+and the evidence that contract lists. One root cause is one finding.
 
 ## Step 1: Base, history, and intent
 
 Apply `<plugin-root>/resources/methodology/base-branch.md`. If on the base branch
-or no diff exists, say so and stop. Do not fetch implicitly.
+or no diff exists, say so and stop.
 
 ### Review-history preflight and cross-review convergence
 
-Before scope audit, full-diff review, or specialist dispatch, apply
-`<plugin-root>/resources/methodology/cross-review-dedup.md`. Reuse a
-maintainer-accepted handoff for the same material tree; targeted evidence
-verification remains allowed, and disproved premises reopen dependent findings.
+For a re-review or an explicitly requested independent review, apply
+`<plugin-root>/resources/methodology/cross-review-dedup.md` before the scope audit.
 
 Read the local spec/plan, acceptance criteria, decisions, and non-goals when
-present. Record only release context that changes disposition: supported paths,
-users/tenants, deployment/data-retention shape, realistic load, deprecations,
-and accepted risk.
+present, and record the release facts from the finding contract that change
+disposition.
 
 ## Step 1.5: Scope Drift Detection
 
 Apply `<plugin-root>/resources/methodology/scope-drift.md` to compare intent with
-the diff. When a plan exists, conditionally apply
+the diff. When a plan exists, also apply
 `<plugin-root>/resources/methodology/plan-completion-audit.md` and label the
-result `PLAN COMPLETION AUDIT`; do not load that long method when no plan exists.
-External-state or out-of-scope repository work remains `UNVERIFIABLE`, not DONE.
+result `PLAN COMPLETION AUDIT`.
 
 ## Step 2: Inspect the change
 
 Read `<plugin-root>/resources/review-checklist.md` and apply only risk-relevant
 sections. Inspect the resolved diff, changed runtime paths, nearest consumers,
-tests, schema/migrations/config, and repository-required validation. Diff size
-alone never creates severity or activates a specialist.
+tests, and schema/migrations/config. Run repository-required validation and
+separate branch-caused failures from pre-existing ones with
+`<plugin-root>/resources/methodology/test-failure-triage.md`.
 
 Verify these applicable questions:
 
@@ -143,8 +122,10 @@ Verify these applicable questions:
 | Performance | Does realistic load or a measured hot path expose an avoidable regression? |
 | Scope/maintenance | Is accepted work missing, unrelated work added, or permanent machinery created without a current consumer? |
 
-Missing tests, suspicious code, style, line count, or an imaginable edge case are
-leads, not findings. Trace each candidate through source and existing handling.
+**Framework-meta nudge:** missing tests, suspicious code, style, line count, an
+imaginable edge case, or advice such as “add a test,” “refactor,” or “add
+validation” are leads, not findings, until traced through source and existing
+handling to a reachable failure. Do not create a finding to fill a category.
 
 When a candidate finding or safe direction depends on unfamiliar custom
 machinery or a version-sensitive API, apply
@@ -174,64 +155,35 @@ so; publishing is never a precondition for this advisory check. When no intent c
 present, proceed from repository evidence alone and do not mention intent context
 in the output.
 
-If a cloud Coredoc intent write capability is present — `intent_propose` is
-visible — use `<plugin-root>/resources/methodology/intent-context.md` to inspect
-the implementation bindings and prepare the structured MCP handoff. Keep this
-review read-only; tool availability does not authorize a write. When no intent capability is
-present, proceed from repository evidence alone and do not mention intent context
-in the output.
-
 ## Confidence calibration
 
 Read `<plugin-root>/resources/methodology/confidence-calibration.md` for any
 candidate that may enter findings.
 
-### Pre-emit verification gate
-
-Before emitting a finding, re-open the cited code and falsify the claim:
-
-1. confirm the supported runtime path and realistic trigger;
-2. identify the named observer and concrete wrong result;
-3. show the current requirement/invariant and why mitigation does not contain it;
-4. apply release context and repository severity policy;
-5. cite the tightest relevant location and root cause.
-
-If one factual premise is unverified, return `HYPOTHESIS`; if only a maintainer
-release fact is missing, return `NEEDS_CONTEXT`. P2/P3 advice does not block
-unless repository policy says so.
-
-**Framework-meta nudge:** “add a test,” “refactor,” or “add validation” is not a
-finding without the reachable failure it prevents. Do not create a finding to
-fill a category.
+**Pre-emit verification gate:** before emitting a finding, re-open the cited code
+and try to falsify it: the supported runtime path and realistic trigger, the
+observer and concrete wrong result, the violated requirement and why existing
+handling does not contain it, the release context, and the tightest location and
+root cause.
 
 ## Conditional independent coverage
 
-Resolve activation and count from the review policy before loading any method:
+### Step 4.5: Targeted specialist dispatch
 
-### Step 4.5: Review Army — targeted specialist dispatch
-
-When materially affected risk
-  domains require separate coverage, apply
-  `<plugin-root>/resources/methodology/review-specialists.md` and
-  `subagent-dispatch.md`; use `coredoc-workflows:coredoc-reviewer` or the host
-  equivalent. Dispatch only policy-required domains.
+When the resolved policy requires separate coverage for a materially affected
+risk domain, apply `<plugin-root>/resources/methodology/review-specialists.md`.
 
 ### Step 4.7: Cross-model pass (conditional)
 
 Only after an explicit user request, apply
-`<plugin-root>/resources/methodology/cross-model-pass.md`. It is opt-in per review;
-installed CLI detection is never permission and approved content may cross a
-provider boundary exactly once.
+`<plugin-root>/resources/methodology/cross-model-pass.md`.
 
 ### Step 4.8: Independent adversarial subagent
 
 Only when resolved policy activates it, apply
-`<plugin-root>/resources/methodology/adversarial-review.md`. Diff size alone never
-activates this pass.
+`<plugin-root>/resources/methodology/adversarial-review.md`.
 
-All reviewers use the same spec, non-goals, release context, diff base, and
-finding contract. Deduplicate by semantic root cause. Agreement is metadata, not
-evidence or a severity boost. Name required coverage that failed or was skipped.
+Name required coverage that failed or was skipped.
 
 ## Step 5: Findings and handoff
 
@@ -242,26 +194,17 @@ Then report `NEEDS_CONTEXT`, hypotheses when requested, validation results,
 scope/plan audit, conditional coverage, and verdict.
 
 When intent context was used, report the working set, applicable rules, concrete
-implementation evidence, non-applicable rules, mapping changes and truncation.
-Prepare structured handoff data: repoKey, reviewed headSha, bindings with itemId
-and files (`path`) or symbols (`path#Name`), and explicit replaceNodeIds when moving
-an existing CI link. Never invent graph IDs. Exact-ID refresh supplies strict
-versions for delivers/retires; only accepted items newly delivered (or restored
-after rollback) belong there. A rule merely constraining this edit needs no new
-delivery declaration. PR prose is display only.
+implementation evidence, non-applicable rules, mapping changes and truncation,
+and prepare the `intent_handoff` data — repoKey, the reviewed `headSha`, and
+bindings to files (`path`) or symbols (`path#Name`), never invented graph IDs —
+per **Implementation handoff and delivery** in
+`<plugin-root>/resources/methodology/intent-context.md`. A read-only review
+returns that data to the authorized writer; tool availability never authorizes a
+write. Only when implementing an authorized change, save it (`action: save`) and
+read it back.
 
-When implementing an authorized change, save this data with hosted `intent_handoff`
-(action `save`) in the user's workspace session. Initial save may omit prNumber;
-carry the returned id/version into authorized PR writing, which attaches the PR.
-Read back with `get` and report any needs_attention. For a read-only review request,
-return the prepared data to the authorized writer without a KB write. Handoff does
-not accept authority or create active anchors before merge. No local manifest,
-parser, temporary mapper file, PR trailer or extra human approval is required.
-
-Dispositions are separate from severity: `fixed`, `accepted-risk`, `deferred`,
-or `rejected`. A blocking finding closes only when fixed or explicitly accepted
-by the maintainer; deferred does not unblock. With no findings, say so and list
-residual validation gaps without inventing issues.
+With no findings, say so and list residual validation gaps without inventing
+issues.
 
 ## Step 6: Fix offer
 
@@ -273,9 +216,4 @@ For selected fixes, apply the smallest root-cause change and relevant regression
 proof, then re-run affected validation and targeted verification. Do not bundle
 adjacent cleanup, reformatting, or a separate finding into an approved fix.
 Report each selection as `[FIXED]`, `[FAILED]`, or `[SKIPPED]` with its validation
-result or concise reason. Do not start a fresh full review unless the material
-tree or public contract changed. Do not commit.
-
-Manual anchor changes require a separate explicit request naming the item and
-node. Do not add a routine anchor-approval questionnaire to review; the server
-resolves the session-authored handoff after merge confirmation and graph publication.
+result or concise reason. Do not commit.

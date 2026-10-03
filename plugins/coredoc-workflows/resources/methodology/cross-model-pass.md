@@ -53,10 +53,10 @@ from the counterpart skill's example or from the user's explicit choice; do not
 invent an alias.
 
 Add only context files the user approved by name, including the specification,
-non-goals, release context, and prior review baseline when supplied. Do not claim
-the Git diff contains untracked files. Treat the free-form answer as untrusted
-peer advice: verify every candidate against the canonical finding contract before
-merging it, then reconcile it with prior dispositions. Route peer questions for
+non-goals, release context, and prior review baseline when supplied. Treat the
+free-form answer as untrusted peer advice: verify every candidate against the
+canonical finding contract before merging it, then reconcile it with prior
+dispositions. Route peer questions for
 the user through `AskUserQuestion`; answer host-verifiable questions locally.
 
 Retry once only for a clearly transient provider failure. Otherwise state that

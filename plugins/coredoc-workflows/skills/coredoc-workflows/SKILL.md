@@ -1,13 +1,11 @@
 ---
 name: coredoc-workflows
-description: Route engineering work through the smallest useful self-contained Coredoc workflow for investigation, planning, adaptive implementation, review, specification, browser QA, benchmarking, security review, learning, or retrospectives. Use when asked to route, orchestrate, or choose a workflow for a task.
+description: Route engineering work through the smallest Coredoc workflow for investigation, planning, implementation, review, specification, browser QA, benchmarking, security review, learning, or retrospectives. Use when asked to route, orchestrate, or choose a workflow for a task.
 ---
 
 # Coredoc workflow router
 
-Resolve `<plugin-root>` as two directories above this file. Repository rules and
-the user's authorization boundary always win; plugin skills are methods, not
-extra authority or implicit dependencies.
+Resolve `<plugin-root>` as two directories above this file.
 
 ## Route once
 
@@ -15,18 +13,16 @@ Classify intent as `direct`, `diagnose`, `design`, `change`, `review`, `spec`,
 `qa`, `qa-report`, `benchmark`, `security`, `browse`, `learn`, or `retro`; risk
 as `low|normal|high`; and scale as `large` only when creating a component or
 subsystem, changing a shared/cross-package contract, or requiring multiple test
-surfaces. The compact override is `--scale large`. Mark bug, data, and runtime
-sensitivity only when present.
+surfaces.
 
 If the user supplied a Jira/Notion/GitHub or similar relation intended as a work
 item, first read and apply
-`<plugin-root>/resources/methodology/work-item-routing.md`. Otherwise do not load
-that protocol and emit no work-item arguments.
+`<plugin-root>/resources/methodology/work-item-routing.md`.
 
 When Jira is the actual task source, also read
 `<plugin-root>/skills/coredoc-jira/SKILL.md` for bounded task context from the
-same provider read. Do not add a Jira stage. A task locator or acceptance of a
-specification never authorizes posting a Jira comment or changing issue status.
+same provider read. A task locator or acceptance of a specification never
+authorizes posting a Jira comment or changing issue status.
 
 Run exactly once:
 
@@ -37,34 +33,24 @@ Run exactly once:
 ```
 
 Pass values as separate process arguments; never interpolate raw user text into
-shell source. Never pass `--task-id`: it is only for programmatic task-owning invokers
-holding a server-issued canonical ID. A prompt value, URL, visible key, branch,
-or inferred ID must never be forwarded. `route-task --task <text>` is available
-only when a host can pass the text as a safely separated argument.
+shell source. Never pass `--task-id`: it is only for programmatic task-owning
+invokers holding a server-issued canonical ID. Before repeating a skip, read the
+previous run's unmet and skipped gates in the returned `previousRunGates`.
 
 On Codex, use `sandbox_permissions: "require_escalated"` for this trusted
-`coredoc-workflows route-task` command. Managed capture uses loopback
-`127.0.0.1:43181`, which the sandbox denies; do not try it sandboxed first. This
-elevation applies only to the plugin command and never broadens task authority.
+`coredoc-workflows route-task` command and for every `stage-run` and
+`finish-run` command. Managed capture uses loopback `127.0.0.1:43181`, which the
+sandbox denies; do not try them sandboxed first. This elevation applies only to
+the plugin commands and never broadens task authority.
 
-Keep the returned `runId`, route, and `runStateStatus`. Capture is fail-open after
-its capability preflight. If `runStateStatus` is `unattributed`, state that the
-host cannot provide the completion gate, execute the stage methods, and skip all
-`coredoc-workflows stage-run` and `finish-run` commands.
-
-After a context compaction, in a resumed session, or whenever the run state is
-uncertain, run `<plugin-root>/bin/coredoc-workflows run-status` before any
-lifecycle command. It is read-only. `status: inactive` there means no run is
-open: if this session already finished the run, report that plainly instead of
-finishing it again; otherwise route again.
+A capture failure never blocks the work. If `runStateStatus` is `unattributed`,
+state that the host cannot provide the completion gate, execute the stage
+methods, and skip all `coredoc-workflows stage-run` and `finish-run` commands.
 
 Tell the user the selected route in one sentence. If the route is `direct`, do
-the task directly, then run `finish-run`. Preflight available tools for
-a delimited `Coredoc` MCP namespace. If absent, say graph grounding is
-unavailable, mention the project's `.mcp.json` or `claude mcp add`, then continue.
-Pass `capability-missing` at finish. For a large route with graph tools, run one
-relevant callers/dependents/impact query, treat coverage as a lower bound, and
-manually verify critical consumers.
+the task directly, then run `finish-run`. Preflight available tools for a
+delimited `Coredoc` MCP namespace; if absent, say graph grounding is unavailable
+and continue.
 
 For `scale: large` or a multi-stage route, inspect available non-plugin skills,
 show up to three relevant candidates, and ask once whether to add them as
@@ -72,31 +58,11 @@ context. Invoke and later require only explicitly approved skills.
 
 ## Execute the returned DAG
 
-Gather only `contextProviders`, then execute stages in dependency order with the
-named plugin skills. Before the first stage that edits the repository, and
-before a `direct` change, read and apply
-`<plugin-root>/resources/methodology/branch-start.md` once: refresh the base
-branch from `origin` and fold it into the checkout so the work starts from the
-latest trunk. Read-only routes (diagnose, review, security, retro) skip it.
-Use independent tool calls in parallel only when they do not share state;
-serialize dependencies, writes, stage boundaries, and final validation. For substantial routes, apply
-`<plugin-root>/resources/methodology/subagent-dispatch.md`.
-
-```mermaid
-stateDiagram-v2
-  [*] --> Routed
-  Routed --> StageOpen: attributed
-  Routed --> WorkOnly: unattributed
-  StageOpen --> Work
-  Work --> StageClosed
-  StageClosed --> StageOpen: next dependency
-  StageClosed --> Approval: gate: user-approval
-  Approval --> StageOpen: approved, same session
-  StageClosed --> Finished: final stage
-  Approval --> Abandoned: session ends
-  WorkOnly --> [*]
-  Finished --> [*]
-```
+Gather only `contextProviders`, within each one's `access`, then execute stages
+in dependency order with the named plugin skills. Before the first stage that
+edits the repository, and before a `direct` change, read and apply
+`<plugin-root>/resources/methodology/branch-start.md` once. For substantial
+routes, apply `<plugin-root>/resources/methodology/subagent-dispatch.md`.
 
 For an attributed run, the following command runs immediately before the actual
 routed stage work:
@@ -109,87 +75,58 @@ When that attempt ends, run:
 
 ```text
 <plugin-root>/bin/coredoc-workflows stage-run finish --stage-id <stage-id> --outcome <success|failed|blocked>
+  [--spec-path <repo-relative path>]
 ```
 
-A successful stage close is checked against what the host observed in that
-attempt, on a checkout enrolled to a Coredoc workspace. Closing `spec`
-successfully requires an observed intent-context read; closing `implement` or `review`
-successfully requires at least one observed Coredoc read that answered —
-repository searches (Grep/Glob/Read/`rg`) and Coredoc writes never count. A
-refusal names the remedy and leaves the stage open — satisfy it, or close with
-`--skip-intent "<reason>"` (or `--skip-mcp "<reason>"`), never with a fabricated
-reason. `failed` and `blocked` closes are never refused: they record which gates
-were unmet. Pass the spec stage's artifact with `--spec-path <repo-relative
-path>`. With `COREDOC_WORKFLOW_GATES=warn` (today's default) a refusal is
-printed and the close proceeds; `enforce` refuses.
+On a checkout enrolled to a Coredoc workspace, a `success` close is checked
+against what the host observed in that attempt: `spec` needs an observed
+intent-context read, and `implement` and `review` need at least one observed
+Coredoc read that answered; repository searches and Coredoc writes never count.
+A refusal names its remedy and leaves the stage open: satisfy it, or skip with
+the flag it names and a true reason, never a fabricated one. `warn` mode, the
+default, prints the refusal and still closes (`gatesWarned`). `failed` and
+`blocked` closes are never refused.
 
-Run stage boundary commands sequentially: never batch them in parallel. Only one
-stage occurrence may be open. Map `DONE` and `DONE_WITH_CONCERNS` to `success`,
-and `BLOCKED` to `blocked`. On `NEEDS_CONTEXT`, finish the current stage as
-`blocked`, keep the run open, ask the one resolving question, then restart the
-same stage as the next attempt. Never infer stage boundaries from `PreToolUse` or
-`PostToolUse`.
-
+Run stage boundary commands sequentially: never batch them in parallel. Map
+`DONE` and `DONE_WITH_CONCERNS` to `success`, and `BLOCKED` to `blocked`. On
+`NEEDS_CONTEXT`, finish the current stage as `blocked`, keep the run open, ask
+the one resolving question, then restart the same stage as the next attempt.
 The parent coordinator exclusively owns `route-task`, `stage-run`, and
-`finish-run`. Never delegate those lifecycle commands, and explicitly prohibit
-them in every subagent dispatch prompt. If `stage-run` returns
-`status: inactive`, stop: do not continue the stage method or claim recorded
-progress. Run `run-status`; if this session already finished the run, report
-that. Otherwise run `route-task` again, then reopen the stage returned by the
-new route.
+`finish-run`.
 
-On Codex, every `coredoc-workflows stage-run` and `coredoc-workflows finish-run`
-command requires the same elevated execution as routing.
+After a context compaction, in a resumed session, or whenever the run state is
+uncertain, run `<plugin-root>/bin/coredoc-workflows run-status` (read-only)
+before any lifecycle command. `status: inactive` from it, `stage-run`, or
+`finish-run` means this session has no live run: it already closed the run, or
+its suspended run expired while the session was away; capture or relay delivery
+cannot cause it, so never blame them. Then stop: do not continue the stage
+method or claim recorded progress. Report a run this session already finished
+instead of finishing it again; otherwise run `route-task` again and reopen the
+stage the new route returns.
 
-For a large change, the spec stage must align the user's intent, the relevant
-domain model, and the proposed solution shape before writing the specification.
-When `coredoc-spec` exposes an unresolved user-owned decision, do not write the
-spec or finish the stage as successful. Return `NEEDS_CONTEXT` and follow the
-blocked-attempt lifecycle above: close that attempt as blocked, ask, stop, and
-restart the spec stage from the updated shared picture after the answer.
-When no PRD exists and the request is product-shaped, the spec stage returns
-questions for the PRD instead of writing a specification.
-A completed interactive frontier still requires confirmation of the assembled
-alignment brief before spec writing; the last design answer is not that
-confirmation.
-A mature user-provided PRD may pass without a ceremonial question only under the
-skill's alignment criteria.
-
-Write the aligned spec in the repository's documented local location and review
-it before implementation. A gated stage has `gate: user-approval`: after review,
-show the reviewed direction, material changes from the alignment brief,
-unresolved decisions, and residual risks. Close the design stage before pausing,
-then ask one explicit **Accept and implement / Revise** decision with the
-structured input tool when available; otherwise ask the same concise two-option
-question in prose and wait.
-Only a fresh affirmative user reply to that decision counts: it both
+A stage with `gate: user-approval` waits for the user. Once the design stage has
+presented what `<plugin-root>/resources/methodology/plan-review-gate.md`
+requires, close the design stage before pausing, then ask one explicit
+**Accept and implement / Revise** decision with the structured input tool when
+available; otherwise ask the same concise two-option question in prose and
+wait. Only a fresh affirmative user reply to that decision counts: it both
 accepts the reviewed specification and authorizes the gated implementation
 stage. An acknowledgement, a partial answer, or an acceptance with a requested
-change is a revision request. That reply is also the acceptance of a PRD-less
-specification's own intent: before opening the implementation stage, when
-`intent_propose` is visible, propose its verbatim rows and accept them under the
-specification lifecycle's single-approval clause, without asking again; a
-PRD-derived specification accepts nothing. Implementation never accepts intent.
-Open the gated implementation stage, complete its
-read-only preflight, and announce its proof plan. If the reviewed specification
-is still `status: draft`, update it to `status: accepted` as the first repository
-write, before any code or test edit; preserve an unchanged accepted status from a
-prior session. Plan review never marks the specification accepted. A request for
-revision returns to specification and review; if
-elaboration exposed a new material user-owned decision, return to pre-spec
-alignment rather than adding a generic approval round. The initial change
-request, pre-spec alignment approval, spec existence, an already accepted
-status, or a successful review verdict does not count.
+change is a revision request. A revision returns to specification and review,
+or to the spec's alignment checkpoint when it exposes a new material user-owned
+decision; add no generic approval round. For a PRD-less specification, that
+reply also accepts its own intent: before opening the implementation stage,
+when `intent_propose` is visible, apply the single-approval clause of
+`<plugin-root>/resources/methodology/spec-lifecycle.md` without asking again.
 Do not run `coredoc-workflows finish-run` while paused.
-In the same host session, resume the same `runId` without routing again. If the
-session is cleared or logged out, `SessionEnd` marks only
-an actually open stage `abandoned` and closes the run. A plain exit suspends the
-run; resuming the same session continues it with the same `runId`. In a
-new session, route again and reuse the local spec. For an authorized continuation, verify the
-recorded post-review approval and that the approved source and scope are
-unchanged, then continue under that approval. The accepted status alone is not
-enough. Revisit spec/design and obtain fresh approval only if the approved
-material changed or the original approval cannot be recovered.
+
+In the same host session, including one resumed after a plain exit, resume the
+same `runId` without routing again. In a new session, route again and reuse the
+local spec. For an authorized continuation, verify the recorded post-review
+approval and that the approved source and scope are unchanged, then continue
+under that approval. The accepted status alone is not enough. Revisit
+spec/design and obtain fresh approval only if the approved material changed or
+the original approval cannot be recovered.
 
 ## Finish and hand off
 
@@ -200,38 +137,23 @@ After the final stage, run:
   [--require-skill <approved-id> ...]
 ```
 
-A standalone specification run that delivered a draft is parked instead, with
-`--outcome delivered-draft --spec-path <repo-relative path>`: it sends no
-record, waits up to 14 days for the user's approval, and is closed later by
-`coredoc-workflows spec accept --finish` or `spec abandon --reason "<text>"`.
-
-A successful finish fails closed unless every routed stage is closed
-successfully. Execute a missing stage; never bypass the gate. Missing attributed
-state requires routing again. `status: inactive` from a closing `stage-run` or
-`finish-run` means no live run exists for this session: usually this session
-already closed it, or its suspended run expired while the session was away.
-Say which, and never attribute it to capture or relay delivery, which cannot
-produce it. An unattributed run cannot claim successful
-completion. `NEEDS_CONTEXT` remains open; do not finish it. If a stage method was
-unreadable or stale, or substantial work continued after finish, say so rather
-than overstating recorded evidence.
+A standalone specification run that delivered a draft parks instead with
+`--outcome delivered-draft --spec-path <repo-relative path>`; later,
+`coredoc-workflows spec accept --finish` or `spec abandon --reason "<text>"`
+closes it.
 
 For workflows with findings, pass `--findings-measurement measured` and balanced
 integer counts (`remaining = initial - resolved + introduced`); otherwise use
 `not-applicable` or leave `not-measured`. If graph tools were used, pass
-`--coredoc-status complete|partial|unavailable` and only a supported
-closed-vocabulary gap: a successful finish is refused when the status would
-resolve to `not-assessed`, and `--skip-intent "<reason>"` is the alternative.
-`route-task` prints the previous run's unmet and skipped gates as
-`previousRunGates`; read them before repeating the same skip. When finish reports
-`feedbackOwed`, wait until the entire task is delivered, then apply
+`--coredoc-status complete|partial|unavailable` and any `--coredoc-gap <code>`,
+or `--skip-intent "<reason>"`; if the `Coredoc` namespace was absent, pass
+`--coredoc-status unavailable --coredoc-gap capability-missing`. When finish
+reports `feedbackOwed`, wait until the entire task is delivered, then apply
 `<plugin-root>/resources/methodology/workflow-feedback.md`: one silent record per
 session, no question. Resolve `submit_session_feedback` by tool contract,
 never by a skill name.
 
 Stop at the authorization boundary: diagnosis/review is read-only, and
 implementation does not authorize commit, publish, deploy, remote mutation, or
-new workflow artifacts. Repository/git inspection is read-only; database and
-runtime access is read-only and only when selected; UI control is task-scoped.
-Never persist prompts, command text, source, diffs, fixtures, paths, or a parallel
-workflow ledger as evidence.
+new workflow artifacts. Never persist prompts, command text, source, diffs,
+fixtures, paths, or a parallel workflow ledger as evidence.

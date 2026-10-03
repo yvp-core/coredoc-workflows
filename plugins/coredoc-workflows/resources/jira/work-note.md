@@ -1,8 +1,7 @@
 # Jira work note
 
 Use this only as the body of an explicitly authorized Jira comment. Keep it
-compact enough for a reviewer to understand the intended work without reading a
-second specification. Do not copy the issue description.
+short, and do not copy the issue description.
 
 ## What
 

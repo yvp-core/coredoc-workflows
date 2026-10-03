@@ -13,8 +13,7 @@ Use one severity vocabulary everywhere:
 - **P1** — a demonstrated failure on a reachable supported runtime path that
   violates an accepted requirement or repository invariant, has release-relevant
   impact, and has no accepted operational workaround.
-- **P2** — a real reachable defect with bounded impact or a safe workaround. Does
-  not inherit blocking status merely from its label.
+- **P2** — a real reachable defect with bounded impact or a safe workaround.
 - **P3** — maintainability, refactor, or test-strengthening work while current
   behavior remains correct.
 - **HYPOTHESIS** — a plausible candidate whose factual evidence, reachability, or

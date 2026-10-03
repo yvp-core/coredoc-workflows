@@ -1,9 +1,7 @@
 ## Test failure ownership triage
 
-When the suite comes back red, do not stop on the first failure and do not wave
-it through. Establish ownership first — the two wrong moves are blocking the user
-on someone else's breakage, and shipping on a suite that was already red so the
-next person cannot tell what your change did.
+When the suite comes back red, establish who owns each failure before stopping
+or continuing; never stop at the first one or wave any through.
 
 ### 1. Classify each failure
 
@@ -38,30 +36,14 @@ own reasoning, never as a side effect of unblocking yourself.
 
 ### 3. Pre-existing failures — ask, do not decide alone
 
-Present the failures with file, line, and the first lines of the error, state
-plainly that they look pre-existing and why, and ask how to proceed. Useful
-options: fix now while the context is loaded, record and continue, or continue
-and note it. Recommend one and say why — usually fixing now, since the context
-is already loaded and it will be more expensive later.
-
-To identify who most likely broke it, read **both** histories:
-
-```bash
-git log --format="%an (%ae)" -1 -- <failing-test-file>
-git log --format="%an (%ae)" -1 -- <source-file-under-test>
-```
-
-When those differ, the production-code author is the likelier source of the
-regression than the test author. This is read-only attribution to inform the
-user, not an accusation to file anywhere.
+Show each with file, line, and the first lines of the error, say why it looks
+pre-existing, and ask how to proceed: fix now, record and continue, or continue
+and note it. Recommend one and say why; fixing now is usually cheapest while the
+context is loaded.
 
 ### 4. Boundaries when acting
 
-- Fixing a pre-existing failure is a **separate concern** from the branch's work.
-  Keep it separable so it can be reviewed and reverted on its own.
-- Committing, pushing, opening an issue, or assigning it to a person are
-  outward-facing actions that need explicit authorization. Identifying the likely
-  author is fine; filing something against them is not, unless the user asks.
-- If the user chooses to continue, say so in the handoff: name the skipped
-  failure. A green-looking report over a knowingly red suite is the report that
-  makes every later report untrustworthy.
+- Keep a fix for a pre-existing failure separate from the branch's work, so it
+  can be reviewed and reverted on its own.
+- Committing, pushing, or filing an issue needs explicit authorization.
+- If the user chooses to continue, name the skipped failure in the handoff.
