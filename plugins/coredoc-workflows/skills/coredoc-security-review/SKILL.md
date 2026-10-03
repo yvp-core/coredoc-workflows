@@ -152,11 +152,13 @@ public there (git identity, recent commit authors, CODEOWNERS), which are noise
 rather than a leak. Without it the MEDIUM tier fills with every committed author
 address and the real findings get lost in it.
 
-It exits 2 when anything HIGH is found and 0 when nothing HIGH is. Exit 1 means an
-input was not scanned (bad arguments, a directory or unreadable path, or input
-over 5 MB): report it as unscanned, never as clean. It masks every matched span
-in its output. Do not paste a raw finding back into the conversation or into a
-report — the mask exists so the scan does not relocate the leak it just found.
+It exits 2 when anything HIGH is found and 0 when nothing HIGH is. Exit 1 means
+the call aborted before scanning anything, with the cause on stderr (bad
+arguments, a directory or unreadable path, or input over 5 MB). Every input of
+that call is unscanned: re-run per file, and never report any of them as clean.
+It masks every matched span in its output. Do not paste a raw finding back into
+the conversation or into a report — the mask exists so the scan does not
+relocate the leak it just found.
 
 The scanner is strictly better than the greps below for anything it covers,
 because the catalog carries checks a prefix match cannot: an AWS secret key must

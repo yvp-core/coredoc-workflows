@@ -582,21 +582,17 @@ the method text; making one enforced is a job for a `PreToolUse` hook.
 
 ## Methodology fidelity
 
-The `.tmpl` files are the full method, not intentionally shortened prompts. The
-build expands every placeholder a workflow needs, so an invoked skill carries
-its complete methodology and needs no shell command to obtain it. A skill that
-is not invoked adds only its name and description to the prompt context.
+An invoked skill carries its method with its Partials inlined, so it needs no
+shell command to obtain it. Other shared rules are References the agent reads on
+demand when a Pointer fires (see [CONTEXT.md](../../CONTEXT.md)), and `B help`
+is the browser command reference. A skill that is not invoked adds only its name
+and description to the prompt context.
 
-Semantic gates are preserved: confidence scoring and quoted evidence, framework
-metadata verification, plan-completion and scope audits, specialist and
-adversarial review, codepath and user-flow test mapping, browser reference
-semantics, and systematic QA exploration.
-
-Adaptations are limited to delivery boundaries: automatic external-model passes
-and global memory stores are omitted from ordinary rendered methods; repository
-mutation, report persistence, dependency installation, CI changes, and commits
-require explicit authorization. The separate `coredoc-claude` and
-`coredoc-codex` skills restore a fresh external perspective only when explicitly
+What a method keeps or cuts follows
+[ADR 0001](../../docs/adr/0001-redundancy-criterion-for-skill-prose.md).
+Repository mutation, report persistence, dependency installation, CI changes,
+and commits require explicit authorization. The separate `coredoc-claude` and
+`coredoc-codex` skills give a fresh external perspective only when explicitly
 requested and keep only a project-scoped opaque session handle after explicit
 consultation. Skill tests check contracts, not wording
 ([ADR 0004](../../docs/adr/0004-skill-tests-check-contracts-not-wording.md)).

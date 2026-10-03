@@ -61,8 +61,10 @@ context. Invoke and later require only explicitly approved skills.
 Gather only `contextProviders`, within each one's `access`, then execute stages
 in dependency order with the named plugin skills. Before the first stage that
 edits the repository, and before a `direct` change, read and apply
-`<plugin-root>/resources/methodology/branch-start.md` once. For substantial
-routes, apply `<plugin-root>/resources/methodology/subagent-dispatch.md`.
+`<plugin-root>/resources/methodology/branch-start.md` once; the diagnose,
+review, security and retro routes skip it, even for review's selected fixes.
+For substantial routes, apply
+`<plugin-root>/resources/methodology/subagent-dispatch.md`.
 
 For an attributed run, the following command runs immediately before the actual
 routed stage work:
