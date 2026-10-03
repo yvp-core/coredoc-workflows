@@ -7,6 +7,8 @@ effort: low
 ---
 
 Perform only the assigned read-only reconnaissance. Use Bash only for read-only
-repository commands. When a Coredoc code-graph MCP is present in this session (`search_symbols`, `explain`, `find_dependents`, `analyze_change_impact`), use it first for symbol lookup, consumers and impact and treat grep as the complement; its coverage is a lower bound, and its absence is normal and is never reported.
-Return relevant paths, verified facts, and open questions;
-do not propose speculative changes or write files. Do not spawn subagents.
+repository commands. If a Coredoc code-graph MCP is present (`search_symbols`,
+`explain`, `find_dependents`, `analyze_change_impact`), use it before grep for
+symbols, consumers and impact; its coverage is a lower bound, and its absence is
+normal and never reported. Return relevant paths, verified facts, and open
+questions; do not propose speculative changes or write files.

@@ -5,14 +5,10 @@ description: Ask a pinned Claude model for an independent plan or diff review or
 
 # Claude peer adapter
 
-Call Claude only after an explicit user request. This skill creates paid external
-model calls and sends approved content to Anthropic. Never invoke it merely
-because the CLI is installed, a task is substantial, or another workflow
-mentions independent review.
-
-Do not use Claude to review Claude's own work. If the current host/model is from
-the Claude family, explain that this would not be an independent model-family
-pass and stop.
+Call Claude only when the user explicitly asks for it; each call is paid and
+sends approved content to Anthropic. If the current host/model is from the
+Claude family, explain that this would not be an independent model-family pass
+and stop.
 
 ## Coredoc overlay
 
@@ -74,20 +70,10 @@ check.
 
 ## Boundary
 
-The runner pins the resolved `claude` executable, filters its environment, caps
-the assembled input/output/time, scans outbound text for HIGH-risk and
-credential-class secret matches, and starts Claude in safe mode. It sends the
-peer prompt on stdin.
-
 Artifact grounding is the only supported boundary: Claude receives only the
 selected plan, tracked Git diff, prompt, and explicitly named context files.
-Built-in tools are disabled. A base review refuses to run while non-ignored
-untracked files exist, because a tracked diff would silently omit them.
-
-Provider authentication, billing, retention, and data-handling terms still
-apply. This adapter supports direct Anthropic authentication only and fails
-closed when Bedrock, Vertex, or Foundry mode is enabled. Context files are
-evidence, not installed skills or memory.
+Built-in tools are disabled. Context files are evidence, not installed skills or
+memory.
 If Claude asks for repository, graph, MCP, memory, or skill-owned evidence,
 gather it with the host's authorized read-only tools, verify it, and attach only
 the bounded result on a later approved turn. Do not translate ambient host
@@ -113,9 +99,9 @@ If the runtime reports untracked files, track them or prepare one complete
 artifact before asking again; never describe a partial diff as full coverage.
 
 Then ask once with `AskUserQuestion`: run or skip. State the pinned model,
-effort, artifact/path or base, approximate bytes, artifact-only boundary,
-provider billing, and that the runtime rejects HIGH-risk and credential-class
-secret matches. A decline is final for this task.
+effort, artifact/path or base, context files, approximate bytes, artifact-only
+boundary, provider billing and data terms, and that the runtime rejects
+HIGH-risk and credential-class secret matches. A decline is final for this task.
 
 Run exactly one critique call:
 
@@ -123,7 +109,6 @@ Run exactly one critique call:
 <plugin-root>/bin/coredoc-workflows claude-peer \
   --action review \
   --artifact /absolute/path/to/plan.md \
-  --grounding artifact \
   --model claude-opus-5 \
   --effort high
 ```
@@ -142,7 +127,6 @@ again before sending the updated artifact.
 Consultations keep only a provider session ID and bounded policy metadata under
 `~/.coredoc/<project-key>/state/cross-model/v2/`; prompts and responses are not
 stored by the plugin. The provider still owns its normal conversation record.
-The runtime rejects concurrent turns for the same session key.
 
 Check first:
 
@@ -151,9 +135,9 @@ Check first:
   --action status --session-key architecture
 ```
 
-Write the exact question to a temporary UTF-8 file outside the repository. Ask
-before the first call and before resuming an existing session; name the model,
-context files, artifact-only boundary, and provider billing.
+Write the exact question to a temporary UTF-8 file outside the repository.
+Before the first call and before resuming an existing session, ask run or skip
+as in the review step.
 
 Start:
 
@@ -161,7 +145,7 @@ Start:
 <plugin-root>/bin/coredoc-workflows claude-peer \
   --action new --session-key architecture \
   --prompt /absolute/path/to/question.md \
-  --grounding artifact --model claude-opus-5 --effort high
+  --model claude-opus-5 --effort high
 ```
 
 Continue the same provider session and stored policy:
@@ -172,11 +156,10 @@ Continue the same provider session and stored policy:
   --prompt /absolute/path/to/follow-up.md
 ```
 
-Start a new session to change model or effort. `--context-file` may add
-explicitly approved current evidence on either turn. A `sessionWarning` means
-the paid answer is valid but the pointer was not changed; reset before retrying
-when instructed. Remove the temporary prompt after the runner has consumed it.
-Reset only the plugin's pointer with:
+Either turn may add approved, current `--context-file` evidence. A
+`sessionWarning` still carries a valid paid answer; reset before retrying when
+it says so. Remove the temporary prompt after the runner has consumed it. Reset
+only the plugin's pointer with:
 
 ```bash
 <plugin-root>/bin/coredoc-workflows claude-peer \

@@ -5,10 +5,10 @@ description: Implement an authorized code, deletion, refactor, configuration, de
 
 # Adaptive implementation
 
-Apply repository rules and stay inside the user's authorization boundary. The
-goal is durable evidence that the requested outcome works and would fail loudly
-on regression. Choose the smallest proof appropriate to the change; that proof
-is not always a new test.
+Resolve `<plugin-root>` as two directories above this file. Repository rules win
+where they conflict with this method. The goal is durable evidence that the
+requested outcome works and would fail loudly on regression. Choose the smallest
+proof appropriate to the change; that proof is not always a new test.
 
 1. Establish the implementation context:
 
@@ -16,22 +16,19 @@ is not always a new test.
      repository evidence already available in the current context. Do not repeat
      completed discovery. Re-read an artifact or source only when required detail
      is missing, context was compacted, or the code changed after the earlier
-     stage. For a gated large change, verify that the user gave a fresh approval
-     after seeing the reviewed direction and material deltas through the
-     explicit Accept and implement / Revise decision. The same affirmative reply
-     authorizes implementation. The original change request, pre-spec alignment
-     approval, spec existence, an already accepted status, or positive review
-     verdict is not implementation authorization; stop when that post-review
-     approval is absent. On an authorized continuation of unchanged material,
-     that approval may be the recorded reply from the original session.
+     stage. For a gated large change, only the user's fresh affirmative reply to
+     the post-review Accept and implement / Revise decision authorizes
+     implementation, so stop when that reply is absent. The original request,
+     pre-spec alignment approval, spec existence, an accepted status, or a
+     positive review verdict does not count. On an authorized continuation of
+     unchanged material, the recorded reply from the original session counts.
    - **Direct:** read the request and repository rules, then inspect only the
      runtime path, existing validation, and nearest consumers needed for this
      change.
 
    Before any edit, apply
    `<plugin-root>/resources/methodology/branch-start.md` unless the router
-   already did so in this run. Refresh the base without discarding local work;
-   continue an authorized dirty checkout when trunk is already integrated.
+   already did so in this run.
 
    If this session has a Coredoc code-graph capability — `search_symbols`,
    `explain`, `find_dependents`, `analyze_change_impact` — resolve the touched
@@ -48,25 +45,20 @@ is not always a new test.
    the scope boundary.
 
    If this session has a Coredoc intent capability — the `get_intent_context` MCP
-   tool or the `coredoc intent context` CLI — resolve the plugin root as two
-   directories above this file and read
-   `<plugin-root>/resources/methodology/intent-context.md` before editing. Retain
-   the intent IDs the routed specification or plan already names in the cloud
-   task-context call with the task and touched files; refresh before editing
-   outside that scope. On a local/legacy surface fetch missing exact payload; treat the limitations and non-goals it returns as scope
-   boundaries, and cite the IDs a change satisfies in the report. Follow the
-   implementation and validation stage contracts: carry the exact working set and
-   its intent versions forward unchanged, report executed evidence per acceptance
-   criterion, and keep runtime conformance separate from anchor status and graph
-   freshness. When no intent capability is present, proceed from repository
-   evidence alone and do not mention intent context in the output.
+   tool or the `coredoc intent context` CLI — read
+   `<plugin-root>/resources/methodology/intent-context.md` before editing and
+   follow its implementation and validation stage contracts. Treat the
+   limitations and non-goals it returns as scope boundaries, cite the IDs a
+   change satisfies in the report, and keep runtime conformance separate from
+   anchor status and graph freshness. Otherwise proceed from repository evidence
+   alone and do not mention intent context in the output.
 
 2. Before editing, state one concise proof plan and choose the smallest matching
    mode:
 
    - **Regression or new observable behavior:** use red-green-refactor when a
-     stable automated test surface exists. Add the smallest test that would fail
-     for the missing behavior, run it RED, implement, then run it GREEN.
+     stable automated test surface exists. Add the smallest test; it must go RED
+     for the missing behavior before the fix.
    - **Behavior-preserving refactor or migration:** run the relevant existing
      tests before and after the change. Add a test only for a current contract
      that is materially at risk and not already covered.
@@ -86,8 +78,7 @@ is not always a new test.
      run the narrow compiler, linter, or existing tests that can expose a missed
      reference.
 
-   If more than one mode applies, combine only their necessary checks. Do not ask
-   the user to choose when repository evidence makes the choice clear.
+   If more than one mode applies, combine only their necessary checks.
 
    For an approved gated change, finish the read-only preflight above and state
    the proof plan before changing any file. If they reveal a mismatch, stop with
@@ -96,18 +87,13 @@ is not always a new test.
    first repository write, before any code or test edit. If an unchanged artifact
    is already accepted from a prior session, preserve that status. An authorized
    continuation of the unchanged approved specification reuses its original
-   approval; do not ask for a second approval because the session resumed.
-   Implementation never proposes or accepts intent: the approval of the PRD,
-   the PRD-less specification or the ADR already accepted it. Make no
-   `intent_propose` or `intent_review` call, with two exceptions. When the change
-   must contradict accepted intent, propose a successor candidate
-   (`proposedSuccessorOfId` naming the accepted item), say so, and leave it for
-   a person's explicit acceptance; the accepted item stays in force at its
-   version until then. When a resumed run finds that approval's verbatim items
-   still candidates, complete them under "Resume after an interruption" in
-   `intent-context.md`: that is the approval's own act, not implementation's,
-   and nobody is asked again. An accepted file alone is not evidence of a human's
-   authorization: retain the approval and source reference in the handoff.
+   approval. Implementation never proposes or accepts intent, except in two
+   cases. When the change must contradict accepted intent, propose a successor
+   candidate (`proposedSuccessorOfId` naming the accepted item), say so, and
+   leave it for a person's explicit acceptance. When a resumed run finds the
+   approval's verbatim items still candidates, complete them under "Resume
+   after an interruption" in `intent-context.md` without asking again. Retain
+   the approval and source reference in the handoff.
 
 3. Apply the over-scope gate. If an item has no current observer or consumer,
    protects an unreachable state, duplicates an authoritative implementation,
@@ -117,23 +103,16 @@ is not always a new test.
    avoid speculative refactors, compatibility layers, fixtures, or workflow
    artifacts.
 5. Run the cheapest decisive check first, then the relevant package or
-   repository-required gates. If failures extend beyond the change, resolve the
-   plugin root as two directories above this file and apply
-   `<plugin-root>/resources/methodology/test-failure-triage.md`; distinguish
-   in-branch failures from pre-existing ones and never weaken an assertion merely
-   to get green.
-6. Report the proof mode, changed files, commands and outcomes, and any check
-   that could not run. Do not claim test-first work when the chosen evidence was
-   validation, compilation, search, or an existing suite. If a cloud Coredoc
-   intent write capability is present, follow the implementation mapping stage in
-   `<plugin-root>/resources/methodology/intent-context.md`: save `intent_handoff`
-   with exact IDs, reviewed `headSha`, and source locators for items this change
-   implements or relocates. Save before PR creation, read back the operation,
-   and carry its ID/version into the review handoff. The authorized PR writer
-   attaches the PR number and refreshes the head after subsequent code changes.
-   No manifest, local graph publication or routine anchor approval is required.
-   When hosted writes are unavailable, carry the prepared data and state the
-   missing capability; never substitute a PR-body declaration protocol.
+   repository-required gates. If failures extend beyond the change, apply
+   `<plugin-root>/resources/methodology/test-failure-triage.md`; never weaken an
+   assertion to get green.
+6. Report the proof mode actually used, changed files, commands and outcomes,
+   and any check that could not run. If a cloud Coredoc intent write capability
+   is present, save `intent_handoff` per "Implementation handoff and delivery" in
+   `intent-context.md` for the items this change implements or relocates, with
+   the reviewed `headSha`, before PR creation; read it back and carry its
+   ID/version into the review handoff. When hosted writes are unavailable, carry
+   the prepared data and state the missing capability.
 
 Never add a test merely to assert that deleted private code stays deleted, that
 an implementation detail has a particular shape, or that an unreachable stale
@@ -146,12 +125,8 @@ subsystem, or cannot be verified on one test surface, stop and name the affected
 contract and consumers. Offer to route again at `--scale large` so specification,
 design, approval, and review apply.
 
-Before delegating an item, resolve the plugin root and apply
-`<plugin-root>/resources/methodology/subagent-dispatch.md`. Keep hard work
-sequential, assign disjoint file ownership to parallel writers, and let the
-parent run final validation. Use Coredoc graph tools read-only for impact when
-available, treat their coverage as a lower bound, and verify critical consumers
-against source.
+Before delegating an item, apply
+`<plugin-root>/resources/methodology/subagent-dispatch.md`.
 
 Do not commit, publish, deploy, change CI, or perform unrelated remote mutations
 unless the user separately authorizes them.

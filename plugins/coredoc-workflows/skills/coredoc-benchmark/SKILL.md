@@ -3,19 +3,11 @@ name: coredoc-benchmark
 description: Establish and compare performance baselines for browser flows, APIs, CLIs, and bundle size. Use for page-speed checks, benchmarks, or regression detection.
 ---
 
-# Performance benchmark adapter
+# Performance benchmark
 
-Use `coredoc-browse` for browser metrics and the project's own benchmark
-commands for APIs or CLIs.
-
-Capture commands, inputs, environment, and repeated measurements. Store only
-small numeric baselines when persistence is useful; never store prompts, page
-contents, source files, or credentials.
-
-Before an authorized cache write, resolve the directory rather than composing it:
-`COREDOC_WORKFLOW_CACHE=$(<plugin-root>/bin/coredoc-workflows project-key)` returns
-`~/.coredoc/<project-key>/cache`. Everything under it is disposable; nothing that
-must survive belongs there.
+Measure pages with the browser commands below, and APIs or CLIs with the
+project's own benchmark commands. Record each command, its inputs and the
+environment, and repeat measurements.
 
 ## Coredoc overlay
 
@@ -89,211 +81,60 @@ B doctor
 Daemon state lives in `~/.coredoc/<project-key>/cache/browse`, outside the
 repository. Run `B help` for the runtime command reference.
 
-# /benchmark — Performance Regression Detection
+## Modes
 
-You are a **Performance Engineer** who has optimized apps serving millions of requests. You know that performance doesn't degrade in one big regression — it dies by a thousand paper cuts. Each PR adds 50ms here, 20KB there, and one day the app takes 8 seconds to load and nobody knows when it got slow.
+- Default (`<url>`): measure, then compare with the baseline when one exists.
+- `--baseline`: measure and save the baseline; run it before making changes.
+- `--quick`: one timing pass, no baseline.
+- `--pages /,/dashboard`: measure these paths; otherwise discover pages from
+  the site's navigation.
+- `--diff`: only pages the current branch affects. Resolve `DIFF_BASE` with
+  `<plugin-root>/resources/methodology/base-branch.md`, then find them from
+  `git diff "$DIFF_BASE"...HEAD --name-only`.
 
-Your job is to measure, baseline, compare, and alert. You use the browse daemon's `perf` command and JavaScript evaluation to gather real performance data from running pages.
+## Measure
 
-## Arguments
-- `/benchmark <url>` — full performance audit with baseline comparison
-- `/benchmark <url> --baseline` — capture baseline (run before making changes)
-- `/benchmark <url> --quick` — single-pass timing check (no baseline needed)
-- `/benchmark <url> --pages /,/dashboard,/api/health` — specify pages
-- `/benchmark --diff` — benchmark only pages affected by current branch
-- `/benchmark --trend` — show performance trends from historical data
+For each page run `B goto <page-url>`, then `B perf` for TTFB and full load,
+and `B js "<expression>"` for the rest:
 
-## Instructions
+- `performance.getEntriesByType('navigation')[0]`: DOM Interactive, DOM
+  Complete and Full Load are its `domInteractive`, `domComplete` and
+  `loadEventEnd`, already relative to navigation start.
+- FCP is the `paint` entry named `first-contentful-paint`. LCP is the last
+  `largest-contentful-paint` entry from a `PerformanceObserver` with
+  `buffered: true`.
+- `performance.getEntriesByType('resource')`: request count, total
+  `transferSize`, the slowest entries by `duration`, and JS and CSS bytes,
+  classified by file extension rather than `initiatorType`.
 
-### Phase 1: Setup
+## Baseline
 
-```bash
-mkdir -p "$COREDOC_WORKFLOW_CACHE/benchmark-reports/baselines"
-```
+Before an authorized cache write, resolve the directory rather than composing it:
+`COREDOC_WORKFLOW_CACHE=$(<plugin-root>/bin/coredoc-workflows project-key)` returns
+`~/.coredoc/<project-key>/cache`. Everything under it is disposable; nothing that
+must survive belongs there.
 
-### Phase 2: Page Discovery
+When the user asks for a baseline, write only these keys to
+`$COREDOC_WORKFLOW_CACHE/benchmark-reports/baselines/baseline.json`:
+`{url, timestamp, branch, pages: {"<path>": {ttfb_ms, fcp_ms, lcp_ms, dom_interactive_ms, dom_complete_ms, full_load_ms, total_requests, total_transfer_bytes, js_bundle_bytes, css_bundle_bytes, largest_resources: [{name, size, duration}]}}}`.
+Compare reads the same file.
 
-Auto-discover from navigation or use `--pages`.
+## Compare
 
-If `--diff` mode, resolve `DIFF_BASE` with
-`<plugin-root>/resources/methodology/base-branch.md`, then:
-```bash
-git diff "$DIFF_BASE"...HEAD --name-only
-```
+Per page, give each metric's baseline, current value, delta and status:
 
-### Phase 3: Performance Data Collection
+- Timing: REGRESSION above +50% or +500 ms; WARNING above +20%.
+- Bundle size: REGRESSION above +25%; WARNING above +10%.
+- Request count: WARNING above +30%.
 
-For each page, collect comprehensive performance metrics:
+Name the likely cause of each regression. List the slowest resources with type,
+size and duration, flag third-party ones, and recommend fixes for first-party
+ones.
 
-```bash
-B goto <page-url>
-B perf
-```
+Without a baseline, report absolute numbers against these budgets and say that
+detecting regressions needs one: FCP < 1.8 s, LCP < 2.5 s, JS < 500 KB,
+CSS < 100 KB, transfer < 2 MB, fewer than 50 requests.
 
-Then gather detailed metrics via JavaScript:
-
-```bash
-B eval "JSON.stringify(performance.getEntriesByType('navigation')[0])"
-```
-
-Extract key metrics:
-- **TTFB** (Time to First Byte): `responseStart - requestStart`
-- **FCP** (First Contentful Paint): from PerformanceObserver or `paint` entries
-- **LCP** (Largest Contentful Paint): from PerformanceObserver
-- **DOM Interactive**: `domInteractive - navigationStart`
-- **DOM Complete**: `domComplete - navigationStart`
-- **Full Load**: `loadEventEnd - navigationStart`
-
-Resource analysis:
-```bash
-B eval "JSON.stringify(performance.getEntriesByType('resource').map(r => ({name: r.name.split('/').pop().split('?')[0], type: r.initiatorType, size: r.transferSize, duration: Math.round(r.duration)})).sort((a,b) => b.duration - a.duration).slice(0,15))"
-```
-
-Bundle size check:
-```bash
-B eval "JSON.stringify(performance.getEntriesByType('resource').filter(r => r.initiatorType === 'script').map(r => ({name: r.name.split('/').pop().split('?')[0], size: r.transferSize})))"
-B eval "JSON.stringify(performance.getEntriesByType('resource').filter(r => r.initiatorType === 'css').map(r => ({name: r.name.split('/').pop().split('?')[0], size: r.transferSize})))"
-```
-
-Network summary:
-```bash
-B eval "(() => { const r = performance.getEntriesByType('resource'); return JSON.stringify({total_requests: r.length, total_transfer: r.reduce((s,e) => s + (e.transferSize||0), 0), by_type: Object.entries(r.reduce((a,e) => { a[e.initiatorType] = (a[e.initiatorType]||0) + 1; return a; }, {})).sort((a,b) => b[1]-a[1])})})()"
-```
-
-### Phase 4: Baseline Capture (--baseline mode)
-
-Save metrics to baseline file:
-
-```json
-{
-  "url": "<url>",
-  "timestamp": "<ISO>",
-  "branch": "<branch>",
-  "pages": {
-    "/": {
-      "ttfb_ms": 120,
-      "fcp_ms": 450,
-      "lcp_ms": 800,
-      "dom_interactive_ms": 600,
-      "dom_complete_ms": 1200,
-      "full_load_ms": 1400,
-      "total_requests": 42,
-      "total_transfer_bytes": 1250000,
-      "js_bundle_bytes": 450000,
-      "css_bundle_bytes": 85000,
-      "largest_resources": [
-        {"name": "main.js", "size": 320000, "duration": 180},
-        {"name": "vendor.js", "size": 130000, "duration": 90}
-      ]
-    }
-  }
-}
-```
-
-Write to `$COREDOC_WORKFLOW_CACHE/benchmark-reports/baselines/baseline.json`.
-
-### Phase 5: Comparison
-
-If baseline exists, compare current metrics against it:
-
-```
-PERFORMANCE REPORT — [url]
-══════════════════════════
-Branch: [current-branch] vs baseline ([baseline-branch])
-
-Page: /
-─────────────────────────────────────────────────────
-Metric              Baseline    Current     Delta    Status
-────────            ────────    ───────     ─────    ──────
-TTFB                120ms       135ms       +15ms    OK
-FCP                 450ms       480ms       +30ms    OK
-LCP                 800ms       1600ms      +800ms   REGRESSION
-DOM Interactive     600ms       650ms       +50ms    OK
-DOM Complete        1200ms      1350ms      +150ms   WARNING
-Full Load           1400ms      2100ms      +700ms   REGRESSION
-Total Requests      42          58          +16      WARNING
-Transfer Size       1.2MB       1.8MB       +0.6MB   REGRESSION
-JS Bundle           450KB       720KB       +270KB   REGRESSION
-CSS Bundle          85KB        88KB        +3KB     OK
-
-REGRESSIONS DETECTED: 3
-  [1] LCP doubled (800ms → 1600ms) — likely a large new image or blocking resource
-  [2] Total transfer +50% (1.2MB → 1.8MB) — check new JS bundles
-  [3] JS bundle +60% (450KB → 720KB) — new dependency or missing tree-shaking
-```
-
-**Regression thresholds:**
-- Timing metrics: >50% increase OR >500ms absolute increase = REGRESSION
-- Timing metrics: >20% increase = WARNING
-- Bundle size: >25% increase = REGRESSION
-- Bundle size: >10% increase = WARNING
-- Request count: >30% increase = WARNING
-
-### Phase 6: Slowest Resources
-
-```
-TOP 10 SLOWEST RESOURCES
-═════════════════════════
-#   Resource                  Type      Size      Duration
-1   vendor.chunk.js          script    320KB     480ms
-2   main.js                  script    250KB     320ms
-3   hero-image.webp          img       180KB     280ms
-4   analytics.js             script    45KB      250ms    ← third-party
-5   fonts/inter-var.woff2    font      95KB      180ms
-...
-
-RECOMMENDATIONS:
-- vendor.chunk.js: Consider code-splitting — 320KB is large for initial load
-- analytics.js: Load async/defer — blocks rendering for 250ms
-- hero-image.webp: Add width/height to prevent CLS, consider lazy loading
-```
-
-### Phase 7: Performance Budget
-
-Check against industry budgets:
-
-```
-PERFORMANCE BUDGET CHECK
-════════════════════════
-Metric              Budget      Actual      Status
-────────            ──────      ──────      ──────
-FCP                 < 1.8s      0.48s       PASS
-LCP                 < 2.5s      1.6s        PASS
-Total JS            < 500KB     720KB       FAIL
-Total CSS           < 100KB     88KB        PASS
-Total Transfer      < 2MB       1.8MB       WARNING (90%)
-HTTP Requests       < 50        58          FAIL
-
-Grade: B (4/6 passing)
-```
-
-### Phase 8: Trend Analysis (--trend mode)
-
-Load historical baseline files and show trends:
-
-```
-PERFORMANCE TRENDS (last 5 benchmarks)
-══════════════════════════════════════
-Date        FCP     LCP     Bundle    Requests    Grade
-2026-03-10  420ms   750ms   380KB     38          A
-2026-03-12  440ms   780ms   410KB     40          A
-2026-03-14  450ms   800ms   450KB     42          A
-2026-03-16  460ms   850ms   520KB     48          B
-2026-03-18  480ms   1600ms  720KB     58          B
-
-TREND: Performance degrading. LCP doubled in 8 days.
-       JS bundle growing 50KB/week. Investigate.
-```
-
-### Phase 9: Save Report
-
-Report results in the conversation. Save Markdown/JSON under `$COREDOC_WORKFLOW_CACHE/benchmark-reports/` only when the user requests a durable baseline or report.
-
-## Important Rules
-
-- **Measure, don't guess.** Use actual performance.getEntries() data, not estimates.
-- **Baseline is essential.** Without a baseline, you can report absolute numbers but can't detect regressions. Always encourage baseline capture.
-- **Relative thresholds, not absolute.** 2000ms load time is fine for a complex dashboard, terrible for a landing page. Compare against YOUR baseline.
-- **Third-party scripts are context.** Flag them, but the user can't fix Google Analytics being slow. Focus recommendations on first-party resources.
-- **Bundle size is the leading indicator.** Load time varies with network. Bundle size is deterministic. Track it religiously.
-- **Read-only.** Produce the report. Don't modify code unless explicitly asked.
+Done when every page has its metrics and every regression or budget miss names
+its likely cause. The report is the deliverable; code changes need their own
+request.

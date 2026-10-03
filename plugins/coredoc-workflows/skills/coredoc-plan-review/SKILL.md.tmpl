@@ -8,48 +8,37 @@ description: Review an implementation plan before coding. Use for engineering pl
 Review only the requested plan/spec/path. A routed review remains read-only and
 returns required artifact revisions to a new specification attempt. A standalone
 review may update the artifact only when the user explicitly authorized that
-write. Repository rules and the user's authorization boundary win. Ground claims
-in source and read-only Coredoc graph evidence when available; graph coverage is
-a lower bound.
+write. Ground claims in source and read-only Coredoc graph evidence when
+available; graph coverage is a lower bound. For graph applicability and
+cross-repository contract claims, read
+`<plugin-root>/resources/methodology/evidence-applicability.md`.
 
 {{PREAMBLE}}
-
-For graph applicability and cross-repository contract claims, read
-`<plugin-root>/resources/methodology/evidence-applicability.md`.
 
 ## Review policy
 
 Before classifying findings, read and apply
-`<plugin-root>/resources/methodology/review-policy.md`. Repository policy or a
-task-scoped maintainer decision overrides its generic fallback.
+`<plugin-root>/resources/methodology/review-policy.md`.
 
 ## Finding contract
 
-Read `<plugin-root>/resources/methodology/finding-contract.md` before emitting a
-finding. One root cause is one finding; distinguish proven defects,
-`NEEDS_CONTEXT`, and hypotheses. Nonblocking advice never becomes implementation
-scope without user opt-in.
+Before emitting a finding, read and apply
+`<plugin-root>/resources/methodology/finding-contract.md` and
+`<plugin-root>/resources/methodology/confidence-calibration.md`. One root cause is
+one finding. Nonblocking advice never becomes implementation scope without user
+opt-in.
 
 ## Review flow
 
-```mermaid
-flowchart TD
-  G[Ground plan in current code] --> S[Challenge scope]
-  S -->|material overbuild| Q[Ask one blocking decision]
-  S -->|right-sized| R[Review applicable risks]
-  Q --> R
-  R --> V[Map acceptance to validation]
-  V --> U[Resolve plan and decisions]
-  U --> H[Completion gate]
-```
-
 If the target is not explicit, ask whether to review a branch diff, document, or
-path and wait. Otherwise do not ask a scope-selection question.
+path and wait.
 
 ### 1. Ground and challenge scope
 
-Read the newest relevant local spec/plan and the smallest source set needed to
-verify its premises. Record:
+Read the newest relevant local spec/plan. Before accepting or rejecting a
+premise, verify it on the real runtime path with the smallest source set that
+shows it; never infer correctness from a filename, test name, diagram, or
+intended layer. Record:
 
 - **What already exists:** mechanisms the plan reuses or needlessly duplicates.
 - **Minimum viable change:** the smallest diff that delivers the stated outcome.
@@ -59,10 +48,10 @@ verify its premises. Record:
 
 Challenge a plan only for a concrete mismatch: a subsystem without a current
 consumer, coordination that self-healing makes unnecessary, speculative states,
-or projected machinery far beyond the accepted outcome. File count alone is a
-smell, not a verdict. If reducing scope changes the user-owned outcome, ask one
-material decision with 2–3 options and stop; otherwise recommend the reduction
-and continue.
+or projected machinery far beyond the accepted outcome. If reducing scope changes
+the user-owned outcome, ask one material decision and stop; otherwise recommend
+the reduction and continue. Honor accepted scope; reopen it only when later
+evidence adds a subsystem, shared contract, or material consumer set.
 
 If this session has a Coredoc intent capability — the `get_intent_context` MCP
 tool or the `coredoc intent context` CLI — read
@@ -76,16 +65,9 @@ the manual-analysis fallback. When no intent capability is present, proceed from
 repository evidence alone and do not mention intent context in the output.
 
 When unfamiliar custom machinery is proposed, apply
-`<plugin-root>/resources/methodology/search-before-building.md`; skip external
-search when unavailable. If the plan exposes a CLI/SDK/API/plugin/config surface,
-also apply `<plugin-root>/resources/methodology/dx-framework.md`.
-
-### Premises and accepted scope
-
-Inspect the real runtime path before accepting or rejecting a plan premise.
-Never infer correctness from a filename, test name, diagram, or intended layer.
-Honor accepted scope; reopen it only when later evidence adds a subsystem,
-shared contract, or material consumer set.
+`<plugin-root>/resources/methodology/search-before-building.md`. If the plan
+exposes a CLI/SDK/API/plugin/config surface, also apply
+`<plugin-root>/resources/methodology/dx-framework.md`.
 
 ### 2. Review applicable risks
 
@@ -95,73 +77,50 @@ Mark an inapplicable lens with one reason; do not manufacture findings.
 | --- | --- |
 | Architecture | Are boundaries, ownership, data flow, public contracts, distribution, and rollout coherent with current consumers? Is a reachable integration failure contained and visible? |
 | Code quality | Is the plan explicit and maintainable without premature abstraction, synchronized-edit risk, or speculative edge handling? |
-| Tests | Do accepted scenarios and invariants have observers at the smallest meaningful layer? Could an acceptance check pass while behavior is broken? |
 | Performance | Is a claimed hot path supported by realistic load, a bound, benchmark, or trace? Are resource lifetimes explicit? |
 | Security/data | Are current trust boundaries, authorization, retention, migration, and rollback handled without inventing unsupported threats? |
 
-For a candidate finding, read
-`<plugin-root>/resources/methodology/confidence-calibration.md` and verify evidence,
-reachability, observer, impact, violated requirement, and existing handling before
-emitting it. Ask only for a blocking disposition, a single release fact needed
-for `NEEDS_CONTEXT`, or a user-owned behavior/architecture decision. Retry a
-failed question call once, and only if the user cannot have seen it; an error
-can arrive after the question was shown. When asking in prose about an
-irreversible or destructive choice, state what cannot be undone and proceed
-only when the user types the chosen option; a bare "ok" is not confirmation, so
-re-ask.
+Ask only for a blocking disposition, a single release fact needed for
+`NEEDS_CONTEXT`, or a user-owned behavior/architecture decision. Retry a failed
+question call once, and only if the user cannot have seen it; an error can
+arrive after the question was shown. When asking in prose about an irreversible
+or destructive choice, state what cannot be undone and proceed only when the
+user types the chosen option; a bare "ok" is not confirmation, so re-ask.
 
 ### 3. Test review
 
-Apply `<plugin-root>/resources/methodology/test-coverage-plan.md`.
-
-- **Test Framework Detection:** use the repository's real runner and conventions.
-- **Trace accepted runtime paths:** map each accepted scenario/invariant to its
-  current observer and realistic failure path.
-- **Choose the smallest meaningful layer:** existing test, focused regression,
-  type/build/schema check, runtime proof, or explicit manual validation.
-- Do not prescribe one new test per edit or acceptance criterion. Deletion,
-  refactor, config, docs, and generated output use evidence appropriate to their
-  observable risk.
+Apply `<plugin-root>/resources/methodology/test-coverage-plan.md` to give each
+accepted scenario and invariant an observer, and flag any acceptance check that
+could pass while behavior is broken. Do not prescribe one new test per edit or
+acceptance criterion. Deletion, refactor, config, docs, and generated output use
+evidence appropriate to their observable risk.
 
 For prompt/LLM work, require the repository's relevant eval suite and a named
-before/after baseline. Ask about eval scope only when repository evidence cannot
-resolve it.
+before/after baseline.
 
-Output a compact validation map:
+Output a compact validation map. For each release-critical boundary, a row
+names one reachable failure, its existing handling, and the user-visible result.
 
 | Outcome / risk | Observer | Decisive check | Gap |
 | --- | --- | --- | --- |
 
-For each release-critical boundary, include one reachable failure, existing
-handling, test/validation evidence, and user-visible result.
-
 ### 4. Make the plan executable
 
-For a routed review, report required revisions and return them to a new
-specification attempt; do not update the artifact in the design stage. For a
-standalone review, update the artifact only when explicitly authorized. Preserve
-intent IDs and map every step to an accepted outcome; remove steps with no current
-consumer or observer. Use a single small Mermaid diagram only for a non-trivial
-dependency, state, or interaction flow, and do not duplicate it in prose.
+Within the edit boundary above, preserve intent IDs and map every step to an
+accepted outcome; remove steps with no current consumer or observer. Use a single
+small Mermaid diagram only for a non-trivial dependency, state, or interaction
+flow, and do not duplicate it in prose.
 
 ## Implementation Tasks
 
 When tasks need restructuring, apply
-`<plugin-root>/resources/methodology/implementation-tasks.md`. Each task names its
-boundary, dependencies, accepted outcome, decisive validation, and explicit
-non-goals. Do not invent file paths before evidence supports them.
-
-Analyze parallel worktrees only when requested or when at least two large,
-disjoint workstreams exist. Otherwise state: `Sequential implementation, no
-parallelization opportunity.` For parallel lanes, show module ownership and
-dependencies in one table or Mermaid graph and flag shared-module conflicts.
+`<plugin-root>/resources/methodology/implementation-tasks.md`.
 
 Verify that accepted decisions are recorded in the spec: as an ADR only when the
 choice meets the spec skill's ADR threshold, otherwise in scope or contract
 prose. In a routed review, a missing record is a requested spec revision rather
 than a design-stage edit. Unresolved decisions retain an owner and one concrete
-question. Propose TODO updates only for accepted nonblocking follow-ups, and ask
-before writing them.
+question.
 
 ## Plan review completion gate
 
@@ -175,7 +134,3 @@ Before handoff, read and apply
    rollback where release or data context requires them;
 5. findings follow policy and no nonblocking observation silently expanded scope;
 6. unresolved user decisions are visible rather than defaulted.
-
-Return the reviewed plan, verdict, accepted decisions, validation map, non-goals,
-and unresolved questions. Do not create a workflow log, edit code, or chain into
-implementation automatically.
