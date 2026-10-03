@@ -126,7 +126,8 @@ bug becomes a candidate hypothesis.
 
 3. **3-strike rule:** If three hypotheses fail, stop; the cause may be
    architectural. Ask whether to continue with a new hypothesis (describe it),
-   escalate for human review, or add logging and wait for the next occurrence.
+   escalate for human review, or, in a standalone run only, add logging and
+   wait for the next occurrence.
 
 ## Phase 4: Report
 

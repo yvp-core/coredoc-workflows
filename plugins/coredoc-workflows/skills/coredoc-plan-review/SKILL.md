@@ -181,12 +181,4 @@ question.
 ## Plan review completion gate
 
 Before handoff, read and apply
-`<plugin-root>/resources/methodology/plan-review-gate.md`. Confirm:
-
-1. premises were checked against current code and release context;
-2. scope/non-goals and existing reusable mechanisms are explicit;
-3. every accepted outcome maps to implementation and validation;
-4. reachable failure modes and public consumers are covered, plus rollout and
-   rollback where release or data context requires them;
-5. findings follow policy and no nonblocking observation silently expanded scope;
-6. unresolved user decisions are visible rather than defaulted.
+`<plugin-root>/resources/methodology/plan-review-gate.md`.

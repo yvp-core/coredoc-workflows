@@ -196,7 +196,8 @@ scope/plan audit, conditional coverage, and verdict.
 When intent context was used, report the working set, applicable rules, concrete
 implementation evidence, non-applicable rules, mapping changes and truncation,
 and prepare the `intent_handoff` data — repoKey, the reviewed `headSha`, and
-bindings to files (`path`) or symbols (`path#Name`), never invented graph IDs —
+bindings to files (`path`) or symbols (`path#Name`) with explicit
+`replaceNodeIds` when moving an existing CI link, never invented graph IDs —
 per **Implementation handoff and delivery** in
 `<plugin-root>/resources/methodology/intent-context.md`. A read-only review
 returns that data to the authorized writer; tool availability never authorizes a
