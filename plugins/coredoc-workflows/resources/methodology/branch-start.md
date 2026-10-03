@@ -4,9 +4,9 @@ Change work starts from the latest trunk. Before the first repository edit of a
 change (adaptive implementation, TDD, or a spec written into the repository),
 bring the base branch up to date once per run:
 
-1. Resolve the base branch with the resolution order in
-   `<plugin-root>/resources/methodology/base-branch.md`: recorded PR target,
-   `origin/HEAD`, then `main`, then `master`. Call it `<base>`.
+1. Resolve the base branch: the open PR/MR target (read-only, via an
+   already-authenticated `gh` or `glab`), else `origin/HEAD`, else `main`, else
+   `master`. Call it `<base>`.
 2. Refresh it from the remote: `git fetch origin <base>`. This updates only
    `origin/<base>`; it never touches the working tree or the current branch.
    If a local `<base>` branch exists and is not checked out, fast-forward it in

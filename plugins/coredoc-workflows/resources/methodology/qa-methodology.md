@@ -15,16 +15,16 @@ This is the **primary mode** for developers verifying their work. When the user 
    - View/template/component files → which pages render them
    - Model/service files → which pages use those models (check controllers that reference them)
    - CSS/style files → which pages include those stylesheets
-   - API endpoints → test them directly with `$B js "await fetch('/api/...')"`
+   - API endpoints → test them directly with `B js "await fetch('/api/...')"`
    - Static pages (markdown, HTML) → navigate to them directly
 
    **If no obvious pages/routes are identified from the diff:** Do not skip browser testing. The user invoked /qa because they want browser-based verification. Fall back to Quick mode — navigate to the homepage, follow the top 5 navigation targets, check console for errors, and test any interactive elements found. Backend, config, and infrastructure changes affect app behavior — always verify the app still works.
 
-3. **Detect the running app** — check common local dev ports:
+3. **Detect the running app** — check common local dev ports, stopping at the first that loads:
    ```bash
-   $B goto http://localhost:3000 2>/dev/null && echo "Found app on :3000" || \
-   $B goto http://localhost:4000 2>/dev/null && echo "Found app on :4000" || \
-   $B goto http://localhost:8080 2>/dev/null && echo "Found app on :8080"
+   for port in 3000 4000 5173 8080; do
+     B goto "http://localhost:$port" 2>/dev/null && { echo "Found app on :$port"; break; }
+   done
    ```
    If no local app is found, check for a staging/preview URL in the PR or environment. If nothing works, ask the user for the URL.
 
@@ -79,31 +79,31 @@ mkdir -p "$QA_EVIDENCE_DIR/screenshots"
 ### Phase 2: Authenticate (if needed)
 
 First prefer the selected surface's existing session. For Electron, run
-`$D auth-status`; the app itself reads and refreshes its safeStorage-backed
+`D auth-status`; the app itself reads and refreshes its safeStorage-backed
 credentials. For web, use the selected browser profile's existing cookie
 session. Never inspect or export cookies, local storage, browser profiles,
 password stores, desktop credential files, access tokens, or refresh tokens.
 
 If the Electron app is logged out, activate its normal login control and hand
-the external OAuth/MFA interaction to the user. Resume with `$D auth-status`
-and `$D snapshot` after the callback returns to the app.
+the external OAuth/MFA interaction to the user. Resume with `D auth-status`
+and `D snapshot` after the callback returns to the app.
 
 **For web only, if the user explicitly authorized entering credentials:**
 
 ```bash
-$B goto <login-url>
-$B snapshot -i                    # find the login form
-$B fill @e3 "user@example.com"
-$B fill @e4 "[REDACTED]"         # NEVER include real passwords in report
-$B click @e5                      # submit
-$B snapshot -D                    # verify login succeeded
+B goto <login-url>
+B snapshot -i                    # find the login form
+B fill @e3 "user@example.com"
+B fill @e4 "[REDACTED]"         # NEVER include real passwords in report
+B click @e5                      # submit
+B snapshot -D                    # verify login succeeded
 ```
 
 **For web only, if the user explicitly provided a browser cookie-export file:**
 
 ```bash
-$B cookie-import cookies.json
-$B goto <target-url>
+B cookie-import cookies.json
+B goto <target-url>
 ```
 
 **If 2FA/OTP is required:** Ask the user for the code and wait.
@@ -115,10 +115,10 @@ $B goto <target-url>
 Get a map of the application:
 
 ```bash
-$B goto <target-url>
-$B snapshot -i -a -o "$QA_EVIDENCE_DIR/screenshots/initial.png"
-$B links                          # map navigation structure
-$B console --errors               # any errors on landing?
+B goto <target-url>
+B snapshot -i -a -o "$QA_EVIDENCE_DIR/screenshots/initial.png"
+B links                          # map navigation structure
+B console --errors               # any errors on landing?
 ```
 
 **Detect framework** (note in report metadata):
@@ -134,9 +134,9 @@ $B console --errors               # any errors on landing?
 Visit pages systematically. At each page:
 
 ```bash
-$B goto <page-url>
-$B snapshot -i -a -o "$QA_EVIDENCE_DIR/screenshots/page-name.png"
-$B console --errors
+B goto <page-url>
+B snapshot -i -a -o "$QA_EVIDENCE_DIR/screenshots/page-name.png"
+B console --errors
 ```
 
 Then follow the **per-page exploration checklist** in
@@ -150,9 +150,9 @@ Then follow the **per-page exploration checklist** in
 6. **Console** — Any new JS errors after interactions?
 7. **Responsiveness** — Check mobile viewport if relevant:
    ```bash
-   $B viewport 375x812
-   $B screenshot "$QA_EVIDENCE_DIR/screenshots/page-mobile.png"
-   $B viewport 1280x720
+   B viewport 375x812
+   B screenshot "$QA_EVIDENCE_DIR/screenshots/page-mobile.png"
+   B viewport 1280x720
    ```
 
 **Depth judgment:** Spend more time on core features (homepage, dashboard, checkout, search) and less on secondary pages (about, terms, privacy).
@@ -173,10 +173,10 @@ Document each issue **immediately when found** — don't batch them.
 5. Write repro steps referencing screenshots
 
 ```bash
-$B screenshot "$QA_EVIDENCE_DIR/screenshots/issue-001-step-1.png"
-$B click @e5
-$B screenshot "$QA_EVIDENCE_DIR/screenshots/issue-001-result.png"
-$B snapshot -D
+B screenshot "$QA_EVIDENCE_DIR/screenshots/issue-001-step-1.png"
+B click @e5
+B screenshot "$QA_EVIDENCE_DIR/screenshots/issue-001-result.png"
+B snapshot -D
 ```
 
 **Static bugs** (typos, layout issues, missing images):
@@ -184,7 +184,7 @@ $B snapshot -D
 2. Describe what's wrong
 
 ```bash
-$B snapshot -i -a -o "$QA_EVIDENCE_DIR/screenshots/issue-002.png"
+B snapshot -i -a -o "$QA_EVIDENCE_DIR/screenshots/issue-002.png"
 ```
 
 **Record each issue immediately** in the active conversation issue register or,
@@ -300,5 +300,5 @@ Minimum 0 per category.
 9. **Do not overwrite prior requested evidence.** Store new screenshots and
    reports under a unique authorized cache/report path.
 10. **Use `snapshot -C` for tricky UIs.** Finds clickable divs that the accessibility tree misses.
-11. **Show screenshots to the user.** After every `$B screenshot`, `$B snapshot -a -o`, or `$B responsive` command, use the Read tool on the output file(s) so the user can see them inline. For `responsive` (3 files), Read all three. This is critical — without it, screenshots are invisible to the user.
+11. **Show screenshots to the user.** After every `B screenshot`, `B snapshot -a -o`, or `B responsive` command, use the Read tool on the output file(s) so the user can see them inline. For `responsive` (3 files), Read all three. This is critical — without it, screenshots are invisible to the user.
 12. **Never refuse to use the browser.** When the user invokes /qa or /qa-only, they are requesting browser-based testing. Never suggest evals, unit tests, or other alternatives as a substitute. Even if the diff appears to have no UI changes, backend changes affect app behavior — always open the browser and test.

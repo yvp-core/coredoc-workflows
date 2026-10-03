@@ -51,7 +51,8 @@ Never install, update, or substitute a provider automatically.
 ## Review a plan or diff
 
 Determine the exact artifact first. For a plan, use its local file. For a branch
-review, detect the local diff base using the repository method and use `--base`.
+review, resolve `DIFF_BASE` with
+`<plugin-root>/resources/methodology/base-branch.md` and use `--base`.
 If the runtime reports untracked files, track them or prepare one complete
 artifact before asking again; never describe a partial diff as full coverage.
 

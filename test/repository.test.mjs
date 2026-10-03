@@ -105,39 +105,32 @@ test("release tags must match the aligned committed version", async () => {
   await assert.rejects(verifyRelease("v0.11.1"), /tag does not match/);
 });
 
-test("documents opt-in plugin-managed capture without changing the core runtime contract", async () => {
-  const documents = await Promise.all([
+// The capture policy loader parses exactly this schema and requires owner-only
+// permissions; the commands are the CLI's own. Tokens only, no prose (ADR 0004).
+test("capture-agent guide shows the policy schema and commands the code parses", async () => {
+  const guide = await readFile(join(root, "docs", "plugin-managed-capture-agent.md"), "utf8");
+
+  assert.match(guide, /"schemaVersion":\s*1\b/);
+  assert.match(guide, /"serverOrigin":\s*"<https-origin>"/);
+  assert.match(guide, /"workspaceId":\s*"<workspace-uuid>"/);
+  assert.match(guide, /chmod\s+600\s+~\/\.coredoc\/capture-agent-policy\.json/);
+  assert.match(guide, /capture\s+setup/);
+  assert.match(guide, /capture\s+uninstall\s+--purge/);
+});
+
+// Operators enable capture through these two variables, and the capture client
+// reads them under exactly these names. Variable names only (ADR 0004).
+test("operator documents name the capture variables the client reads", async () => {
+  const [client, ...documents] = await Promise.all([
+    readFile(join(pluginRoot, "scripts", "capture-client.mjs"), "utf8"),
     readFile(join(root, "README.md"), "utf8"),
     readFile(join(root, "SECURITY.md"), "utf8"),
-    readFile(join(root, "CONTRIBUTING.md"), "utf8"),
     readFile(join(pluginRoot, "README.md"), "utf8"),
-    readFile(join(root, "docs", "plugin-managed-capture-agent.md"), "utf8"),
   ]);
 
-  for (const document of documents) {
-    assert.match(document, /capture-agent-policy\.json/);
-  }
-  assert.match(documents[0], /does \*\*not\*\* register a LaunchAgent/);
-  assert.match(documents[0], /no system Node, Bun, or Python/i);
-  assert.match(documents[1], /disabled by default/i);
-  assert.match(documents[1], /pinned Bun executable/i);
-  assert.match(documents[2], /contributor\/reference compatibility/i);
-  assert.match(documents[3], /Coredoc Desktop is not required/);
-  assert.match(documents[3], /no system Node, Bun, or Python/i);
-  assert.match(documents[4], /No system Node, Bun, or Python/i);
-  for (const document of [documents[0], documents[1], documents[3], documents[4]]) {
-    assert.doesNotMatch(document, /system Node\.js 22|external Node/i);
-  }
-  assert.match(documents[4], /"schemaVersion": 1/);
-  assert.match(documents[4], /"serverOrigin": "<https-origin>"/);
-  assert.match(documents[4], /"workspaceId": "<workspace-uuid>"/);
-  assert.match(documents[4], /chmod 600 ~\/\.coredoc\/capture-agent-policy\.json/);
-  assert.match(documents[4], /capture setup/);
-  assert.match(documents[4], /capture uninstall --purge/);
-
-  for (const document of [documents[0], documents[1], documents[3]]) {
-    assert.match(document, /COREDOC_CAPTURE_ENDPOINT/);
-    assert.match(document, /COREDOC_CAPTURE_HEADERS/);
+  for (const variable of ["COREDOC_CAPTURE_ENDPOINT", "COREDOC_CAPTURE_HEADERS"]) {
+    assert.match(client, new RegExp(`\\b${variable}\\b`), variable);
+    for (const document of documents) assert.match(document, new RegExp(`\\b${variable}\\b`), variable);
   }
 });
 

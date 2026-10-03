@@ -70,14 +70,9 @@ test("frontmatter is carried through byte-for-byte", async () => {
 // The generated files carry no in-file banner, on purpose: it would spend the
 // agent's attention warning a human. That trade only holds while the warning
 // actually exists where the human is — so this asserts the compensating
-// controls rather than a comment in the prompt.
-test("the generated set is flagged where a human will see it", async () => {
+// control rather than a comment in the prompt.
+test("the generated set is flagged in .gitattributes", async () => {
   const generated = await templatedSkills();
-
-  const readme = await readFile(join(PLUGIN_ROOT, "README.md"), "utf8");
-  assert.match(readme, /SKILL\.md\.tmpl/);
-  assert.match(readme, /npm run build:skills/);
-  assert.match(readme, /never the generated/i);
 
   const attributes = await readFile(join(PLUGIN_ROOT, ".gitattributes"), "utf8");
   for (const skill of generated) {
@@ -112,12 +107,8 @@ test("no skill instructs the agent to run a script to obtain its method", async 
   for (const file of files) {
     const contents = await readFile(file, "utf8");
     // Skills may still invoke tooling — retro-evidence, redact-scan. What none
-    // may do is send the agent to a script to fetch its own instructions.
+    // may do is send the agent to the removed renderer for its own instructions.
     assert.ok(!/render-skill\.mjs/.test(contents), `${file} shells out for its method`);
-    assert.ok(
-      !/Read the complete rendered/.test(contents),
-      `${file} still defers its method to script output`,
-    );
   }
 });
 

@@ -47,11 +47,8 @@ options, ask the prerequisite alone, wait, then recompute the answerable set. Us
 concrete scenarios to make fuzzy domain boundaries observable. For each known
 choice, use the host's structured input tool with 2–3 real options,
 one recommended option with a concrete reason, and the trade-off that could
-change the answer. This compact contract overrides any generic decision-brief
-format elsewhere in the plugin for pre-spec alignment. Do not add ELI10 sections,
-completeness scores, effort estimates, or separate stakes/pros/cons blocks; put
-the relevant consequence directly in each option. Use prose only when the answer
-is open-ended or the structured input tool is unavailable.
+change the answer. Use prose only when the answer is open-ended or the
+structured input tool is unavailable.
 
 #### Show the shared picture
 

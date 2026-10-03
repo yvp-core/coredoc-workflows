@@ -5,10 +5,11 @@ description: Control an explicitly opted-in Electron development app over loopba
 
 # Electron QA
 
-Resolve the plugin root as two directories above this file and set:
+Resolve the plugin root as two directories above this file and define `E` in
+each command:
 
 ```bash
-E="<plugin-root>/bin/coredoc-workflows electron-qa"
+E() { "<plugin-root>"/bin/coredoc-workflows electron-qa "$@"; }
 ```
 
 ## Connect
@@ -26,7 +27,7 @@ Validate the port in app code and reject this mode in packaged builds. Start the
 app with a port from 1024 through 65535, then configure the controller:
 
 ```bash
-ELECTRON_QA_PORT=9333 $E doctor
+ELECTRON_QA_PORT=9333 E doctor
 ```
 
 Use `ELECTRON_QA_URL` only for an HTTP loopback endpoint. If the endpoint has
@@ -38,12 +39,12 @@ multiple page targets, set `ELECTRON_QA_TARGET_TITLE` or
 Use snapshot-then-act:
 
 ```bash
-$E status
-$E snapshot
-$E click @e1
-$E fill @e2 "value"
-$E screenshot /tmp/electron-qa.png
-$E console
+E status
+E snapshot
+E click @e1
+E fill @e2 "value"
+E screenshot /tmp/electron-qa.png
+E console
 ```
 
 Run `snapshot` again after navigation or a renderer update because references
